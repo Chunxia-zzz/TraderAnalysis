@@ -6,6 +6,7 @@ from typing import Optional
 
 import pandas as pd
 import typer
+import uvicorn
 
 from trader_analysis.backtest.engine import BacktestConfig, run_backtest
 from trader_analysis.data.providers import CSVDataProvider
@@ -53,4 +54,12 @@ def signals(
     else:
         with pd.option_context("display.max_rows", 50, "display.width", 120):
             typer.echo(signals_df.tail(50).to_string(index=False))
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", help="Bind host."),
+    port: int = typer.Option(8000, help="Bind port."),
+) -> None:
+    uvicorn.run("trader_analysis.api.app:app", host=host, port=port, reload=False)
 

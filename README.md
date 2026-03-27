@@ -43,3 +43,26 @@ python -m trader_analysis signals --data examples/sample_ohlcv.csv --strategy rs
 ## 架构
 
 见 [`docs/architecture.md`](docs/architecture.md)（含 Mermaid 架构图）。
+
+## API 服务（给前端调用）
+
+### 启动服务
+
+```bash
+python -m trader_analysis serve --host 0.0.0.0 --port 8000
+```
+
+### 可选环境变量（实时刷新配置）
+
+- `TA_DATA_PATH`：数据文件路径（默认 `examples/sample_ohlcv.csv`）
+- `TA_SYMBOL`：标的（默认 `DEMO`）
+- `TA_TIMEFRAME`：周期（默认 `1D`）
+- `TA_STRATEGY`：策略（`ma_cross` 或 `rsi_reversal`）
+- `TA_REFRESH_SECONDS`：刷新秒数（默认 `5`）
+
+### 接口
+
+- `GET /health`：服务健康与刷新状态
+- `GET /v1/indicators/latest`：最新一条指标数据
+- `GET /v1/indicators/history?limit=100`：最近 N 条指标数据
+- `GET /v1/signals/latest`：最新一条信号（BUY/SELL/HOLD）
