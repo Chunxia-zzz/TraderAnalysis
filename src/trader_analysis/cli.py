@@ -58,7 +58,7 @@ def signals(
 
 @app.command()
 def serve(
-    host: str = typer.Option("127.0.0.1", help="Bind host."),
+    host: str = typer.Option("0.0.0.0", help="Bind host."),
     port: int = typer.Option(8000, help="Bind port."),
 ) -> None:
     uvicorn.run("trader_analysis.api.app:app", host=host, port=port, reload=False)

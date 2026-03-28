@@ -7,7 +7,7 @@ from typing import Any
 
 import pandas as pd
 
-from trader_analysis.data.providers import CSVDataProvider
+from trader_analysis.data.providers import CSVDataProvider, FutuJsonDataProvider
 from trader_analysis.strategy.examples import get_strategy
 
 
@@ -23,7 +23,11 @@ class ServiceConfig:
 class IndicatorService:
     def __init__(self, cfg: ServiceConfig) -> None:
         self.cfg = cfg
-        self.provider = CSVDataProvider()
+        self.provider = (
+            FutuJsonDataProvider()
+            if cfg.data_path.suffix == ".json"
+            else CSVDataProvider()
+        )
         self._lock = asyncio.Lock()
         self._history: list[dict[str, Any]] = []
         self._latest_signal: dict[str, Any] | None = None

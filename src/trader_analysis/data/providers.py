@@ -79,6 +79,36 @@ class CSVDataProvider:
 
 
 @dataclass
+class FutuJsonDataProvider:
+    """Reads Futu request_history_kline JSON format (real or mock).
+
+    Expects the structure produced by futuapi/scripts/quote/get_kline.py:
+    { "data": [ { "time_key": "...", "open": ..., "high": ...,
+                  "low": ..., "close": ..., "volume": ..., ... } ] }
+    """
+
+    def get_ohlcv_from_file(
+        self,
+        path: Path,
+        *,
+        symbol: str,
+        timeframe: str,
+    ) -> pd.DataFrame:
+        import json
+
+        with open(path, encoding="utf-8") as f:
+            raw = json.load(f)
+
+        rows = raw.get("data", [])
+        if not rows:
+            raise DataProviderError(f"No data rows found in {path}")
+
+        df = pd.DataFrame(rows)
+        df = df.rename(columns={"time_key": OHLCVSchema.timestamp})
+        return normalize_ohlcv(df, symbol=symbol, timeframe=timeframe)
+
+
+@dataclass
 class ParquetDataProvider:
     schema: OHLCVSchema = OHLCVSchema()
 
