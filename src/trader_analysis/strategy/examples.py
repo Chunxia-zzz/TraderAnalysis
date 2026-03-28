@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from trader_analysis.indicators.builtins import rsi, sma
+from trader_analysis.indicators.builtins import _sma_spec, rsi
 from trader_analysis.signals.rules import MovingAverageCrossRule, RSIReversalRule
 from trader_analysis.strategy.strategy import Strategy
 
@@ -10,7 +10,7 @@ def ma_cross_strategy() -> Strategy:
     slow = "sma_20"
     return Strategy(
         name="ma_cross",
-        indicators=[sma(5, out_col=fast), sma(20, out_col=slow)],
+        indicators=[_sma_spec(5, out_col=fast), _sma_spec(20, out_col=slow)],
         rule=MovingAverageCrossRule(fast_col=fast, slow_col=slow),
     )
 

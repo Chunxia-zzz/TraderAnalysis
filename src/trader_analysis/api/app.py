@@ -5,10 +5,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
 from fastapi.responses import HTMLResponse
 
 from trader_analysis.api.service import IndicatorService, ServiceConfig
+from trader_analysis.data.schemas import OHLCVSchema
+from trader_analysis.indicators.builtins import sma as compute_sma
 
 # Bootcdn mirrors — accessible in mainland China
 _SWAGGER_JS  = "https://cdn.bootcdn.net/ajax/libs/swagger-ui/5.11.0/swagger-ui-bundle.js"
@@ -50,6 +53,14 @@ app = FastAPI(
     redoc_url=None,  # disable default /redoc
 )
 
+_cors_origins = os.getenv("TA_CORS_ORIGINS", "http://localhost:5173").split(",")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_methods=["GET"],
+    allow_headers=["*"],
+)
+
 
 @app.get("/docs", include_in_schema=False)
 async def swagger_ui() -> HTMLResponse:
@@ -86,6 +97,24 @@ async def indicators_latest() -> dict:
 @app.get("/v1/indicators/history")
 async def indicators_history(limit: int = Query(100, ge=1, le=1000)) -> list[dict]:
     return await service.indicators_history(limit=limit)
+
+
+@app.get("/v1/indicators/ma")
+async def indicators_ma(
+    timeframe: str = Query("1D", description="K线周期: 1H / 1D / 1W / 1M"),
+    period: int = Query(20, ge=1, le=500, description="均线长度，如 5 / 60 / 200"),
+) -> dict:
+    df = await service.get_kline_df(timeframe)
+    if df.empty:
+        raise HTTPException(status_code=503, detail="No K-line data available.")
+    series = compute_sma(df, timeframe, period)
+    valid = series.dropna()
+    timestamps = df.loc[valid.index, OHLCVSchema.timestamp]
+    records = [
+        {"timestamp": str(ts), "value": round(float(v), 4)}
+        for ts, v in zip(timestamps, valid)
+    ]
+    return {"symbol": service.cfg.symbol, "timeframe": timeframe, "period": period, "ma": records}
 
 
 @app.get("/v1/signals/latest")

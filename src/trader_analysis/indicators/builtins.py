@@ -7,7 +7,32 @@ from trader_analysis.data.schemas import OHLCVSchema
 from trader_analysis.indicators.base import IndicatorSpec
 
 
-def sma(period: int, *, col: str = OHLCVSchema.close, out_col: str | None = None) -> IndicatorSpec:
+def sma(df: pd.DataFrame, timeframe: str, period: int) -> pd.Series:
+    """Simple Moving Average.
+
+    Parameters
+    ----------
+    df:        OHLCV DataFrame（已包含目标周期的 K 线数据）
+    timeframe: K 线维度，"1H" | "1D" | "1W" | "1M"
+    period:    均线长度，如 5 / 60 / 200
+
+    Returns
+    -------
+    pd.Series  命名为 "ma_{period}"，与输入 df 的索引对齐
+    """
+    col = OHLCVSchema.close
+    if OHLCVSchema.timeframe in df.columns:
+        data = df.loc[df[OHLCVSchema.timeframe] == timeframe, col]
+    else:
+        data = df[col]
+    result = data.rolling(period, min_periods=period).mean()
+    result.name = f"ma_{period}"
+    return result
+
+
+# ── 内部使用：Strategy / IndicatorSpec 管道 ──────────────────────────────────
+
+def _sma_spec(period: int, *, col: str = OHLCVSchema.close, out_col: str | None = None) -> IndicatorSpec:
     name = out_col or f"sma_{period}"
 
     def _fn(df: pd.DataFrame) -> pd.DataFrame:

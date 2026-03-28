@@ -106,6 +106,19 @@ class IndicatorService:
         async with self._lock:
             return self._latest_signal
 
+    async def get_kline_df(self, timeframe: str) -> pd.DataFrame:
+        """返回指定周期的原始 OHLCV DataFrame，供指标计算使用。"""
+        df = self.provider.get_ohlcv_from_file(
+            self.cfg.data_path,
+            symbol=self.cfg.symbol,
+            timeframe=timeframe,
+        )
+        from trader_analysis.data.schemas import OHLCVSchema
+        if OHLCVSchema.timeframe in df.columns:
+            filtered = df[df[OHLCVSchema.timeframe] == timeframe]
+            return filtered.reset_index(drop=True)
+        return df
+
     async def health(self) -> dict[str, Any]:
         async with self._lock:
             return {
