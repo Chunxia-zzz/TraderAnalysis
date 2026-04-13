@@ -109,6 +109,68 @@ class FutuJsonDataProvider:
 
 
 @dataclass
+class FutuLiveDataProvider:
+    """从富途 OpenD 实时拉取 K 线数据。
+
+    Usage::
+
+        from futu import OpenQuoteContext
+        ctx = OpenQuoteContext(host="127.0.0.1", port=11111)
+        provider = FutuLiveDataProvider()
+        daily_df  = provider.get_daily(ctx, "US.AAPL")
+        weekly_df = provider.get_weekly(ctx, "HK.00700")
+        ctx.close()
+
+    返回 DataFrame 经 ``normalize_ohlcv`` 标准化，列名遵循 ``OHLCVSchema``。
+    """
+
+    def get_kline(
+        self,
+        quote_ctx,
+        code: str,
+        kl_type,
+        count: int,
+        *,
+        timeframe: str,
+    ) -> pd.DataFrame:
+        """通用 K 线拉取，通过 ``kl_type`` 指定周期。"""
+        try:
+            from futu import AuType  # type: ignore[import]
+        except ImportError as exc:
+            raise DataProviderError(
+                "futu-api 未安装，请执行: pip install futu-api"
+            ) from exc
+
+        ret, df, _ = quote_ctx.request_history_kline(
+            code,
+            ktype=kl_type,
+            autype=AuType.QFQ,
+            max_count=count,
+        )
+        if ret != 0:
+            raise DataProviderError(f"Futu API 拉取 {code} 失败: {df}")
+
+        df = df.rename(columns={"time_key": OHLCVSchema.timestamp})
+        return normalize_ohlcv(df, symbol=code, timeframe=timeframe)
+
+    def get_daily(self, quote_ctx, code: str, count: int = 250) -> pd.DataFrame:
+        """拉取日线 K 线（默认 250 根，满足 MA200 计算需求）。"""
+        try:
+            from futu import KLType  # type: ignore[import]
+        except ImportError as exc:
+            raise DataProviderError("futu-api 未安装") from exc
+        return self.get_kline(quote_ctx, code, KLType.K_DAY, count, timeframe="1D")
+
+    def get_weekly(self, quote_ctx, code: str, count: int = 60) -> pd.DataFrame:
+        """拉取周线 K 线（默认 60 根，约 14 个月）。"""
+        try:
+            from futu import KLType  # type: ignore[import]
+        except ImportError as exc:
+            raise DataProviderError("futu-api 未安装") from exc
+        return self.get_kline(quote_ctx, code, KLType.K_WEEK, count, timeframe="1W")
+
+
+@dataclass
 class ParquetDataProvider:
     schema: OHLCVSchema = OHLCVSchema()
 
