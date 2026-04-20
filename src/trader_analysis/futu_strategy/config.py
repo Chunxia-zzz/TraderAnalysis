@@ -54,11 +54,37 @@ VIX_CODE: str = "US.VIX"
 # 是否允许对已持有标的加仓（金字塔加仓）
 ALLOW_PYRAMID: bool = False
 
-# ── 日志路径 ───────────────────────────────────────────────────────────────────
-# 默认存放在项目根目录的 logs/ 下（通过环境变量 TA_LOG_DIR 可覆盖）
+# ── 指标计算配置 ──────────────────────────────────────────────────────────────
+# 日线指标配置（传入 250+ 根日线）
+DAILY_INDICATOR_CONFIG: dict = {
+    "ma": [5, 10, 20, 60, 120, 250],
+    "rsi": [14],
+    "macd": {"fast": 12, "slow": 26, "signal": 9},
+    "boll": {"length": 20, "std": 2},
+    "vol_ma": [20],
+}
+
+# 周线指标配置（传入 60+ 根周线）
+WEEKLY_INDICATOR_CONFIG: dict = {
+    "rsi": [14],
+    "macd": {"fast": 12, "slow": 26, "signal": 9},
+}
+
+# ── 持久化存储 ─────────────────────────────────────────────────────────────────
 _PROJECT_ROOT = os.path.normpath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
 )
+# SQLite 数据库路径（通过环境变量 TA_DB_PATH 可覆盖）
+DB_PATH: str = os.environ.get(
+    "TA_DB_PATH", os.path.join(_PROJECT_ROOT, "data", "indicators.db")
+)
+
+# ── 历史初始化拉取数量（仅 init_history.py 使用）────────────────────────────
+INIT_DAILY_KLINE_COUNT: int = 1000   # API 单次上限
+INIT_WEEKLY_KLINE_COUNT: int = 200   # 约 4 年周线数据
+
+# ── 日志路径 ───────────────────────────────────────────────────────────────────
+# 默认存放在项目根目录的 logs/ 下（通过环境变量 TA_LOG_DIR 可覆盖）
 LOG_DIR: str = os.environ.get("TA_LOG_DIR", os.path.join(_PROJECT_ROOT, "logs"))
 SCORE_LOG_FILE: str = os.path.join(LOG_DIR, "score_log.jsonl")
 TRADE_LOG_FILE: str = os.path.join(LOG_DIR, "trade_log.jsonl")

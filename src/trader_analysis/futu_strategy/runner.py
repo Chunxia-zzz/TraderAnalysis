@@ -1,6 +1,9 @@
-"""策略主入口。
+"""策略主入口（v2.0）。
 
-接收标的列表，依次：拉取 K 线 → 计算指标 → 评分 → 交易 → 记录日志。
+执行流程：
+  1. 增量更新存储层（daily_update）
+  2. 从 storage 读取已计算好的指标
+  3. 评分 → 写入评分结果 → 交易 → 记录日志
 
 运行方式：
   python -m trader_analysis.futu_strategy
@@ -15,12 +18,14 @@ from __future__ import annotations
 
 import argparse
 import logging
+from datetime import date
 
 from trader_analysis.futu_strategy import config
-from trader_analysis.futu_strategy.data_fetcher import check_kl_quota, fetch_daily, fetch_weekly
+from trader_analysis.futu_strategy.daily_update import run_update
 from trader_analysis.futu_strategy.external_data import get_fear_greed, get_vix, reset_cache
 from trader_analysis.futu_strategy.logger import log_score
 from trader_analysis.futu_strategy.scorer import calculate_score
+from trader_analysis.futu_strategy.storage import init_db, query_recent, upsert_score
 from trader_analysis.futu_strategy.trade_executor import execute_trade
 
 logger = logging.getLogger(__name__)
@@ -37,6 +42,8 @@ def run_strategy(codes: list[str]) -> None:
     except ImportError as exc:
         raise RuntimeError("futu-api 未安装，请执行: pip install futu-api") from exc
 
+    init_db()
+
     quote_ctx = OpenQuoteContext(host=config.OPEND_HOST, port=config.OPEND_PORT)
     trd_ctx = OpenSecTradeContext(host=config.OPEND_HOST, port=config.OPEND_PORT)
 
@@ -52,23 +59,34 @@ def run_strategy(codes: list[str]) -> None:
         acc_id = int(sim_accs.iloc[0]["acc_id"])
         logger.info(f"使用模拟账户 acc_id={acc_id}")
 
-        # ── K 线额度预检（整批次检查一次）────────────────────────────────────
-        check_kl_quota(quote_ctx, codes)
+        # ── 1. 增量更新存储层 ─────────────────────────────────────────────────
+        logger.info("开始增量更新存储层...")
+        run_update(codes, quote_ctx=quote_ctx)
 
-        # ── 全局数据（VIX / F&G 各只拉取一次）───────────────────────────────
+        # ── 2. 全局数据（VIX / F&G 各只拉取一次）─────────────────────────────
         reset_cache()
         vix = get_vix(quote_ctx)
         fg = get_fear_greed()
         logger.info(f"全局指标：VIX={vix}, F&G={fg}")
 
-        # ── 逐标的评分与交易 ──────────────────────────────────────────────────
+        # ── 3. 逐标的评分与交易 ──────────────────────────────────────────────
+        today = date.today().isoformat()
         for code in codes:
             try:
                 logger.info(f"── 开始处理 {code} ──")
-                daily_df = fetch_daily(quote_ctx, code)
-                weekly_df = fetch_weekly(quote_ctx, code)
+
+                # 从存储层读取已含指标列的 DataFrame
+                daily_df = query_recent(code, "1d", limit=300)
+                weekly_df = query_recent(code, "1w", limit=60)
+
+                if daily_df.empty or weekly_df.empty:
+                    logger.warning(f"{code} 存储层无数据，跳过（请先运行 init_history）")
+                    continue
 
                 result = calculate_score(code, daily_df, weekly_df, vix=vix, fg=fg)
+
+                # 写入评分结果到存储层
+                upsert_score(code, today, result)
                 log_score(result)
 
                 triggered = [

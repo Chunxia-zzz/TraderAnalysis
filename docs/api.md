@@ -1,10 +1,20 @@
 # TraderAnalysis API 文档
 
-> 最后更新：2026-03-28
-> Base URL（本地开发）：`http://localhost:8000`
+> 最后更新：2026-04-20
 > 协议：HTTP/1.1，响应格式：`application/json`，编码：UTF-8
 
+本项目有**两套独立的 API 服务**：
+
+| 服务 | 模块 | 默认端口 | 数据来源 | 是否需要 OpenD |
+|------|------|---------|---------|--------------|
+| 指标查询服务 | `api/app.py` | 8000 | 实时刷新（内存缓存） | 视数据源而定 |
+| 策略数据服务 | `futu_strategy/api_server.py` | 8001 | SQLite 只读查询 | 不需要 |
+
 ---
+
+# 一、指标查询服务（api/app.py）
+
+> Base URL（本地开发）：`http://localhost:8000`
 
 ## 浏览器快速调试
 
@@ -253,7 +263,172 @@ FastAPI 参数校验错误（422）返回数组形式的 `detail`，结构遵循
 
 ---
 
-## 规划中的接口变更
+---
+
+# 二、策略数据服务（futu_strategy/api_server.py）
+
+> Base URL（本地开发）：`http://localhost:8001`
+> 数据来源：SQLite 数据库（`data/indicators.db`），由 `init_history.py` / `daily_update.py` 写入
+> 特点：**不依赖 Futu OpenD**，只要数据库有数据即可独立运行
+
+## 启动
+
+```bash
+uvicorn trader_analysis.futu_strategy.api_server:app --host 0.0.0.0 --port 8001
+```
+
+Swagger UI：`http://localhost:8001/docs`
+
+## 概览
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/indicators` | 某标的某周期最近 N 根 K 线 + 全部指标 |
+| GET | `/api/indicators/latest` | 最新一根的所有指标值 |
+| GET | `/api/scores/latest` | 最新一次评分结果 |
+| GET | `/api/watchlist` | 所有已入库标的列表 |
+
+---
+
+### GET `/api/indicators`
+
+返回某标的某周期最近 N 根 K 线 + 全部技术指标（日期升序，供图表使用）。
+
+**请求参数**
+
+| 参数 | 位置 | 类型 | 默认值 | 约束 | 说明 |
+|------|------|------|--------|------|------|
+| `code` | query | `string` | — | 必填 | 标的代码，如 `HK.00700` |
+| `ktype` | query | `string` | `"1d"` | `1d` \| `1w` | K 线周期 |
+| `days` | query | `integer` | `60` | 1 ≤ days ≤ 500 | 返回最近 N 根 |
+
+**示例请求**
+
+```
+GET /api/indicators?code=HK.00700&ktype=1d&days=60
+```
+
+**响应 200**
+
+```json
+{
+  "code": "HK.00700",
+  "ktype": "1d",
+  "data": [
+    {
+      "date": "2026-02-14",
+      "open": 398.0, "high": 405.0, "low": 396.0, "close": 402.0,
+      "volume": 12340000,
+      "ma5": 399.2, "ma10": 397.8, "ma20": 394.1, "ma60": 385.3, "ma120": 375.0, "ma250": 358.0,
+      "rsi14": 54.2,
+      "dif": 2.31, "dea": 1.85, "macd": 0.92,
+      "boll_upper": 418.5, "boll_mid": 394.1, "boll_lower": 369.7,
+      "vol_ma20": 11200000
+    }
+  ]
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `ma5` ~ `ma250` | `number \| null` | 简单移动平均（5/10/20/60/120/250） |
+| `rsi14` | `number \| null` | RSI（14），范围 0~100 |
+| `dif` | `number \| null` | MACD 快线 − 慢线 |
+| `dea` | `number \| null` | DIF 的信号线 |
+| `macd` | `number \| null` | 柱线 = (DIF − DEA) × 2 |
+| `boll_upper/mid/lower` | `number \| null` | 布林带上轨/中轨/下轨 |
+| `vol_ma20` | `number \| null` | 20 日成交量均线 |
+
+---
+
+### GET `/api/indicators/latest`
+
+返回最新一根 K 线的全部指标值。
+
+**请求参数**
+
+| 参数 | 位置 | 类型 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `code` | query | `string` | — | 必填，标的代码 |
+| `ktype` | query | `string` | `"1d"` | `1d` \| `1w` |
+
+**响应 200**
+
+```json
+{
+  "code": "HK.00700",
+  "ktype": "1d",
+  "date": "2026-04-14",
+  "close": 412.0,
+  "ma5": 408.2, "ma20": 394.1, "ma250": 358.0,
+  "rsi14": 54.2,
+  "dif": 2.31, "dea": 1.85, "macd": 0.92,
+  "boll_upper": 418.5, "boll_mid": 394.1, "boll_lower": 369.7,
+  "vol_ma20": 11200000
+}
+```
+
+无数据时返回空对象 `{}`。
+
+---
+
+### GET `/api/scores/latest`
+
+返回某标的最新一次评分结果。
+
+**请求参数**
+
+| 参数 | 位置 | 类型 | 说明 |
+|------|------|------|------|
+| `code` | query | `string` | 必填，标的代码 |
+
+**响应 200**
+
+```json
+{
+  "code": "US.AAPL",
+  "date": "2026-04-14",
+  "total_score": 78,
+  "signal": "BUY",
+  "breakdown": {
+    "weekly_rsi":            {"score": 22, "value": 28.3, "triggered": true},
+    "daily_macd_divergence": {"score": 0,  "triggered": false},
+    "vix":                   {"score": 12, "value": 32.1, "triggered": true},
+    "boll_lower":            {"score": 10, "value": 395.0, "triggered": true},
+    "daily_rsi":             {"score": 0,  "value": 42.1, "triggered": false},
+    "cnn_fg":                {"score": 10, "value": 18.0, "triggered": true},
+    "panic_volume":          {"score": 8,  "triggered": true},
+    "weekly_macd_shrink":    {"score": 6,  "triggered": true},
+    "ma250_deviation":       {"score": 6,  "value": 0.092, "triggered": true}
+  }
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `total_score` | `integer` | 0~100 总分 |
+| `signal` | `string` | `"STRONG_BUY"` / `"BUY"` / `"NO_ACTION"` |
+| `breakdown` | `object` | 9 项指标的明细（分值、原始值、是否触发） |
+
+无数据时返回空对象 `{}`。
+
+---
+
+### GET `/api/watchlist`
+
+返回所有已入库标的代码列表。
+
+**请求参数**：无
+
+**响应 200**
+
+```json
+["HK.00700", "SH.600519", "US.AAPL", "US.TSLA"]
+```
+
+---
+
+# 三、规划中的接口变更
 
 以下接口**尚未实现**，待 `FutuDataProvider` 接入后同步上线：
 
