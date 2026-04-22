@@ -99,7 +99,7 @@ def run_update(codes: list[str], quote_ctx=None) -> None:
         quote_ctx = OpenQuoteContext(host=config.OPEND_HOST, port=config.OPEND_PORT)
 
     try:
-        from trader_analysis.data.providers import FutuLiveDataProvider
+        from trader_analysis.futu_strategy.providers import FutuLiveDataProvider
 
         provider = FutuLiveDataProvider()
 

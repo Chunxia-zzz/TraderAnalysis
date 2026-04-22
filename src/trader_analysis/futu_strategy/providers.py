@@ -1,16 +1,48 @@
+"""数据源适配层。
+
+提供 OHLCV 标准 Schema 定义、数据归一化函数和富途实时数据源。
+所有外部 K 线数据必须经 normalize_ohlcv() 处理后才能进入指标计算层。
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 
-from trader_analysis.data.schemas import OHLCVSchema, REQUIRED_OHLCV_COLUMNS
+
+# ── OHLCV Schema ─────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class OHLCVSchema:
+    timestamp: str = "timestamp"
+    open: str = "open"
+    high: str = "high"
+    low: str = "low"
+    close: str = "close"
+    volume: str = "volume"
+    symbol: str = "symbol"
+    timeframe: str = "timeframe"
+
+
+REQUIRED_OHLCV_COLUMNS = {
+    OHLCVSchema.timestamp,
+    OHLCVSchema.open,
+    OHLCVSchema.high,
+    OHLCVSchema.low,
+    OHLCVSchema.close,
+}
+
+
+# ── 异常 ─────────────────────────────────────────────────────────────────────
 
 
 class DataProviderError(ValueError):
     pass
+
+
+# ── 归一化 ───────────────────────────────────────────────────────────────────
 
 
 def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -21,7 +53,9 @@ def _normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 def _coerce_ohlcv_types(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    df[OHLCVSchema.timestamp] = pd.to_datetime(df[OHLCVSchema.timestamp], utc=False, errors="coerce")
+    df[OHLCVSchema.timestamp] = pd.to_datetime(
+        df[OHLCVSchema.timestamp], utc=False, errors="coerce"
+    )
     if df[OHLCVSchema.timestamp].isna().any():
         bad = int(df[OHLCVSchema.timestamp].isna().sum())
         raise DataProviderError(f"Failed to parse {bad} timestamp rows.")
@@ -29,7 +63,9 @@ def _coerce_ohlcv_types(df: pd.DataFrame) -> pd.DataFrame:
     for col in [OHLCVSchema.open, OHLCVSchema.high, OHLCVSchema.low, OHLCVSchema.close]:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     if OHLCVSchema.volume in df.columns:
-        df[OHLCVSchema.volume] = pd.to_numeric(df[OHLCVSchema.volume], errors="coerce").fillna(0.0)
+        df[OHLCVSchema.volume] = pd.to_numeric(df[OHLCVSchema.volume], errors="coerce").fillna(
+            0.0
+        )
     else:
         df[OHLCVSchema.volume] = 0.0
 
@@ -46,6 +82,7 @@ def normalize_ohlcv(
     symbol: str,
     timeframe: str,
 ) -> pd.DataFrame:
+    """将任意 K 线 DataFrame 归一化为标准 OHLCV 格式。"""
     df = _normalize_columns(df)
     missing = REQUIRED_OHLCV_COLUMNS - set(df.columns)
     if missing:
@@ -62,50 +99,7 @@ def normalize_ohlcv(
     return df
 
 
-@dataclass
-class CSVDataProvider:
-    schema: OHLCVSchema = OHLCVSchema()
-
-    def get_ohlcv_from_file(
-        self,
-        path: Path,
-        *,
-        symbol: str,
-        timeframe: str,
-        encoding: Optional[str] = None,
-    ) -> pd.DataFrame:
-        df = pd.read_csv(path, encoding=encoding)
-        return normalize_ohlcv(df, symbol=symbol, timeframe=timeframe)
-
-
-@dataclass
-class FutuJsonDataProvider:
-    """Reads Futu request_history_kline JSON format (real or mock).
-
-    Expects the structure produced by futuapi/scripts/quote/get_kline.py:
-    { "data": [ { "time_key": "...", "open": ..., "high": ...,
-                  "low": ..., "close": ..., "volume": ..., ... } ] }
-    """
-
-    def get_ohlcv_from_file(
-        self,
-        path: Path,
-        *,
-        symbol: str,
-        timeframe: str,
-    ) -> pd.DataFrame:
-        import json
-
-        with open(path, encoding="utf-8") as f:
-            raw = json.load(f)
-
-        rows = raw.get("data", [])
-        if not rows:
-            raise DataProviderError(f"No data rows found in {path}")
-
-        df = pd.DataFrame(rows)
-        df = df.rename(columns={"time_key": OHLCVSchema.timestamp})
-        return normalize_ohlcv(df, symbol=symbol, timeframe=timeframe)
+# ── 富途实时数据源 ───────────────────────────────────────────────────────────
 
 
 @dataclass
@@ -121,7 +115,7 @@ class FutuLiveDataProvider:
         weekly_df = provider.get_weekly(ctx, "HK.00700")
         ctx.close()
 
-    返回 DataFrame 经 ``normalize_ohlcv`` 标准化，列名遵循 ``OHLCVSchema``。
+    返回 DataFrame 经 normalize_ohlcv 标准化，列名遵循 OHLCVSchema。
     """
 
     def get_kline(
@@ -133,13 +127,11 @@ class FutuLiveDataProvider:
         *,
         timeframe: str,
     ) -> pd.DataFrame:
-        """通用 K 线拉取，通过 ``kl_type`` 指定周期。"""
+        """通用 K 线拉取，通过 kl_type 指定周期。"""
         try:
             from futu import AuType  # type: ignore[import]
         except ImportError as exc:
-            raise DataProviderError(
-                "futu-api 未安装，请执行: pip install futu-api"
-            ) from exc
+            raise DataProviderError("futu-api 未安装，请执行: pip install futu-api") from exc
 
         ret, df, _ = quote_ctx.request_history_kline(
             code,
@@ -168,23 +160,3 @@ class FutuLiveDataProvider:
         except ImportError as exc:
             raise DataProviderError("futu-api 未安装") from exc
         return self.get_kline(quote_ctx, code, KLType.K_WEEK, count, timeframe="1W")
-
-
-@dataclass
-class ParquetDataProvider:
-    schema: OHLCVSchema = OHLCVSchema()
-
-    def get_ohlcv_from_file(
-        self,
-        path: Path,
-        *,
-        symbol: str,
-        timeframe: str,
-    ) -> pd.DataFrame:
-        try:
-            df = pd.read_parquet(path)
-        except Exception as e:  # pragma: no cover
-            raise DataProviderError(
-                "Failed to read parquet. Install optional dependency: pip install -e '.[parquet]'"
-            ) from e
-        return normalize_ohlcv(df, symbol=symbol, timeframe=timeframe)

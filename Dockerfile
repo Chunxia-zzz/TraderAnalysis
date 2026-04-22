@@ -25,26 +25,23 @@ RUN groupadd -r trader && useradd -r -g trader trader
 # Copy installed packages from builder
 COPY --from=builder /install /usr/local
 
-# Copy application source and example data
+# Copy application source and data
 COPY src/ ./src/
-COPY examples/ ./examples/
+COPY data/watchlist.json ./data/
 
-# Set ownership
-RUN chown -R trader:trader /app
+# Ensure data directory exists for SQLite
+RUN mkdir -p /app/data /app/logs && chown -R trader:trader /app
 
 USER trader
 
 # ── Environment defaults (override via docker run -e or .env) ───────────────
-ENV TA_DATA_PATH=examples/mock_futu_kline_HK.00700.json
-ENV TA_SYMBOL=HK.00700
-ENV TA_TIMEFRAME=1D
-ENV TA_STRATEGY=ma_cross
-ENV TA_REFRESH_SECONDS=5
+ENV TA_DB_PATH=/app/data/indicators.db
+ENV TA_LOG_DIR=/app/logs
 
 EXPOSE 8000
 
-# Health check using the /health endpoint
+# Health check using the watchlist endpoint
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/watchlist')" || exit 1
 
 CMD ["python", "-m", "trader_analysis", "serve", "--host", "0.0.0.0", "--port", "8000"]

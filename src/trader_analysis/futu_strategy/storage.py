@@ -89,11 +89,20 @@ def batch_upsert(code: str, ktype: str, df: pd.DataFrame) -> int:
     col_names = ",".join(["code", "ktype"] + _KLINE_COLS + ["updated_at"])
     sql = f"INSERT OR REPLACE INTO kline_indicators ({col_names}) VALUES ({placeholders})"
 
+    # DataFrame 列名 → DB 列名映射（normalize_ohlcv 产出 "timestamp"，DB 存 "date"）
+    col_map = {"date": "timestamp"}
+
     for _, row in df.iterrows():
         values = [code, ktype]
         for c in _KLINE_COLS:
-            v = row.get(c)
-            values.append(None if pd.isna(v) else v)
+            src = col_map.get(c, c)
+            v = row.get(src)
+            if pd.isna(v):
+                values.append(None)
+            elif isinstance(v, pd.Timestamp):
+                values.append(v.strftime("%Y-%m-%d"))
+            else:
+                values.append(v)
         values.append(now)
         conn.execute(sql, values)
         count += 1

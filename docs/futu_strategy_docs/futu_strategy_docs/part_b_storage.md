@@ -246,20 +246,27 @@ def query_latest_score(code: str) -> dict:
 
 ### init_history.py — 历史初始化脚本（自实现）
 
+支持**断点续传**和**频率控制**，40 只标的中途中断后重新运行即可从断点继续。
+
 ```
-python init_history.py --codes HK.00700 US.AAPL SH.600519
+python -m trader_analysis init                        # 全部 watchlist
+python -m trader_analysis init --codes US.AAPL US.TSLA  # 指定标的
+python -m trader_analysis init --force                 # 强制重拉全部
 
 执行流程：
   1. storage.init_db() 建表
-  2. 检查历史 K 线额度（需 >= 标的数 × 2）
-  3. for each code:
+  2. 检查已有数据标的（日线+周线均有则跳过，支持断点续传）
+  3. 检查历史 K 线额度（需 >= 待拉取标的数 × 2）
+  4. for each pending code（每次请求间隔 3 秒，避免触发频率限制）:
      a. data_fetcher 拉取 1000 根日线 + 200 根周线（API 单次上限）
      b. calc_indicators(daily_df, DAILY_INDICATOR_CONFIG)
      c. calc_indicators(weekly_df, WEEKLY_INDICATOR_CONFIG)
      d. storage.batch_upsert(code, '1d', daily_df)
      e. storage.batch_upsert(code, '1w', weekly_df)
-  4. 输出初始化结果摘要
+  5. 输出结果摘要（成功/失败数量），失败的标的重新运行即可
 ```
+
+**--force 参数**：忽略已有数据，强制重新拉取所有标的。用于数据库重建场景。
 
 ---
 

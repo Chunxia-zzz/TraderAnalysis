@@ -11,8 +11,9 @@ from __future__ import annotations
 
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-from trader_analysis.futu_strategy import storage
+from trader_analysis.futu_strategy import config, storage
 
 app = FastAPI(title="Strategy Indicators API")
 
@@ -37,6 +38,17 @@ def get_indicators(
 ):
     """返回某标的某周期最近 N 根 K 线 + 全部指标（日期升序，供图表使用）。"""
     rows = storage.query_range(code, ktype, days)
+    if not rows:
+        ktype_label = {"1d": "日线", "1w": "周线"}.get(ktype, ktype)
+        return JSONResponse(
+            status_code=404,
+            content={
+                "code": code,
+                "ktype": ktype,
+                "data": [],
+                "message": f"{code} 暂无{ktype_label}数据，请等待历史数据导入完成",
+            },
+        )
     return {"code": code, "ktype": ktype, "data": rows}
 
 
@@ -46,16 +58,42 @@ def get_latest(
     ktype: str = Query(default="1d", pattern="^(1d|1w)$"),
 ):
     """返回最新一根的所有指标值。"""
-    return storage.query_latest(code, ktype)
+    result = storage.query_latest(code, ktype)
+    if not result:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "message": f"{code} 暂无数据，请等待历史数据导入完成",
+            },
+        )
+    return result
 
 
 @app.get("/api/scores/latest")
 def get_latest_score(code: str):
     """返回最新一次评分结果。"""
-    return storage.query_latest_score(code)
+    result = storage.query_latest_score(code)
+    if not result:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "message": f"{code} 暂无评分数据",
+            },
+        )
+    return result
 
 
 @app.get("/api/watchlist")
 def get_watchlist():
-    """返回所有已入库标的列表。"""
-    return storage.list_codes()
+    """返回完整标的池（含名称、分类、标签等元信息），数据来源为 watchlist.json。"""
+    codes_in_db = set(storage.list_codes())
+    items = []
+    for item in config.WATCHLIST_DETAIL:
+        items.append({
+            **item,
+            "has_data": item["futu_code"] in codes_in_db,
+        })
+    return {
+        "categories": config.WATCHLIST_CATEGORIES,
+        "watchlist": items,
+    }

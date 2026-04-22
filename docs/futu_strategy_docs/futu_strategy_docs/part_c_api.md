@@ -11,7 +11,7 @@
 | J1 | `/api/indicators` | GET | 返回某标的某周期最近 N 根 K 线 + 全部指标（绘图用） |
 | J2 | `/api/indicators/latest` | GET | 返回最新一根指标值（面板/信号灯展示） |
 | J3 | `/api/scores/latest` | GET | 返回最新评分结果（评分面板展示） |
-| J4 | `/api/watchlist` | GET | 返回所有已入库标的列表（下拉选择） |
+| J4 | `/api/watchlist` | GET | 返回完整标的池（含分类、标签、数据状态） |
 
 ---
 
@@ -50,8 +50,15 @@ def get_indicators(
     """
     J1: 返回某标的某周期最近 N 根 K 线 + 全部指标。
     日期升序返回（最旧在前，最新在后），符合图表从左到右的时间轴。
+    无数据时返回 404 + 描述性提示。
     """
     rows = storage.query_range(code, ktype, days)
+    if not rows:
+        ktype_label = {"1d": "日线", "1w": "周线"}.get(ktype, ktype)
+        return JSONResponse(status_code=404, content={
+            "code": code, "ktype": ktype, "data": [],
+            "message": f"{code} 暂无{ktype_label}数据，请等待历史数据导入完成",
+        })
     return {"code": code, "ktype": ktype, "data": rows}
 
 
@@ -60,20 +67,33 @@ def get_latest(
     code:  str,
     ktype: str = Query(default="1d", pattern="^(1d|1w)$"),
 ):
-    """J2: 返回最新一根的所有指标值。"""
-    return storage.query_latest(code, ktype)
+    """J2: 返回最新一根的所有指标值。无数据时返回 404。"""
+    result = storage.query_latest(code, ktype)
+    if not result:
+        return JSONResponse(status_code=404, content={
+            "message": f"{code} 暂无数据，请等待历史数据导入完成",
+        })
+    return result
 
 
 @app.get("/api/scores/latest")
 def get_latest_score(code: str):
-    """J3: 返回最新一次评分结果。"""
-    return storage.query_latest_score(code)
+    """J3: 返回最新一次评分结果。无数据时返回 404。"""
+    result = storage.query_latest_score(code)
+    if not result:
+        return JSONResponse(status_code=404, content={
+            "message": f"{code} 暂无评分数据",
+        })
+    return result
 
 
 @app.get("/api/watchlist")
 def get_watchlist():
-    """J4: 返回所有已入库标的列表。"""
-    return storage.list_codes()
+    """J4: 返回完整标的池（含分类、标签、数据状态），数据来源为 watchlist.json。"""
+    codes_in_db = set(storage.list_codes())
+    items = [{**item, "has_data": item["futu_code"] in codes_in_db}
+             for item in config.WATCHLIST_DETAIL]
+    return {"categories": config.WATCHLIST_CATEGORIES, "watchlist": items}
 ```
 
 ### 启动命令
@@ -152,10 +172,51 @@ uvicorn api_server:app --host 0.0.0.0 --port 8000
 ### J4: `GET /api/watchlist`
 
 ```json
-["HK.00700", "SH.600519", "US.AAPL", "US.TSLA"]
+{
+  "categories": {
+    "mag7": "MAG7",
+    "storage": "存储",
+    "crypto": "加密"
+  },
+  "watchlist": [
+    {
+      "ticker": "NVDA",
+      "name": "NVIDIA Corporation",
+      "market": "US",
+      "category": "mag7",
+      "tags": ["AI芯片", "GPU"],
+      "futu_code": "US.NVDA",
+      "has_data": true
+    },
+    {
+      "ticker": "SNDK",
+      "name": "Sandisk Corporation",
+      "market": "US",
+      "category": "storage",
+      "futu_code": "US.SNDK",
+      "has_data": true
+    }
+  ]
+}
 ```
 
-前端直接消费以上 JSON，无需任何额外计算。
+- `has_data: true` 表示该标的已有历史数据，可查询指标
+- `has_data: false` 表示尚未导入数据，前端可显示"数据加载中"
+
+### 无数据时的 404 响应
+
+当查询的标的尚无数据时，J1/J2/J3 返回 HTTP 404：
+
+```json
+{
+  "code": "US.FAKECODE",
+  "ktype": "1d",
+  "data": [],
+  "message": "US.FAKECODE 暂无日线数据，请等待历史数据导入完成"
+}
+```
+
+前端应检查 HTTP 状态码，404 时显示 `message` 字段内容。
 
 ---
 

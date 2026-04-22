@@ -1,0 +1,72 @@
+{
+  "meta": {
+    "name": "Investment Watchlist",
+    "created": "2026-04-13",
+    "last_updated": "2026-04-22",
+    "version": "2.1",
+    "currency": "USD"
+  },
+  "categories": {
+    "market_gold_btc": "大盘黄金比特币",
+    "storage": "存储",
+    "optical": "光通信",
+    "mag7": "MAG7",
+    "crypto": "加密",
+    "semiconductor": "强势半导体",
+    "space": "太空",
+    "cloud": "云",
+    "china_adr": "中概",
+    "defensive_consumer": "防守消费股"
+  },
+  "watchlist": [
+    {"ticker":"QQQ","name":"Invesco QQQ Trust","market":"US","category":"market_gold_btc","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["纳斯达克100","大盘指数"],"notes":""},
+    {"ticker":"SPY","name":"SPDR S&P 500 ETF Trust","market":"US","category":"market_gold_btc","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["标普500","大盘指数"],"notes":""},
+    {"ticker":"GLD","name":"SPDR Gold Shares","market":"US","category":"market_gold_btc","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["黄金ETF","避险"],"notes":""},
+    {"ticker":"IBIT","name":"iShares Bitcoin Trust ETF","market":"US","category":"market_gold_btc","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["比特币ETF","现货BTC"],"notes":""},
+
+    {"ticker":"SNDK","name":"Sandisk Corporation","market":"US","category":"storage","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["闪存","SSD"],"notes":""},
+    {"ticker":"MU","name":"Micron Technology Inc.","market":"US","category":"storage","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["内存","DRAM/NAND"],"notes":""},
+    {"ticker":"DRAM","name":"DRAM","market":"US","category":"storage","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["存储"],"notes":""},
+    {"ticker":"07709","name":"南方两倍做多海力士","market":"HK","category":"storage","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["港股","存储","杠杆"],"notes":""},
+
+    {"ticker":"LITE","name":"Lumentum Holdings Inc.","market":"US","category":"optical","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["光模块","光通信"],"notes":""},
+    {"ticker":"COHR","name":"Coherent Corp.","market":"US","category":"optical","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["光通信","激光"],"notes":""},
+    {"ticker":"MRVL","name":"Marvell Technology Inc.","market":"US","category":"optical","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["网络芯片","数据中心"],"notes":""},
+
+    {"ticker":"NVDA","name":"NVIDIA Corporation","market":"US","category":"mag7","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["AI芯片","GPU"],"notes":""},
+    {"ticker":"GOOGL","name":"Alphabet Inc.","market":"US","category":"mag7","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["搜索","云计算","AI"],"notes":""},
+    {"ticker":"AAPL","name":"Apple Inc.","market":"US","category":"mag7","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["消费电子","生态系统"],"notes":""},
+    {"ticker":"MSFT","name":"Microsoft Corporation","market":"US","category":"mag7","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["云计算","AI","企业软件"],"notes":""},
+    {"ticker":"META","name":"Meta Platforms Inc.","market":"US","category":"mag7","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["社交媒体","AI"],"notes":""},
+    {"ticker":"TSLA","name":"Tesla Inc.","market":"US","category":"mag7","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["电动车","自动驾驶"],"notes":""},
+    {"ticker":"AMZN","name":"Amazon.com Inc.","market":"US","category":"mag7","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["电商","AWS"],"notes":""},
+
+    {"ticker":"HOOD","name":"Robinhood Markets Inc.","market":"US","category":"crypto","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["加密交易","券商"],"notes":""},
+    {"ticker":"COIN","name":"Coinbase Global Inc.","market":"US","category":"crypto","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["加密交易所","行业龙头"],"notes":""},
+    {"ticker":"CRCL","name":"Circle Internet Group Inc.","market":"US","category":"crypto","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["USDC","稳定币"],"notes":""},
+    {"ticker":"MSTR","name":"Strategy Inc.","market":"US","category":"crypto","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["BTC持仓","杠杆BTC敞口"],"notes":""},
+    {"ticker":"BMNR","name":"BMNR","market":"US","category":"crypto","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["加密"],"notes":""},
+
+    {"ticker":"AMD","name":"Advanced Micro Devices Inc.","market":"US","category":"semiconductor","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["CPU","GPU"],"notes":""},
+    {"ticker":"INTC","name":"Intel Corporation","market":"US","category":"semiconductor","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["CPU","代工"],"notes":""},
+    {"ticker":"TSM","name":"Taiwan Semiconductor Manufacturing Co.","market":"US","category":"semiconductor","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["代工龙头","先进制程"],"notes":""},
+    {"ticker":"AVGO","name":"Broadcom Inc.","market":"US","category":"semiconductor","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["网络芯片","AI定制芯片"],"notes":""},
+
+    {"ticker":"RKLB","name":"Rocket Lab USA Inc.","market":"US","category":"space","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["火箭发射","小型卫星"],"notes":""},
+    {"ticker":"ASTS","name":"AST SpaceMobile Inc.","market":"US","category":"space","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["卫星通信","手机直连"],"notes":""},
+
+    {"ticker":"CRWV","name":"CoreWeave Inc.","market":"US","category":"cloud","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["GPU云","AI基础设施"],"notes":""},
+    {"ticker":"NBIS","name":"Nebius Group N.V.","market":"US","category":"cloud","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["AI云","算力"],"notes":""},
+    {"ticker":"ORCL","name":"Oracle Corporation","market":"US","category":"cloud","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["数据库","云计算"],"notes":""},
+
+    {"ticker":"PDD","name":"PDD Holdings Inc.","market":"US","category":"china_adr","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["电商","Temu"],"notes":""},
+    {"ticker":"FUTU","name":"Futu Holdings Ltd.","market":"US","category":"china_adr","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["互联网券商","港美股"],"notes":""},
+    {"ticker":"BABA","name":"Alibaba Group Holding Ltd.","market":"US","category":"china_adr","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["电商","云计算"],"notes":""},
+
+    {"ticker":"BRK.B","name":"Berkshire Hathaway Inc. Class B","market":"US","category":"defensive_consumer","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["价值投资","多元控股"],"notes":""},
+    {"ticker":"KO","name":"The Coca-Cola Company","market":"US","category":"defensive_consumer","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["饮料","股息"],"notes":""},
+    {"ticker":"PEP","name":"PepsiCo Inc.","market":"US","category":"defensive_consumer","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["饮料","零食","股息"],"notes":""},
+    {"ticker":"YUMC","name":"Yum China Holdings Inc.","market":"US","category":"defensive_consumer","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["餐饮","肯德基","必胜客"],"notes":""},
+    {"ticker":"MCD","name":"McDonald's Corporation","market":"US","category":"defensive_consumer","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["快餐","股息","全球连锁"],"notes":""}
+  ]
+}

@@ -4,6 +4,36 @@
 
 ---
 
+## [v2.1.0] — 2026-04-23
+
+### 重构
+- 删除已废弃模块：`indicators/`、`signals/`、`notify/`、`backtest/`、`strategy/`、`api/`、`examples/`
+- 合并 `data/providers.py` + `data/schemas.py` → `futu_strategy/providers.py`（只保留 FutuLiveDataProvider）
+- 删除无用数据源：CSVDataProvider、FutuJsonDataProvider、ParquetDataProvider
+- CLI 从 3 命令（backtest/signals/serve）改为 4 命令（serve/init/update/run）
+- 项目结构精简为：`cli.py` + `futu_strategy/`（完整三层架构）
+
+### 新增
+- `config.py`：WATCHLIST 从 `data/watchlist.json` 动态加载（40 只标的，10 个分类）
+- `api_server.py`：`/api/watchlist` 返回完整标的信息（name/category/tags/has_data）
+- `api_server.py`：指标/评分接口无数据时返回 HTTP 404 + 描述性提示
+- `init_history.py`：断点续传（自动跳过已有数据）+ 频率控制（3 秒间隔）+ `--force` 参数
+- 新测试套件：test_smoke / test_config / test_storage / test_api（25 个测试）
+
+### 变更
+- `__init__.py` 版本号修正为 `0.2.0`（与 pyproject.toml 一致）
+- `pyproject.toml` 描述更新为 Futu 量化评分系统
+- `Dockerfile` 更新环境变量和 healthcheck
+- `.env.example` 更新为当前可用的环境变量
+
+### 文档
+- 主技术方案 README.md 重写：删除 v1→v2 迁移指引和已删模块说明，更新项目结构和 CLI 命令
+- API 文档 api.md 重写：删除废弃的 api/app.py 服务，更新响应格式
+- part_c_api.md 更新 watchlist 响应格式和 404 处理
+- part_b_storage.md 更新 init_history 断点续传说明
+
+---
+
 ## [v2.0.0] — 2026-04-20
 
 ### 架构变更

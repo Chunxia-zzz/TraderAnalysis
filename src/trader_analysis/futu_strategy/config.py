@@ -5,17 +5,44 @@
 
 from __future__ import annotations
 
+import json
 import os
 
 # ── OpenD 连接 ────────────────────────────────────────────────────────────────
 OPEND_HOST: str = "127.0.0.1"
 OPEND_PORT: int = 11111
 
-# ── 监控标的列表（Futu 格式：市场.代码）────────────────────────────────────────
-WATCHLIST: list[str] = [
-    "US.AAPL",
-    "US.TSLA",
-    "HK.00700",
+# ── 监控标的列表 ──────────────────────────────────────────────────────────────
+_PROJECT_ROOT_CFG = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..")
+)
+WATCHLIST_JSON_PATH: str = os.path.join(_PROJECT_ROOT_CFG, "data", "watchlist.json")
+
+
+def _load_watchlist() -> tuple[list[dict], dict[str, str]]:
+    """从 watchlist.json 加载标的池，返回 (items, categories)。"""
+    with open(WATCHLIST_JSON_PATH, encoding="utf-8") as f:
+        data = json.load(f)
+    categories = data.get("categories", {})
+    items = data.get("watchlist", [])
+    return items, categories
+
+
+def _to_futu_code(item: dict) -> str:
+    """将 JSON 条目转为 Futu 格式代码，如 US.SNDK、HK.07709。"""
+    market = item["market"]
+    ticker = item["ticker"]
+    return f"{market}.{ticker}"
+
+
+_WATCHLIST_ITEMS, WATCHLIST_CATEGORIES = _load_watchlist()
+
+# Futu 格式代码列表，供 runner / init_history / daily_update 使用
+WATCHLIST: list[str] = [_to_futu_code(item) for item in _WATCHLIST_ITEMS]
+
+# 完整标的信息（带 futu_code 字段），供 API 层返回给前端
+WATCHLIST_DETAIL: list[dict] = [
+    {**item, "futu_code": _to_futu_code(item)} for item in _WATCHLIST_ITEMS
 ]
 
 # ── 仓位配置 ───────────────────────────────────────────────────────────────────
@@ -72,7 +99,7 @@ WEEKLY_INDICATOR_CONFIG: dict = {
 
 # ── 持久化存储 ─────────────────────────────────────────────────────────────────
 _PROJECT_ROOT = os.path.normpath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..")
+    os.path.join(os.path.dirname(__file__), "..", "..", "..")
 )
 # SQLite 数据库路径（通过环境变量 TA_DB_PATH 可覆盖）
 DB_PATH: str = os.environ.get(

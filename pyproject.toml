@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "trader-analysis"
 version = "0.2.0"
-description = "Quant indicators, signals, backtest, and (later) live notify."
+description = "Futu-based quantitative stock scoring and simulated trading system."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }

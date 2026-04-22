@@ -10,7 +10,7 @@ import logging
 
 import pandas as pd
 
-from trader_analysis.data.providers import DataProviderError, FutuLiveDataProvider
+from trader_analysis.futu_strategy.providers import DataProviderError, FutuLiveDataProvider
 from trader_analysis.futu_strategy import config
 
 logger = logging.getLogger(__name__)
@@ -27,8 +27,10 @@ def check_kl_quota(quote_ctx, code_list: list[str]) -> None:
     if ret != 0:
         raise RuntimeError(f"获取 K 线额度失败: {quota}")
 
-    # quota 可能是 DataFrame 或 dict，统一取 remain_count
-    if hasattr(quota, "iloc"):
+    # quota 可能是 tuple (used, remain, detail_list)、DataFrame 或 dict
+    if isinstance(quota, tuple):
+        remain = int(quota[1])
+    elif hasattr(quota, "iloc"):
         remain = int(quota["remain_count"].iloc[0])
     else:
         remain = int(quota.get("remain_count", 0))
