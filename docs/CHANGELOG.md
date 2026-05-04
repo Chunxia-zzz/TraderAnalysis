@@ -4,6 +4,41 @@
 
 ---
 
+## [v2.2.0] — 2026-05-04
+
+### 新增
+- **`/health` 端点**：健康检查，供前端启动时检测后端是否在线
+- **Docker Compose 方案**：API + 定时任务一体化容器部署
+  - `docker/entrypoint.sh`：多模式入口（serve/all/init/update/temperature/run）
+  - `docker/crontab`：北京时间 04:15 自动增量更新 + 市场温度计算
+  - `docker-compose.yml`：trader-api（常驻）+ trader-init（一次性初始化）
+- **市场温度评分系统**（`market_scorer.py`）：6 维度加权评估市场情绪冷热
+  - 日线技术面（30%）：SPY/QQQ 的 RSI + MACD 百分位 + 布林 %B
+  - 周线技术面（15%）：SPY/QQQ 的周线 RSI + MACD 百分位
+  - 波动率（25%）：VIXY 百分位排名（反向，纯百分位方案，自适应 contango 衰减）
+  - 价格位置（15%）：52 周位置 + ATH 回撤 + MA200 偏离度
+  - 量能确认（8%）：量比 + 5 日量能趋势（结合涨跌方向）
+  - 避险信号（7%）：GLD RSI/MACD/BB 全部反向映射
+- 仓位映射公式：`target = 90 - composite × 0.8`（常规）；极端层 90%~120%（需 4 条件同时满足）
+- CLI 新命令：`trader-analysis temperature` — 计算并打印市场温度评分
+- API 新端点：`GET /api/market-temperature`（最新评分）、`GET /api/market-temperature/history`（历史趋势）
+- SQLite 新表：`market_score`（扁平字段）+ `market_score_detail`（完整明细 JSON）
+- `config.py` 新增 `MARKET_TEMP_CODES`、`MARKET_TEMP_WEIGHTS`、`MARKET_TEMP_VOL_CODE`
+- `watchlist.json` 新增 VIXY（VIX 短期期货 ETF，作为波动率代理）
+- 测试：`test_market_scorer.py`（31 个）+ `test_market_api.py`（4 个），全部通过
+
+### 设计决策
+- 波动率维度使用 VIXY 而非 VIX：Futu 不支持 VIX K 线拉取，VIXY 与 VIX 高度正相关
+- VIXY 只用百分位排名（不用绝对值公式）：避免 contango 衰减导致的绝对值失真
+- 极端层 VIX>35 条件改为 VIXY 百分位>90%：等效语义，不依赖固定阈值
+- 市场温度与个股评分（scorer.py）完全独立，互不影响
+
+### 文档
+- `docs/api.md` 更新：新增 market-temperature 相关端点文档
+- `position-sizing-strategy.md` 移至 `docs/futu_strategy_docs/futu_strategy_docs/`
+
+---
+
 ## [v2.1.0] — 2026-04-23
 
 ### 重构

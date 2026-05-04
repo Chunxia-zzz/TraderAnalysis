@@ -56,7 +56,7 @@
 src/trader_analysis/
 ├── __init__.py              # 版本号 0.2.0
 ├── __main__.py              # → cli:app
-├── cli.py                   # CLI 入口（serve / init / update / run）
+├── cli.py                   # CLI 入口（serve / init / update / run / temperature）
 │
 └── futu_strategy/           # 完整的三层架构代码
     │
@@ -66,7 +66,8 @@ src/trader_analysis/
     ├── data_fetcher.py       # 富途 K 线数据获取 + 额度预检
     ├── external_data.py      # 外部数据获取（VIX 快照、CNN F&G）
     ├── indicators.py         # 技术指标计算（纯函数，不感知标的/周期）
-    ├── scorer.py             # 评分引擎（读指标值 → 判断 → 打分，9 项加权评分）
+    ├── scorer.py             # 个股评分引擎（读指标值 → 判断 → 打分，9 项加权评分）
+    ├── market_scorer.py      # 市场温度评分（6 维度加权，SPY/QQQ/GLD/VIXY）
     ├── trade_executor.py     # 模拟盘交易执行（限价单 + 持仓检查）
     │
     │── Part B: 持久化存储层 ────────────────────────
@@ -246,9 +247,12 @@ pip install -e ".[dev]"
 # 启动 API 服务
 trader-analysis serve --host 0.0.0.0 --port 8000
 
+# 启动 API 服务（开发模式，代码修改后自动重载）
+uvicorn trader_analysis.futu_strategy.api_server:app --host 0.0.0.0 --port 8000 --reload --reload-dir src
+
 # 历史数据初始化（断点续传，自动跳过已有数据）
 trader-analysis init
-trader-analysis init --codes US.AAPL US.TSLA
+trader-analysis init --codes US.AAPL --codes US.TSLA
 trader-analysis init --force
 
 # 每日增量更新
@@ -256,7 +260,12 @@ trader-analysis update
 
 # 完整策略流程（增量更新 → 评分 → 交易）
 trader-analysis run
+
+# 市场温度评分（6 维度综合评分 + 目标仓位建议，从已入库数据计算，不需要 OpenD）
+trader-analysis temperature
 ```
+
+> **注意**：`data/indicators.db` 为纯本地文件（已加入 .gitignore），clone 后需重新运行 `trader-analysis init` 拉取数据。
 
 ---
 

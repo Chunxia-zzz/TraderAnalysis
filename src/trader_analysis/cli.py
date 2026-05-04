@@ -60,3 +60,36 @@ def run(
 
     code_list = codes if codes else config.WATCHLIST
     run_strategy(code_list)
+
+
+@app.command()
+def temperature(
+    backfill: int = typer.Option(0, help="回溯天数（从已有K线数据计算历史评分，0=仅计算最新）"),
+) -> None:
+    """计算市场温度评分（6 维度综合评分 + 目标仓位建议）。"""
+    from trader_analysis.futu_strategy.market_scorer import (
+        backfill_market_temperature,
+        calculate_market_temperature,
+    )
+    from trader_analysis.futu_strategy.storage import init_db
+
+    init_db()
+
+    if backfill > 0:
+        typer.echo(f"回溯计算最近 {backfill} 天的市场温度...")
+        count = backfill_market_temperature(days=backfill)
+        typer.echo(f"回溯完成，写入 {count} 天评分")
+        typer.echo("")
+
+    result = calculate_market_temperature()
+
+    typer.echo(f"日期: {result['date']}")
+    typer.echo(f"综合评分: {result['composite_score']:.1f} / 100")
+    typer.echo(f"市场状态: {result['market_status']}")
+    typer.echo(f"建议仓位: {result['target_position_pct']:.1f}%")
+    typer.echo(f"操作建议: {result['action_suggestion']}")
+    if result["extreme_triggered"]:
+        typer.echo(f"[极端层已触发] 杠杆工具: {result['leverage_tool']}")
+    typer.echo("── 维度拆解 ──")
+    for dim in result["dimensions"]:
+        typer.echo(f"  {dim['label']:6s} [{dim['weight']:.0%}]  {dim['score']:.1f}")

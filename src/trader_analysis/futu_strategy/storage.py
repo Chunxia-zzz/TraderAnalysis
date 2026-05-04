@@ -55,6 +55,41 @@ CREATE TABLE IF NOT EXISTS score_results (
     updated_at   TEXT,
     PRIMARY KEY (code, date)
 );
+
+CREATE TABLE IF NOT EXISTS market_score (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    date                TEXT NOT NULL UNIQUE,
+    composite_score     REAL NOT NULL,
+    target_position_pct REAL NOT NULL,
+    extreme_triggered   INTEGER DEFAULT 0,
+    leverage_tool       TEXT DEFAULT 'none',
+    daily_tech_score    REAL,
+    weekly_tech_score   REAL,
+    vol_score           REAL,
+    price_score         REAL,
+    volume_score        REAL,
+    safe_haven_score    REAL,
+    spy_price           REAL,
+    qqq_price           REAL,
+    gld_price           REAL,
+    vix_value           REAL,
+    spy_daily_rsi       REAL,
+    qqq_daily_rsi       REAL,
+    spy_weekly_rsi      REAL,
+    qqq_weekly_rsi      REAL,
+    spy_ma200_dev       REAL,
+    qqq_ma200_dev       REAL,
+    spy_vol_ratio       REAL,
+    qqq_vol_ratio       REAL,
+    created_at          TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS market_score_detail (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    date        TEXT NOT NULL UNIQUE,
+    detail_json TEXT NOT NULL,
+    created_at  TEXT DEFAULT (datetime('now'))
+);
 """
 
 # K 线 + 指标列（写入顺序）
@@ -207,3 +242,91 @@ def query_latest_score(code: str) -> dict:
         d["breakdown"] = json.loads(d["breakdown"]) if d.get("breakdown") else {}
         return d
     return {}
+
+
+# ── 市场温度（Market Temperature）──────────────────────────────────────────────
+
+
+def upsert_market_score(date: str, result: dict) -> None:
+    """写入/更新市场温度评分。"""
+    conn = _get_conn()
+    conn.execute(
+        "INSERT OR REPLACE INTO market_score "
+        "(date, composite_score, target_position_pct, extreme_triggered, leverage_tool, "
+        "daily_tech_score, weekly_tech_score, vol_score, price_score, volume_score, safe_haven_score, "
+        "spy_price, qqq_price, gld_price, vix_value, "
+        "spy_daily_rsi, qqq_daily_rsi, spy_weekly_rsi, qqq_weekly_rsi, "
+        "spy_ma200_dev, qqq_ma200_dev, spy_vol_ratio, qqq_vol_ratio) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            date,
+            result["composite_score"],
+            result["target_position_pct"],
+            int(result.get("extreme_triggered", False)),
+            result.get("leverage_tool", "none"),
+            result.get("daily_tech_score"),
+            result.get("weekly_tech_score"),
+            result.get("vol_score"),
+            result.get("price_score"),
+            result.get("volume_score"),
+            result.get("safe_haven_score"),
+            result.get("spy_price"),
+            result.get("qqq_price"),
+            result.get("gld_price"),
+            result.get("vix_value"),
+            result.get("spy_daily_rsi"),
+            result.get("qqq_daily_rsi"),
+            result.get("spy_weekly_rsi"),
+            result.get("qqq_weekly_rsi"),
+            result.get("spy_ma200_dev"),
+            result.get("qqq_ma200_dev"),
+            result.get("spy_vol_ratio"),
+            result.get("qqq_vol_ratio"),
+        ),
+    )
+    # 同时写入明细 JSON
+    detail_json = json.dumps(result.get("detail", {}), ensure_ascii=False)
+    conn.execute(
+        "INSERT OR REPLACE INTO market_score_detail (date, detail_json) VALUES (?, ?)",
+        (date, detail_json),
+    )
+    conn.commit()
+    conn.close()
+
+
+def query_latest_market_score() -> dict:
+    """查最新一条市场温度评分。"""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT m.*, d.detail_json FROM market_score m "
+        "LEFT JOIN market_score_detail d ON m.date = d.date "
+        "ORDER BY m.date DESC LIMIT 1"
+    ).fetchone()
+    conn.close()
+    if not row:
+        return {}
+    result = dict(row)
+    result["extreme_triggered"] = bool(result.get("extreme_triggered"))
+    if result.get("detail_json"):
+        result["detail"] = json.loads(result["detail_json"])
+    else:
+        result["detail"] = {}
+    result.pop("detail_json", None)
+    result.pop("id", None)
+    return result
+
+
+def query_market_score_history(days: int = 30) -> list[dict]:
+    """查近 N 天市场温度历史（日期升序）。"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT date, composite_score, target_position_pct, extreme_triggered, leverage_tool, "
+        "daily_tech_score, weekly_tech_score, vol_score, price_score, volume_score, safe_haven_score "
+        "FROM market_score ORDER BY date DESC LIMIT ?",
+        (days,),
+    ).fetchall()
+    conn.close()
+    result = [dict(r) for r in reversed(rows)]
+    for item in result:
+        item["extreme_triggered"] = bool(item.get("extreme_triggered"))
+    return result

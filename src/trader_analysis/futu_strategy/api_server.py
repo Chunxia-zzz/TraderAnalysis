@@ -30,6 +30,12 @@ def _ensure_db() -> None:
     storage.init_db()
 
 
+@app.get("/health")
+def health_check():
+    """健康检查，前端启动时调用以检测后端是否在线。"""
+    return {"status": "ok"}
+
+
 @app.get("/api/indicators")
 def get_indicators(
     code: str,
@@ -97,3 +103,24 @@ def get_watchlist():
         "categories": config.WATCHLIST_CATEGORIES,
         "watchlist": items,
     }
+
+
+@app.get("/api/market-temperature")
+def get_market_temperature():
+    """返回最新一期市场温度评分，供前端仪表盘展示。"""
+    result = storage.query_latest_market_score()
+    if not result:
+        return JSONResponse(
+            status_code=404,
+            content={"message": "暂无市场温度数据，请先运行 trader-analysis temperature 命令"},
+        )
+    return result
+
+
+@app.get("/api/market-temperature/history")
+def get_market_temperature_history(
+    days: int = Query(default=30, ge=1, le=365),
+):
+    """返回近 N 天的市场温度评分历史，用于趋势图。"""
+    history = storage.query_market_score_history(days)
+    return {"history": history}

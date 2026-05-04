@@ -115,3 +115,18 @@ INIT_WEEKLY_KLINE_COUNT: int = 200   # 约 4 年周线数据
 LOG_DIR: str = os.environ.get("TA_LOG_DIR", os.path.join(_PROJECT_ROOT, "logs"))
 SCORE_LOG_FILE: str = os.path.join(LOG_DIR, "score_log.jsonl")
 TRADE_LOG_FILE: str = os.path.join(LOG_DIR, "trade_log.jsonl")
+
+# ── 市场温度（Market Temperature）─────────────────────────────────────────────
+# 波动率使用 VIXY（VIX 短期期货 ETF）代替 VIX 指数
+# VIXY 与 VIX 高度正相关但绝对值不同，因此波动率维度仅使用百分位排名（不用绝对值公式）
+MARKET_TEMP_VOL_CODE: str = "US.VIXY"
+MARKET_TEMP_CODES: list[str] = ["US.SPY", "US.QQQ", "US.GLD", "US.VIXY"]
+
+MARKET_TEMP_WEIGHTS: dict[str, float] = {
+    "daily_tech": 0.30,
+    "weekly_tech": 0.15,
+    "volatility": 0.25,
+    "price_pos": 0.15,
+    "volume": 0.08,
+    "safe_haven": 0.07,
+}
