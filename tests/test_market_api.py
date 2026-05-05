@@ -2,12 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import tempfile
-
-_tmp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-os.environ["TA_DB_PATH"] = _tmp_db.name
-
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -16,24 +10,21 @@ from trader_analysis.futu_strategy.api_server import app
 
 
 @pytest.fixture(autouse=True)
-def setup_db():
+def _isolate_db(monkeypatch, tmp_path):
+    """所有测试使用临时数据库，绝不触碰本地 indicators.db。"""
+    db_path = str(tmp_path / "test_market_api.db")
+    monkeypatch.setattr("trader_analysis.futu_strategy.config.DB_PATH", db_path)
     storage.init_db()
-    # 清空市场评分表，确保每个测试独立
-    conn = storage._get_conn()
-    conn.execute("DELETE FROM market_score")
-    conn.execute("DELETE FROM market_score_detail")
-    conn.execute("DELETE FROM kline_indicators")
-    conn.commit()
-    conn.close()
 
 
 @pytest.mark.asyncio
 async def test_market_temperature_not_found():
-    """无数据时返回 404。"""
+    """无数据时返回 200 + message。"""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         resp = await ac.get("/api/market-temperature")
-    assert resp.status_code == 404
+    assert resp.status_code == 200
     assert "暂无市场温度数据" in resp.json()["message"]
+    assert resp.json()["data"] is None
 
 
 @pytest.mark.asyncio

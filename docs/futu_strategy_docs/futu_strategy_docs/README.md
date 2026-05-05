@@ -67,7 +67,7 @@ src/trader_analysis/
     ├── external_data.py      # 外部数据获取（VIX 快照、CNN F&G）
     ├── indicators.py         # 技术指标计算（纯函数，不感知标的/周期）
     ├── scorer.py             # 个股评分引擎（读指标值 → 判断 → 打分，9 项加权评分）
-    ├── market_scorer.py      # 市场温度评分（6 维度加权，SPY/QQQ/GLD/VIXY）
+    ├── market_scorer.py      # 市场温度评分（3 维度加权，SPY/QQQ）
     ├── trade_executor.py     # 模拟盘交易执行（限价单 + 持仓检查）
     │
     │── Part B: 持久化存储层 ────────────────────────
@@ -261,7 +261,7 @@ trader-analysis update
 # 完整策略流程（增量更新 → 评分 → 交易）
 trader-analysis run
 
-# 市场温度评分（6 维度综合评分 + 目标仓位建议，从已入库数据计算，不需要 OpenD）
+# 市场温度评分（3 维度综合评分 + 目标仓位建议，从已入库数据计算，不需要 OpenD）
 trader-analysis temperature
 ```
 
@@ -340,5 +340,5 @@ STOCK_AND_OPTION 类型模拟账户查询持仓/资金时必须传此参数，�
 
 ---
 
-*文档版本：v2.1 | 最后更新：2026-04-23*
+*文档版本：v2.3 | 最后更新：2026-05-05*
 *适用环境：富途 OpenAPI + Python 3.10+ | 交易环境：模拟盘（SIMULATE）*

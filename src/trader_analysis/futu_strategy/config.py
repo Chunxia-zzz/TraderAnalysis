@@ -84,8 +84,8 @@ ALLOW_PYRAMID: bool = False
 # ── 指标计算配置 ──────────────────────────────────────────────────────────────
 # 日线指标配置（传入 250+ 根日线）
 DAILY_INDICATOR_CONFIG: dict = {
-    "ma": [5, 10, 20, 60, 120, 250],
-    "rsi": [14],
+    "ma": [5, 10, 20, 60, 120, 200, 250],
+    "rsi": [6, 12, 24],
     "macd": {"fast": 12, "slow": 26, "signal": 9},
     "boll": {"length": 20, "std": 2},
     "vol_ma": [20],
@@ -93,8 +93,9 @@ DAILY_INDICATOR_CONFIG: dict = {
 
 # 周线指标配置（传入 60+ 根周线）
 WEEKLY_INDICATOR_CONFIG: dict = {
-    "rsi": [14],
+    "rsi": [6, 12, 24],
     "macd": {"fast": 12, "slow": 26, "signal": 9},
+    "boll": {"length": 20, "std": 2},
 }
 
 # ── 持久化存储 ─────────────────────────────────────────────────────────────────
@@ -117,16 +118,13 @@ SCORE_LOG_FILE: str = os.path.join(LOG_DIR, "score_log.jsonl")
 TRADE_LOG_FILE: str = os.path.join(LOG_DIR, "trade_log.jsonl")
 
 # ── 市场温度（Market Temperature）─────────────────────────────────────────────
-# 波动率使用 VIXY（VIX 短期期货 ETF）代替 VIX 指数
-# VIXY 与 VIX 高度正相关但绝对值不同，因此波动率维度仅使用百分位排名（不用绝对值公式）
-MARKET_TEMP_VOL_CODE: str = "US.VIXY"
-MARKET_TEMP_CODES: list[str] = ["US.SPY", "US.QQQ", "US.GLD", "US.VIXY"]
+# 市场温度仅使用 SPY + QQQ 的技术面和价格位置（3 维度）
+# VIX 期货由用户肉眼观察，不纳入算法
+MARKET_TEMP_VOL_CODE: str = "US.VIXY"  # 保留定义供历史兼容，实际不再使用
+MARKET_TEMP_CODES: list[str] = ["US.SPY", "US.QQQ"]
 
 MARKET_TEMP_WEIGHTS: dict[str, float] = {
-    "daily_tech": 0.30,
-    "weekly_tech": 0.15,
-    "volatility": 0.25,
+    "daily_tech": 0.50,
+    "weekly_tech": 0.35,
     "price_pos": 0.15,
-    "volume": 0.08,
-    "safe_haven": 0.07,
 }

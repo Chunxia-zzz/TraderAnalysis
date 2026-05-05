@@ -22,7 +22,6 @@ from datetime import date
 
 from trader_analysis.futu_strategy import config
 from trader_analysis.futu_strategy.daily_update import run_update
-from trader_analysis.futu_strategy.external_data import get_fear_greed, get_vix, reset_cache
 from trader_analysis.futu_strategy.logger import log_score
 from trader_analysis.futu_strategy.scorer import calculate_score
 from trader_analysis.futu_strategy.storage import init_db, query_recent, upsert_score
@@ -63,13 +62,7 @@ def run_strategy(codes: list[str]) -> None:
         logger.info("开始增量更新存储层...")
         run_update(codes, quote_ctx=quote_ctx)
 
-        # ── 2. 全局数据（VIX / F&G 各只拉取一次）─────────────────────────────
-        reset_cache()
-        vix = get_vix(quote_ctx)
-        fg = get_fear_greed()
-        logger.info(f"全局指标：VIX={vix}, F&G={fg}")
-
-        # ── 3. 逐标的评分与交易 ──────────────────────────────────────────────
+        # ── 2. 逐标的评分与交易 ──────────────────────────────────────────────
         today = date.today().isoformat()
         for code in codes:
             try:
@@ -83,7 +76,7 @@ def run_strategy(codes: list[str]) -> None:
                     logger.warning(f"{code} 存储层无数据，跳过（请先运行 init_history）")
                     continue
 
-                result = calculate_score(code, daily_df, weekly_df, vix=vix, fg=fg)
+                result = calculate_score(code, daily_df, weekly_df)
 
                 # 写入评分结果到存储层
                 upsert_score(code, today, result)

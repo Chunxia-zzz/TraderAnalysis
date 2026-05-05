@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
 from trader_analysis.futu_strategy import config, storage
 
@@ -46,15 +45,12 @@ def get_indicators(
     rows = storage.query_range(code, ktype, days)
     if not rows:
         ktype_label = {"1d": "日线", "1w": "周线"}.get(ktype, ktype)
-        return JSONResponse(
-            status_code=404,
-            content={
-                "code": code,
-                "ktype": ktype,
-                "data": [],
-                "message": f"{code} 暂无{ktype_label}数据，请等待历史数据导入完成",
-            },
-        )
+        return {
+            "code": code,
+            "ktype": ktype,
+            "data": [],
+            "message": f"{code} 暂无{ktype_label}数据，请等待历史数据导入完成",
+        }
     return {"code": code, "ktype": ktype, "data": rows}
 
 
@@ -66,26 +62,24 @@ def get_latest(
     """返回最新一根的所有指标值。"""
     result = storage.query_latest(code, ktype)
     if not result:
-        return JSONResponse(
-            status_code=404,
-            content={
-                "message": f"{code} 暂无数据，请等待历史数据导入完成",
-            },
-        )
+        return {"data": None, "message": f"{code} 暂无数据，请等待历史数据导入完成"}
     return result
 
 
 @app.get("/api/scores/latest")
-def get_latest_score(code: str):
-    """返回最新一次评分结果。"""
-    result = storage.query_latest_score(code)
-    if not result:
-        return JSONResponse(
-            status_code=404,
-            content={
-                "message": f"{code} 暂无评分数据",
-            },
-        )
+def get_latest_score(
+    code: str,
+    date: str | None = Query(default=None, description="指定日期 YYYY-MM-DD，不传则返回最新"),
+):
+    """返回评分结果。支持查询指定日期的历史评分。"""
+    if date is not None:
+        result = storage.query_score_by_date(code, date)
+        if not result:
+            return {"data": None, "message": f"{code} 在 {date} 暂无评分数据（可能为非交易日）"}
+    else:
+        result = storage.query_latest_score(code)
+        if not result:
+            return {"data": None, "message": f"{code} 暂无评分数据"}
     return result
 
 
@@ -105,15 +99,41 @@ def get_watchlist():
     }
 
 
+@app.get("/api/scores/overview")
+def get_scores_overview(
+    date: str | None = Query(default=None, description="指定日期 YYYY-MM-DD，不传则取各标的最新评分"),
+):
+    """返回所有标的的评分概览，按分数降序，按信号分组。用于速览买入机会。"""
+    rows = storage.query_scores_overview(date)
+    if not rows:
+        msg = "暂无评分数据" if not date else f"{date} 暂无评分数据（可能为非交易日）"
+        return {"data": None, "message": msg}
+
+    # 按信号分组
+    strong_buy = [r for r in rows if r["signal"] == "STRONG_BUY"]
+    buy = [r for r in rows if r["signal"] == "BUY"]
+    no_action = [r for r in rows if r["signal"] == "NO_ACTION"]
+
+    return {
+        "date": date or (rows[0]["date"] if rows else None),
+        "total_count": len(rows),
+        "strong_buy": strong_buy,
+        "buy": buy,
+        "no_action": no_action,
+        "summary": {
+            "strong_buy_count": len(strong_buy),
+            "buy_count": len(buy),
+            "no_action_count": len(no_action),
+        },
+    }
+
+
 @app.get("/api/market-temperature")
 def get_market_temperature():
     """返回最新一期市场温度评分，供前端仪表盘展示。"""
     result = storage.query_latest_market_score()
     if not result:
-        return JSONResponse(
-            status_code=404,
-            content={"message": "暂无市场温度数据，请先运行 trader-analysis temperature 命令"},
-        )
+        return {"data": None, "message": "暂无市场温度数据，请先运行 trader-analysis temperature 命令"}
     return result
 
 

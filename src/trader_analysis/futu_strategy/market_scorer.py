@@ -1,8 +1,9 @@
 """市场温度评分模块。
 
-通过 6 个维度加权评估市场情绪冷热程度，输出综合评分（0~100）及目标仓位建议。
+通过 3 个维度加权评估市场情绪冷热程度，输出综合评分（0~100）及目标仓位建议。
 评分越低=越恐慌=应加仓，评分越高=越贪婪=应减仓。
 
+维度：日线技术面(50%) + 周线技术面(35%) + 价格位置(15%)
 数据来源：完全从 storage 读取已入库的 K 线 + 指标，不调用 Futu API。
 """
 
@@ -43,8 +44,8 @@ def _clamp(value: float, lo: float = 0.0, hi: float = 100.0) -> float:
 def _percentile_rank(series: pd.Series, current: float, lookback: int) -> float:
     """当前值在最近 lookback 个值中的百分位排名，返回 0~1。"""
     window = series.tail(lookback).dropna()
-    if len(window) < lookback * 0.5:
-        return 0.5  # 数据不足，中性
+    if len(window) < 10:
+        return 0.5  # 数据不足 10 根，中性
     return float((window < current).sum()) / len(window)
 
 
@@ -63,7 +64,7 @@ def _map_status(composite: float) -> tuple[str, str]:
     return "极度贪婪", "大幅减仓"
 
 
-# ── 维度 1：日线技术面 (30%) ──────────────────────────────────────────────────
+# ── 维度 1：日线技术面 (50%) ──────────────────────────────────────────────────
 
 
 def _score_daily_tech(spy_df: pd.DataFrame, qqq_df: pd.DataFrame) -> dict:
@@ -76,9 +77,9 @@ def _score_daily_tech(spy_df: pd.DataFrame, qqq_df: pd.DataFrame) -> dict:
 
     for label, df in [("SPY", spy_df), ("QQQ", qqq_df)]:
         last = df.iloc[-1]
-        # RSI score: clamp((rsi - 20) / 60 * 100)
-        rsi = float(last.get("rsi14", 50))
-        rsi_score = _clamp((rsi - 20) / 60 * 100)
+        # RSI score: 分档制，每 10 点一档（<10→0, 10-20→10, ..., >90→100）
+        rsi = float(last.get("rsi6", 50))
+        rsi_score = _clamp(int(rsi / 10) * 10.0)
         scores.append(rsi_score)
         breakdown[f"{label}_RSI"] = round(rsi, 1)
         breakdown[f"{label}_RSI_score"] = round(rsi_score, 1)
@@ -105,22 +106,22 @@ def _score_daily_tech(spy_df: pd.DataFrame, qqq_df: pd.DataFrame) -> dict:
     return {"score": final, "breakdown": breakdown}
 
 
-# ── 维度 2：周线技术面 (15%) ──────────────────────────────────────────────────
+# ── 维度 2：周线技术面 (35%) ──────────────────────────────────────────────────
 
 
 def _score_weekly_tech(spy_weekly: pd.DataFrame, qqq_weekly: pd.DataFrame) -> dict:
     """
-    SPY + QQQ 各 2 项：周线 RSI score + 周线 MACD percentile。
-    取 4 项算术平均。
+    SPY + QQQ 各 3 项：周线 RSI score + 周线 MACD percentile + 周线 BB %B。
+    取 6 项算术平均。
     """
     scores = []
     breakdown = {}
 
     for label, df in [("SPY", spy_weekly), ("QQQ", qqq_weekly)]:
         last = df.iloc[-1]
-        # Weekly RSI score
-        rsi = float(last.get("rsi14", 50))
-        rsi_score = _clamp((rsi - 20) / 60 * 100)
+        # Weekly RSI score: 分档制，每 10 点一档（<10→0, 10-20→10, ..., >90→100）
+        rsi = float(last.get("rsi6", 50))
+        rsi_score = _clamp(int(rsi / 10) * 10.0)
         scores.append(rsi_score)
         breakdown[f"{label}_Weekly_RSI"] = round(rsi, 1)
         breakdown[f"{label}_Weekly_RSI_score"] = round(rsi_score, 1)
@@ -133,38 +134,21 @@ def _score_weekly_tech(spy_weekly: pd.DataFrame, qqq_weekly: pd.DataFrame) -> di
         scores.append(macd_score)
         breakdown[f"{label}_Weekly_MACD_score"] = round(macd_score, 1)
 
+        # Weekly Bollinger %B score: clamp(%B * 100)
+        close = float(last.get("close", 0))
+        upper = float(last.get("boll_upper", 0))
+        lower = float(last.get("boll_lower", 0))
+        pct_b = _calc_pct_b(close, upper, lower)
+        bb_score = _clamp(pct_b * 100)
+        scores.append(bb_score)
+        breakdown[f"{label}_Weekly_BB_pctB"] = round(pct_b, 3)
+        breakdown[f"{label}_Weekly_BB_score"] = round(bb_score, 1)
+
     final = sum(scores) / len(scores) if scores else NEUTRAL_SCORE
     return {"score": final, "breakdown": breakdown}
 
 
-# ── 维度 3：波动率 (25%) ─────────────────────────────────────────────────────
-
-
-def _score_volatility(vol_df: pd.DataFrame) -> dict:
-    """
-    使用 VIXY（VIX 短期期货 ETF）的百分位排名评估波动率。
-    VIXY 与 VIX 高度正相关但绝对价格不同（受 contango 衰减影响），
-    因此只用百分位排名（自动归一化），不用绝对值公式。
-
-    VIXY 涨 = 恐慌升 → 百分位高 → 反转后评分低 → 应加仓。
-    """
-    breakdown = {}
-    last = vol_df.iloc[-1]
-    vol_current = float(last.get("close", 0))
-    breakdown["VIXY_price"] = round(vol_current, 2)
-
-    # 百分位排名（反转）：VIXY 处于一年内高位 → 评分低（恐慌）
-    vol_series = vol_df["close"].dropna()
-    vol_pct = _percentile_rank(vol_series, vol_current, 252)
-    vol_pct_score = (1 - vol_pct) * 100
-    breakdown["VIXY_pct_rank"] = round(vol_pct, 3)
-    breakdown["VIXY_pct_score"] = round(vol_pct_score, 1)
-
-    final = vol_pct_score
-    return {"score": final, "breakdown": breakdown}
-
-
-# ── 维度 4：价格位置 (15%) ───────────────────────────────────────────────────
+# ── 维度 3：价格位置 (15%) ───────────────────────────────────────────────────
 
 
 def _score_price_position(spy_df: pd.DataFrame, qqq_df: pd.DataFrame) -> dict:
@@ -192,14 +176,16 @@ def _score_price_position(spy_df: pd.DataFrame, qqq_df: pd.DataFrame) -> dict:
         breakdown[f"{label}_52w_score"] = round(score_52w, 1)
 
         # ATH drawdown: max(high) across ALL stored bars
+        # 零分线 15%：大盘回撤 15% 即为极端恐慌（SPY 正常回调 5-10%）
         ath = float(df["high"].max())
         drawdown = (ath - current_price) / ath if ath > 0 else 0
-        ath_score = _clamp((1 - drawdown / 0.20) * 100)
+        ath_score = _clamp((1 - drawdown / 0.15) * 100)
         scores.append(ath_score)
         breakdown[f"{label}_ATH_drawdown"] = round(drawdown, 4)
         breakdown[f"{label}_ATH_score"] = round(ath_score, 1)
 
         # MA200 deviation
+        # 映射区间 [-15%, +15%] → [0, 100]：大盘偏离 MA200 超过 15% 即为极端
         closes = df["close"].dropna()
         if len(closes) >= 200:
             ma200 = float(closes.tail(200).mean())
@@ -207,7 +193,7 @@ def _score_price_position(spy_df: pd.DataFrame, qqq_df: pd.DataFrame) -> dict:
         else:
             ma200 = float(closes.mean())
             deviation = 0.0
-        ma200_score = _clamp((deviation + 0.20) / 0.40 * 100)
+        ma200_score = _clamp((deviation + 0.15) / 0.30 * 100)
         scores.append(ma200_score)
         breakdown[f"{label}_MA200_dev"] = round(deviation, 4)
         breakdown[f"{label}_MA200_score"] = round(ma200_score, 1)
@@ -216,143 +202,6 @@ def _score_price_position(spy_df: pd.DataFrame, qqq_df: pd.DataFrame) -> dict:
     return {"score": final, "breakdown": breakdown}
 
 
-# ── 维度 5：量能确认 (8%) ────────────────────────────────────────────────────
-
-
-def _score_vol_ratio(volume: float, vol_ma20: float, price_change: float) -> int:
-    """量比评分（结合当日涨跌方向）。"""
-    if vol_ma20 <= 0 or pd.isna(vol_ma20):
-        return 55
-    vol_ratio = volume / vol_ma20
-    if price_change < 0:
-        if vol_ratio >= 2.5:
-            return 0
-        elif vol_ratio >= 1.5:
-            return 25
-        elif vol_ratio <= 0.5:
-            return 35
-        else:
-            return 45
-    else:
-        if vol_ratio >= 2.0:
-            return 80
-        elif vol_ratio >= 1.2:
-            return 65
-        elif vol_ratio <= 0.5:
-            return 40
-        else:
-            return 55
-
-
-def _score_vol_trend(volumes: pd.Series, vol_ma20: float, avg_return_5d: float) -> int:
-    """5 日量能趋势评分。"""
-    if vol_ma20 <= 0 or pd.isna(vol_ma20) or len(volumes) < 5:
-        return 50
-    vol_5d_avg = float(volumes.tail(5).mean())
-    vol_trend = vol_5d_avg / vol_ma20
-    if avg_return_5d < -0.03:
-        if vol_trend >= 2.0:
-            return 5
-        elif vol_trend >= 1.3:
-            return 20
-        elif vol_trend <= 0.6:
-            return 40
-        else:
-            return 30
-    elif avg_return_5d > 0.03:
-        if vol_trend >= 1.5:
-            return 85
-        else:
-            return 60
-    else:
-        return 50
-
-
-def _score_volume(spy_df: pd.DataFrame, qqq_df: pd.DataFrame) -> dict:
-    """
-    SPY + QQQ 各 2 项：量比 + 5 日量能趋势。
-    取 4 项算术平均。
-    """
-    scores = []
-    breakdown = {}
-
-    for label, df in [("SPY", spy_df), ("QQQ", qqq_df)]:
-        last = df.iloc[-1]
-        volume = float(last.get("volume", 0))
-        vol_ma20 = float(last.get("vol_ma20", 0))
-        close = float(last.get("close", 0))
-
-        # Price change (today vs yesterday)
-        if len(df) >= 2:
-            prev_close = float(df.iloc[-2]["close"])
-            price_change = (close - prev_close) / prev_close if prev_close > 0 else 0
-        else:
-            price_change = 0
-
-        # 5-day return
-        if len(df) >= 6:
-            close_5d_ago = float(df.iloc[-6]["close"])
-            avg_return_5d = (close - close_5d_ago) / close_5d_ago if close_5d_ago > 0 else 0
-        else:
-            avg_return_5d = 0
-
-        # Volume ratio score
-        vr_score = _score_vol_ratio(volume, vol_ma20, price_change)
-        scores.append(vr_score)
-        vol_ratio = volume / vol_ma20 if vol_ma20 > 0 else 1.0
-        breakdown[f"{label}_vol_ratio"] = round(vol_ratio, 2)
-        breakdown[f"{label}_vol_ratio_score"] = vr_score
-
-        # Volume trend score
-        vt_score = _score_vol_trend(df["volume"], vol_ma20, avg_return_5d)
-        scores.append(vt_score)
-        breakdown[f"{label}_vol_trend_score"] = vt_score
-
-    final = sum(scores) / len(scores) if scores else NEUTRAL_SCORE
-    return {"score": final, "breakdown": breakdown}
-
-
-# ── 维度 6：避险信号 (7%) ────────────────────────────────────────────────────
-
-
-def _score_safe_haven(gld_df: pd.DataFrame) -> dict:
-    """
-    GLD 三项指标全部反向映射：GLD 越强→评分越低→权益恐慌→应加仓。
-    - RSI 反向: clamp((80 - rsi) / 60 * 100)
-    - MACD percentile 反向: (1 - percentile) * 100
-    - BB %B 反向: clamp((1 - %B) * 100)
-    """
-    scores = []
-    breakdown = {}
-    last = gld_df.iloc[-1]
-
-    # GLD RSI (inverted)
-    gld_rsi = float(last.get("rsi14", 50))
-    gld_rsi_score = _clamp((80 - gld_rsi) / 60 * 100)
-    scores.append(gld_rsi_score)
-    breakdown["GLD_RSI"] = round(gld_rsi, 1)
-    breakdown["GLD_RSI_score"] = round(gld_rsi_score, 1)
-
-    # GLD MACD percentile (inverted)
-    macd_series = gld_df["macd"].dropna()
-    macd_current = float(last.get("macd", 0))
-    macd_pct = _percentile_rank(macd_series, macd_current, 252)
-    gld_macd_score = (1 - macd_pct) * 100
-    scores.append(gld_macd_score)
-    breakdown["GLD_MACD_score"] = round(gld_macd_score, 1)
-
-    # GLD BB %B (inverted)
-    close = float(last.get("close", 0))
-    upper = float(last.get("boll_upper", 0))
-    lower = float(last.get("boll_lower", 0))
-    pct_b = _calc_pct_b(close, upper, lower)
-    gld_bb_score = _clamp((1 - pct_b) * 100)
-    scores.append(gld_bb_score)
-    breakdown["GLD_BB_pctB"] = round(pct_b, 3)
-    breakdown["GLD_BB_score"] = round(gld_bb_score, 1)
-
-    final = sum(scores) / len(scores) if scores else NEUTRAL_SCORE
-    return {"score": final, "breakdown": breakdown}
 
 
 # ── 主入口 ────────────────────────────────────────────────────────────────────
@@ -384,8 +233,6 @@ def _compute_score(
 
     has_spy = not spy_daily.empty
     has_qqq = not qqq_daily.empty
-    has_gld = not gld_daily.empty
-    has_vix = not vix_daily.empty
     has_spy_w = not spy_weekly.empty
     has_qqq_w = not qqq_weekly.empty
 
@@ -400,46 +247,26 @@ def _compute_score(
     else:
         weekly_tech = {"score": NEUTRAL_SCORE, "breakdown": {"error": "SPY/QQQ 周线数据不足"}}
 
-    if has_vix:
-        volatility = _safe_score(_score_volatility, vix_daily, dimension_name="波动率")
-    else:
-        volatility = {"score": NEUTRAL_SCORE, "breakdown": {"error": "VIXY 数据不足"}}
-
     if has_spy and has_qqq:
         price_pos = _safe_score(_score_price_position, spy_daily, qqq_daily, dimension_name="价格位置")
     else:
         price_pos = {"score": NEUTRAL_SCORE, "breakdown": {"error": "SPY/QQQ 日线数据不足"}}
 
-    if has_spy and has_qqq:
-        volume_conf = _safe_score(_score_volume, spy_daily, qqq_daily, dimension_name="量能确认")
-    else:
-        volume_conf = {"score": NEUTRAL_SCORE, "breakdown": {"error": "SPY/QQQ 日线数据不足"}}
-
-    if has_gld:
-        safe_haven = _safe_score(_score_safe_haven, gld_daily, dimension_name="避险信号")
-    else:
-        safe_haven = {"score": NEUTRAL_SCORE, "breakdown": {"error": "GLD 数据不足"}}
-
-    # 加权综合评分
+    # 加权综合评分（3 维度：日线技术面 + 周线技术面 + 价格位置）
     composite = (
         daily_tech["score"] * weights["daily_tech"]
         + weekly_tech["score"] * weights["weekly_tech"]
-        + volatility["score"] * weights["volatility"]
         + price_pos["score"] * weights["price_pos"]
-        + volume_conf["score"] * weights["volume"]
-        + safe_haven["score"] * weights["safe_haven"]
     )
 
     # 极端层判断
-    spy_daily_rsi = float(spy_daily.iloc[-1].get("rsi14", 50)) if has_spy else 50
-    spy_weekly_rsi = float(spy_weekly.iloc[-1].get("rsi14", 50)) if has_spy_w else 50
-    vixy_pct_rank = volatility["breakdown"].get("VIXY_pct_rank", 0.5) if has_vix else 0.5
+    spy_daily_rsi = float(spy_daily.iloc[-1].get("rsi6", 50)) if has_spy else 50
+    spy_weekly_rsi = float(spy_weekly.iloc[-1].get("rsi6", 50)) if has_spy_w else 50
 
     extreme_triggered = (
         composite <= 15
         and spy_daily_rsi < 25
         and spy_weekly_rsi < 30
-        and vixy_pct_rank > 0.90
     )
 
     # 仓位映射
@@ -462,10 +289,7 @@ def _compute_score(
     dimensions = [
         {"key": "daily_tech", "label": "日线技术面", "score": round(daily_tech["score"], 1), "weight": weights["daily_tech"]},
         {"key": "weekly_tech", "label": "周线技术面", "score": round(weekly_tech["score"], 1), "weight": weights["weekly_tech"]},
-        {"key": "volatility", "label": "波动率", "score": round(volatility["score"], 1), "weight": weights["volatility"]},
         {"key": "price_position", "label": "价格位置", "score": round(price_pos["score"], 1), "weight": weights["price_pos"]},
-        {"key": "volume", "label": "量能确认", "score": round(volume_conf["score"], 1), "weight": weights["volume"]},
-        {"key": "safe_haven", "label": "避险信号", "score": round(safe_haven["score"], 1), "weight": weights["safe_haven"]},
     ]
 
     # 组装指标摘要
@@ -475,7 +299,7 @@ def _compute_score(
         spy_vol_ratio = float(spy_last["volume"]) / float(spy_last["vol_ma20"]) if float(spy_last.get("vol_ma20", 0)) > 0 else 1.0
         indicators["SPY"] = {
             "price": round(float(spy_last["close"]), 2),
-            "daily_rsi": round(float(spy_last.get("rsi14", 0)), 1),
+            "daily_rsi": round(float(spy_last.get("rsi6", 0)), 1),
             "weekly_rsi": round(spy_weekly_rsi, 1),
             "ma200_dev": round(price_pos["breakdown"].get("SPY_MA200_dev", 0), 4),
             "vol_ratio": round(spy_vol_ratio, 2),
@@ -484,30 +308,19 @@ def _compute_score(
     if has_qqq:
         qqq_last = qqq_daily.iloc[-1]
         qqq_vol_ratio = float(qqq_last["volume"]) / float(qqq_last["vol_ma20"]) if float(qqq_last.get("vol_ma20", 0)) > 0 else 1.0
-        qqq_w_rsi = float(qqq_weekly.iloc[-1].get("rsi14", 50)) if has_qqq_w else 50
+        qqq_w_rsi = float(qqq_weekly.iloc[-1].get("rsi6", 50)) if has_qqq_w else 50
         indicators["QQQ"] = {
             "price": round(float(qqq_last["close"]), 2),
-            "daily_rsi": round(float(qqq_last.get("rsi14", 0)), 1),
+            "daily_rsi": round(float(qqq_last.get("rsi6", 0)), 1),
             "weekly_rsi": round(qqq_w_rsi, 1),
             "ma200_dev": round(price_pos["breakdown"].get("QQQ_MA200_dev", 0), 4),
             "vol_ratio": round(qqq_vol_ratio, 2),
             "bb_pct_b": round(daily_tech["breakdown"].get("QQQ_BB_pctB", 0.5), 3),
         }
-    if has_gld:
-        indicators["GLD"] = {
-            "price": round(float(gld_daily.iloc[-1]["close"]), 2),
-            "daily_rsi": round(float(gld_daily.iloc[-1].get("rsi14", 0)), 1),
-        }
-    if has_vix:
-        indicators["VIXY"] = {
-            "price": round(float(vix_daily.iloc[-1]["close"]), 2),
-            "percentile_rank": round(volatility["breakdown"].get("VIXY_pct_rank", 0.5), 3),
-            "pct_score": round(volatility["breakdown"].get("VIXY_pct_score", 50), 1),
-        }
 
     # 合并所有维度 breakdown 为 detail
     detail = {}
-    for dim in [daily_tech, weekly_tech, volatility, price_pos, volume_conf, safe_haven]:
+    for dim in [daily_tech, weekly_tech, price_pos]:
         detail.update(dim.get("breakdown", {}))
 
     return {
@@ -523,14 +336,14 @@ def _compute_score(
         "detail": detail,
         "daily_tech_score": round(daily_tech["score"], 1),
         "weekly_tech_score": round(weekly_tech["score"], 1),
-        "vol_score": round(volatility["score"], 1),
+        "vol_score": None,
         "price_score": round(price_pos["score"], 1),
-        "volume_score": round(volume_conf["score"], 1),
-        "safe_haven_score": round(safe_haven["score"], 1),
+        "volume_score": None,
+        "safe_haven_score": None,
         "spy_price": indicators.get("SPY", {}).get("price"),
         "qqq_price": indicators.get("QQQ", {}).get("price"),
-        "gld_price": indicators.get("GLD", {}).get("price"),
-        "vix_value": float(vix_daily.iloc[-1]["close"]) if has_vix else None,
+        "gld_price": None,
+        "vix_value": None,
         "spy_daily_rsi": indicators.get("SPY", {}).get("daily_rsi"),
         "qqq_daily_rsi": indicators.get("QQQ", {}).get("daily_rsi"),
         "spy_weekly_rsi": indicators.get("SPY", {}).get("weekly_rsi"),
@@ -584,13 +397,14 @@ def backfill_market_temperature(days: int = 60) -> int:
     storage.init_db()
     logger.info(f"开始回溯计算市场温度，回溯 {days} 天")
 
-    # 一次性读取所有数据
-    spy_daily_all = storage.query_recent("US.SPY", "1d", limit=300)
-    qqq_daily_all = storage.query_recent("US.QQQ", "1d", limit=300)
-    gld_daily_all = storage.query_recent("US.GLD", "1d", limit=300)
-    vix_daily_all = storage.query_recent(config.MARKET_TEMP_VOL_CODE, "1d", limit=300)
-    spy_weekly_all = storage.query_recent("US.SPY", "1w", limit=60)
-    qqq_weekly_all = storage.query_recent("US.QQQ", "1w", limit=60)
+    # 一次性读取所有可用数据（支持长历史回溯）
+    read_limit = days + 300  # 回溯天数 + 百分位计算所需缓冲
+    spy_daily_all = storage.query_recent("US.SPY", "1d", limit=read_limit)
+    qqq_daily_all = storage.query_recent("US.QQQ", "1d", limit=read_limit)
+    gld_daily_all = storage.query_recent("US.GLD", "1d", limit=read_limit)
+    vix_daily_all = storage.query_recent(config.MARKET_TEMP_VOL_CODE, "1d", limit=read_limit)
+    spy_weekly_all = storage.query_recent("US.SPY", "1w", limit=500)
+    qqq_weekly_all = storage.query_recent("US.QQQ", "1w", limit=500)
 
     if spy_daily_all.empty:
         logger.warning("SPY 日线数据为空，无法回溯")

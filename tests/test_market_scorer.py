@@ -2,16 +2,9 @@
 
 from __future__ import annotations
 
-import os
-import tempfile
-
 import numpy as np
 import pandas as pd
 import pytest
-
-# 使用临时数据库避免污染
-_tmp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-os.environ["TA_DB_PATH"] = _tmp_db.name
 
 from trader_analysis.futu_strategy import storage
 from trader_analysis.futu_strategy.market_scorer import (
@@ -22,14 +15,18 @@ from trader_analysis.futu_strategy.market_scorer import (
     _percentile_rank,
     _score_daily_tech,
     _score_price_position,
-    _score_safe_haven,
-    _score_vol_ratio,
-    _score_vol_trend,
-    _score_volatility,
-    _score_volume,
     _score_weekly_tech,
     calculate_market_temperature,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_db(monkeypatch, tmp_path):
+    """所有测试使用临时数据库，绝不触碰本地 indicators.db。"""
+    db_path = str(tmp_path / "test_market_scorer.db")
+    monkeypatch.setattr("trader_analysis.futu_strategy.config.DB_PATH", db_path)
+    storage.init_db()
+    yield
 
 
 # ── 辅助：生成合成 K 线 DataFrame ─────────────────────────────────────────────
@@ -60,7 +57,9 @@ def _make_daily_df(
     })
 
     # 模拟存储的指标列
-    df["rsi14"] = 30 + rng.uniform(0, 40, n)  # RSI 30~70
+    df["rsi6"] = 30 + rng.uniform(0, 40, n)  # RSI 30~70
+    df["rsi12"] = 35 + rng.uniform(0, 30, n)
+    df["rsi24"] = 40 + rng.uniform(0, 20, n)
     df["dif"] = rng.normal(0, 3, n)
     df["dea"] = rng.normal(0, 2, n)
     df["macd"] = (df["dif"] - df["dea"]) * 2
@@ -69,6 +68,7 @@ def _make_daily_df(
     df["ma20"] = df["close"].rolling(20).mean()
     df["ma60"] = df["close"].rolling(60).mean()
     df["ma120"] = df["close"].rolling(120).mean()
+    df["ma200"] = df["close"].rolling(200).mean()
     df["ma250"] = df["close"].rolling(250).mean()
     std20 = df["close"].rolling(20).std()
     df["boll_mid"] = df["ma20"]
@@ -96,7 +96,9 @@ def _make_weekly_df(
         "low": closes - rng.uniform(0, 8, n),
         "close": closes,
         "volume": rng.uniform(5e6, 2e7, n),
-        "rsi14": 35 + rng.uniform(0, 30, n),
+        "rsi6": 35 + rng.uniform(0, 30, n),
+        "rsi12": 40 + rng.uniform(0, 25, n),
+        "rsi24": 42 + rng.uniform(0, 20, n),
         "dif": rng.normal(0, 5, n),
         "dea": rng.normal(0, 4, n),
         "macd": rng.normal(0, 3, n),
@@ -185,56 +187,16 @@ class TestScoreDailyTech:
         assert 0 <= result["score"] <= 100
 
     def test_extreme_rsi_low(self):
-        """RSI=20 should produce score=0 for that component."""
+        """RSI=5 should produce score=0 for that component (tiered: <10→0)."""
         spy = _make_daily_df(260)
-        spy.iloc[-1, spy.columns.get_loc("rsi14")] = 20
+        spy.iloc[-1, spy.columns.get_loc("rsi6")] = 5
         qqq = _make_daily_df(260)
-        qqq.iloc[-1, qqq.columns.get_loc("rsi14")] = 20
+        qqq.iloc[-1, qqq.columns.get_loc("rsi6")] = 5
         result = _score_daily_tech(spy, qqq)
-        # RSI scores should be 0, lowering overall
-        assert result["score"] < 40
+        # RSI scores=0, but MACD/BB are random, so overall score drops below 50
+        assert result["score"] < 50
 
 
-class TestScoreVolatility:
-    def test_high_vixy_low_score(self):
-        """VIXY 处于近一年高位 → 恐慌 → 评分低。"""
-        df = _make_daily_df(260)
-        # 历史值在 20-30，当前飙至 60（接近最高）
-        df["close"] = 20 + np.random.default_rng(99).uniform(0, 10, 260)
-        df.iloc[-1, df.columns.get_loc("close")] = 60
-        result = _score_volatility(df)
-        assert result["score"] < 10  # 几乎所有历史值都 < 60
-
-    def test_low_vixy_high_score(self):
-        """VIXY 处于近一年低位 → 自满 → 评分高。"""
-        df = _make_daily_df(260)
-        # 历史值在 25-45，当前为 10（低于所有历史值）
-        df["close"] = 25 + np.random.default_rng(99).uniform(0, 20, 260)
-        df.iloc[-1, df.columns.get_loc("close")] = 10
-        result = _score_volatility(df)
-        assert result["score"] > 95  # 几乎所有历史值都 > 10
-
-
-class TestScoreVolRatio:
-    def test_panic_sell(self):
-        score = _score_vol_ratio(volume=5e6, vol_ma20=2e6, price_change=-0.03)
-        assert score == 0  # vol_ratio=2.5, down day
-
-    def test_normal_up(self):
-        score = _score_vol_ratio(volume=2e6, vol_ma20=2e6, price_change=0.01)
-        assert score == 55  # vol_ratio=1.0, up day
-
-
-class TestScoreVolTrend:
-    def test_panic_continuation(self):
-        volumes = pd.Series([4e6] * 20)
-        score = _score_vol_trend(volumes, vol_ma20=2e6, avg_return_5d=-0.05)
-        assert score == 5  # vol_trend=2.0, down trend
-
-    def test_neutral(self):
-        volumes = pd.Series([2e6] * 20)
-        score = _score_vol_trend(volumes, vol_ma20=2e6, avg_return_5d=0.0)
-        assert score == 50
 
 
 # ── 仓位公式测试 ──────────────────────────────────────────────────────────────
@@ -292,7 +254,7 @@ class TestCalculateMarketTemperature:
         assert "action_suggestion" in result
         assert 0 <= result["composite_score"] <= 100
         assert 10 <= result["target_position_pct"] <= 120
-        assert len(result["dimensions"]) == 6
+        assert len(result["dimensions"]) == 3
 
     def test_persists_to_storage(self):
         calculate_market_temperature()
@@ -307,13 +269,12 @@ class TestCalculateMarketTemperature:
         assert len(history) >= 1
         assert "composite_score" in history[0]
 
-    def test_no_data_returns_neutral(self):
+    def test_no_data_returns_neutral(self, tmp_path, monkeypatch):
         """无数据时所有维度 fallback 为 50，综合也≈50。"""
-        # 清空数据
-        conn = storage._get_conn()
-        conn.execute("DELETE FROM kline_indicators")
-        conn.commit()
-        conn.close()
+        # 使用一个全新的空数据库（fixture 已写入合成数据，这里需要空库）
+        empty_db = str(tmp_path / "empty.db")
+        monkeypatch.setattr("trader_analysis.futu_strategy.config.DB_PATH", empty_db)
+        storage.init_db()
 
         result = calculate_market_temperature()
         assert 45 <= result["composite_score"] <= 55

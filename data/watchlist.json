@@ -23,8 +23,6 @@
     {"ticker":"SPY","name":"SPDR S&P 500 ETF Trust","market":"US","category":"market_gold_btc","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["标普500","大盘指数"],"notes":""},
     {"ticker":"GLD","name":"SPDR Gold Shares","market":"US","category":"market_gold_btc","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["黄金ETF","避险"],"notes":""},
     {"ticker":"IBIT","name":"iShares Bitcoin Trust ETF","market":"US","category":"market_gold_btc","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["比特币ETF","现货BTC"],"notes":""},
-    {"ticker":"VIXY","name":"ProShares VIX Short-Term Futures ETF","market":"US","category":"market_gold_btc","thesis":"VIX短期期货ETF，作为波动率代理指标用于市场温度计算","target_price":null,"stop_loss":null,"status":"watching","tags":["波动率","VIX代理"],"notes":"受contango衰减影响，仅用百分位排名"},
-
     {"ticker":"SNDK","name":"Sandisk Corporation","market":"US","category":"storage","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["闪存","SSD"],"notes":""},
     {"ticker":"MU","name":"Micron Technology Inc.","market":"US","category":"storage","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["内存","DRAM/NAND"],"notes":""},
     {"ticker":"DRAM","name":"DRAM","market":"US","category":"storage","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["存储"],"notes":""},

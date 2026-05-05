@@ -30,8 +30,11 @@ CREATE TABLE IF NOT EXISTS kline_indicators (
     ma20         REAL,
     ma60         REAL,
     ma120        REAL,
+    ma200        REAL,
     ma250        REAL,
-    rsi14        REAL,
+    rsi6         REAL,
+    rsi12        REAL,
+    rsi24        REAL,
     dif          REAL,
     dea          REAL,
     macd         REAL,
@@ -95,8 +98,8 @@ CREATE TABLE IF NOT EXISTS market_score_detail (
 # K 线 + 指标列（写入顺序）
 _KLINE_COLS = [
     "date", "open", "high", "low", "close", "volume", "turnover",
-    "ma5", "ma10", "ma20", "ma60", "ma120", "ma250",
-    "rsi14", "dif", "dea", "macd",
+    "ma5", "ma10", "ma20", "ma60", "ma120", "ma200", "ma250",
+    "rsi6", "rsi12", "rsi24", "dif", "dea", "macd",
     "boll_upper", "boll_mid", "boll_lower", "vol_ma20",
 ]
 
@@ -177,8 +180,8 @@ def query_range(code: str, ktype: str, days: int = 60) -> list[dict]:
     conn = _get_conn()
     rows = conn.execute(
         "SELECT date, open, high, low, close, volume, "
-        "ma5, ma10, ma20, ma60, ma120, ma250, "
-        "rsi14, dif, dea, macd, "
+        "ma5, ma10, ma20, ma60, ma120, ma200, ma250, "
+        "rsi6, rsi12, rsi24, dif, dea, macd, "
         "boll_upper, boll_mid, boll_lower, vol_ma20 "
         "FROM kline_indicators WHERE code = ? AND ktype = ? "
         "ORDER BY date DESC LIMIT ?",
@@ -242,6 +245,46 @@ def query_latest_score(code: str) -> dict:
         d["breakdown"] = json.loads(d["breakdown"]) if d.get("breakdown") else {}
         return d
     return {}
+
+
+def query_score_by_date(code: str, date: str) -> dict:
+    """查指定日期的评分结果。"""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT * FROM score_results WHERE code = ? AND date = ?",
+        (code, date),
+    ).fetchone()
+    conn.close()
+    if row:
+        d = dict(row)
+        d["breakdown"] = json.loads(d["breakdown"]) if d.get("breakdown") else {}
+        return d
+    return {}
+
+
+def query_scores_overview(date: str | None = None) -> list[dict]:
+    """查所有标的在指定日期的评分概览（不含 breakdown 明细）。
+
+    如果 date 为 None，取每个标的最新评分日期的数据。
+    返回按 total_score 降序排列。
+    """
+    conn = _get_conn()
+    if date:
+        rows = conn.execute(
+            "SELECT code, date, total_score, signal FROM score_results "
+            "WHERE date = ? ORDER BY total_score DESC",
+            (date,),
+        ).fetchall()
+    else:
+        # 每个标的取最新一条
+        rows = conn.execute(
+            "SELECT s.code, s.date, s.total_score, s.signal FROM score_results s "
+            "INNER JOIN (SELECT code, MAX(date) as max_date FROM score_results GROUP BY code) m "
+            "ON s.code = m.code AND s.date = m.max_date "
+            "ORDER BY s.total_score DESC"
+        ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 # ── 市场温度（Market Temperature）──────────────────────────────────────────────

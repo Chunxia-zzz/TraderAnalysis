@@ -126,37 +126,95 @@ class FutuLiveDataProvider:
         count: int,
         *,
         timeframe: str,
+        start: str | None = None,
+        end: str | None = None,
     ) -> pd.DataFrame:
-        """通用 K 线拉取，通过 kl_type 指定周期。"""
+        """通用 K 线拉取，通过 kl_type 指定周期。
+
+        当指定 start 时自动分段拉取（每段 ~250 根），拼接后返回完整数据。
+
+        Args:
+            start: 起始日期 "YYYY-MM-DD"，指定后分段拉取 start~end 全部数据
+            end: 结束日期 "YYYY-MM-DD"，默认为今天
+        """
+        import time as _time
+
         try:
             from futu import AuType  # type: ignore[import]
         except ImportError as exc:
             raise DataProviderError("futu-api 未安装，请执行: pip install futu-api") from exc
 
-        ret, df, _ = quote_ctx.request_history_kline(
-            code,
-            ktype=kl_type,
-            autype=AuType.QFQ,
-            max_count=count,
-        )
-        if ret != 0:
-            raise DataProviderError(f"Futu API 拉取 {code} 失败: {df}")
+        if not start:
+            # 简单模式：只拉最近 count 根
+            ret, df, _ = quote_ctx.request_history_kline(
+                code, ktype=kl_type, autype=AuType.QFQ, max_count=count
+            )
+            if ret != 0:
+                raise DataProviderError(f"Futu API 拉取 {code} 失败: {df}")
+            df = df.rename(columns={"time_key": OHLCVSchema.timestamp})
+            return normalize_ohlcv(df, symbol=code, timeframe=timeframe)
 
-        df = df.rename(columns={"time_key": OHLCVSchema.timestamp})
-        return normalize_ohlcv(df, symbol=code, timeframe=timeframe)
+        # 分段拉取模式：从 start 开始，每段取到的最后日期+1 天作为下段起点
+        all_dfs = []
+        current_start = start
 
-    def get_daily(self, quote_ctx, code: str, count: int = 250) -> pd.DataFrame:
+        while True:
+            kwargs: dict = {
+                "code": code,
+                "ktype": kl_type,
+                "autype": AuType.QFQ,
+                "start": current_start,
+                "max_count": 1000,
+            }
+            if end:
+                kwargs["end"] = end
+
+            ret, df, _ = quote_ctx.request_history_kline(**kwargs)
+            if ret != 0:
+                raise DataProviderError(f"Futu API 拉取 {code} 失败: {df}")
+
+            if df.empty:
+                break
+
+            all_dfs.append(df)
+
+            # 如果返回不足 250 根，说明已到末尾
+            if len(df) < 250:
+                break
+
+            # 下一段从最后一根的下一天开始
+            last_date = str(df.iloc[-1]["time_key"])[:10]
+            from datetime import datetime, timedelta
+            next_start = (datetime.strptime(last_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+
+            if end and next_start > end:
+                break
+            current_start = next_start
+            _time.sleep(0.5)  # 避免频率限制
+
+        if not all_dfs:
+            raise DataProviderError(f"Futu API 拉取 {code} 返回空数据")
+
+        combined = pd.concat(all_dfs, ignore_index=True).drop_duplicates(subset=["time_key"])
+        combined = combined.rename(columns={"time_key": OHLCVSchema.timestamp})
+        return normalize_ohlcv(combined, symbol=code, timeframe=timeframe)
+
+    def get_daily(
+        self, quote_ctx, code: str, count: int = 250, *, start: str | None = None, end: str | None = None
+    ) -> pd.DataFrame:
         """拉取日线 K 线（默认 250 根，满足 MA200 计算需求）。"""
         try:
             from futu import KLType  # type: ignore[import]
         except ImportError as exc:
             raise DataProviderError("futu-api 未安装") from exc
-        return self.get_kline(quote_ctx, code, KLType.K_DAY, count, timeframe="1D")
+        return self.get_kline(quote_ctx, code, KLType.K_DAY, count, timeframe="1D", start=start, end=end)
 
-    def get_weekly(self, quote_ctx, code: str, count: int = 60) -> pd.DataFrame:
+    def get_weekly(
+        self, quote_ctx, code: str, count: int = 60, *, start: str | None = None, end: str | None = None
+    ) -> pd.DataFrame:
         """拉取周线 K 线（默认 60 根，约 14 个月）。"""
         try:
             from futu import KLType  # type: ignore[import]
         except ImportError as exc:
             raise DataProviderError("futu-api 未安装") from exc
-        return self.get_kline(quote_ctx, code, KLType.K_WEEK, count, timeframe="1W")
+        return self.get_kline(quote_ctx, code, KLType.K_WEEK, count, timeframe="1W", start=start, end=end)

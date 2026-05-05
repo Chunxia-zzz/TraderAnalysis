@@ -26,24 +26,27 @@ def test_watchlist_returns_structure():
 
 def test_indicators_not_found():
     resp = client.get("/api/indicators", params={"code": "US.FAKECODE", "ktype": "1d"})
-    assert resp.status_code == 404
+    assert resp.status_code == 200
     data = resp.json()
     assert "message" in data
     assert "暂无" in data["message"]
+    assert data["data"] == []
 
 
 def test_indicators_latest_not_found():
     resp = client.get("/api/indicators/latest", params={"code": "US.FAKECODE"})
-    assert resp.status_code == 404
+    assert resp.status_code == 200
     data = resp.json()
     assert "message" in data
+    assert data["data"] is None
 
 
 def test_scores_latest_not_found():
     resp = client.get("/api/scores/latest", params={"code": "US.FAKECODE"})
-    assert resp.status_code == 404
+    assert resp.status_code == 200
     data = resp.json()
     assert "message" in data
+    assert data["data"] is None
 
 
 def test_indicators_invalid_ktype():

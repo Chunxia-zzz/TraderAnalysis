@@ -29,13 +29,14 @@ def serve(
 def init(
     codes: Optional[list[str]] = typer.Option(None, help="标的代码列表（默认全部 watchlist）"),
     force: bool = typer.Option(False, help="强制重新拉取，忽略已有数据"),
+    start: Optional[str] = typer.Option(None, help="起始日期 YYYY-MM-DD，拉取更长历史（如 2022-06-01）"),
 ) -> None:
     """拉取历史 K 线并计算指标，写入数据库。支持断点续传。"""
     from trader_analysis.futu_strategy import config
     from trader_analysis.futu_strategy.init_history import run_init
 
     code_list = codes if codes else config.WATCHLIST
-    run_init(code_list, force=force)
+    run_init(code_list, force=force, start=start)
 
 
 @app.command()
@@ -60,6 +61,64 @@ def run(
 
     code_list = codes if codes else config.WATCHLIST
     run_strategy(code_list)
+
+
+@app.command()
+def score(
+    codes: Optional[list[str]] = typer.Option(None, help="标的代码列表（默认全部 watchlist）"),
+    backfill: int = typer.Option(0, help="回溯天数（从已有K线数据回溯计算历史评分，0=仅计算最新）"),
+) -> None:
+    """纯本地评分：从 DB 读取指标，计算个股评分并写入 score_results。不依赖 OpenD。"""
+    from datetime import date, timedelta
+
+    from trader_analysis.futu_strategy import config
+    from trader_analysis.futu_strategy.scorer import calculate_score
+    from trader_analysis.futu_strategy.storage import init_db, query_recent, upsert_score
+
+    init_db()
+    code_list = codes if codes else config.WATCHLIST
+
+    if backfill > 0:
+        typer.echo(f"回溯 {backfill} 天，{len(code_list)} 个标的...")
+        total_written = 0
+        # 读取全量数据一次
+        for code in code_list:
+            daily_all = query_recent(code, "1d", limit=backfill + 300)
+            weekly_all = query_recent(code, "1w", limit=500)
+            if daily_all.empty or weekly_all.empty or len(daily_all) < 60:
+                continue
+            total_rows = len(daily_all)
+            fill_count = min(backfill, total_rows - 60)
+            for i in range(fill_count, 0, -1):
+                end_idx = total_rows - i + 1
+                daily_slice = daily_all.iloc[:end_idx]
+                score_date = str(daily_slice.iloc[-1].get("date", ""))
+                weekly_slice = weekly_all[weekly_all["date"] <= score_date]
+                if weekly_slice.empty:
+                    continue
+                try:
+                    result = calculate_score(code, daily_slice, weekly_slice)
+                    upsert_score(code, score_date, result)
+                    total_written += 1
+                except Exception:
+                    pass
+        typer.echo(f"回溯完成，写入 {total_written} 条评分")
+    else:
+        today = date.today().isoformat()
+        scored, skipped = 0, 0
+        for code in code_list:
+            daily_df = query_recent(code, "1d", limit=300)
+            weekly_df = query_recent(code, "1w", limit=60)
+            if daily_df.empty or weekly_df.empty:
+                skipped += 1
+                continue
+            result = calculate_score(code, daily_df, weekly_df)
+            score_date = str(daily_df.iloc[-1].get("date", today))
+            upsert_score(code, score_date, result)
+            scored += 1
+            if result["signal"] != "NO_ACTION":
+                typer.echo(f"  {code}: {result['total_score']}分 → {result['signal']}")
+        typer.echo(f"评分完成：{scored} 个标的，跳过 {skipped} 个（无数据）")
 
 
 @app.command()

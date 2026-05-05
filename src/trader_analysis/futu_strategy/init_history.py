@@ -35,12 +35,13 @@ def _has_data(code: str) -> bool:
     return get_latest_date(code, "1d") is not None and get_latest_date(code, "1w") is not None
 
 
-def run_init(codes: list[str], *, force: bool = False) -> None:
+def run_init(codes: list[str], *, force: bool = False, start: str | None = None) -> None:
     """对 codes 列表中每个标的执行历史数据初始化。
 
     Args:
         codes: 标的代码列表（Futu 格式）
         force: 为 True 时忽略已有数据，强制重新拉取
+        start: 起始日期 "YYYY-MM-DD"，指定后按日期范围拉取（可获取更长历史）
     """
     try:
         from futu import OpenQuoteContext  # type: ignore[import]
@@ -61,7 +62,7 @@ def run_init(codes: list[str], *, force: bool = False) -> None:
     else:
         pending = list(codes)
 
-    logger.info(f"待初始化：{len(pending)} 个标的")
+    logger.info(f"待初始化：{len(pending)} 个标的" + (f"，起始日期：{start}" if start else ""))
 
     quote_ctx = OpenQuoteContext(host=config.OPEND_HOST, port=config.OPEND_PORT)
 
@@ -79,7 +80,7 @@ def run_init(codes: list[str], *, force: bool = False) -> None:
 
                 # 拉取日线
                 daily_df = provider.get_daily(
-                    quote_ctx, code, count=config.INIT_DAILY_KLINE_COUNT
+                    quote_ctx, code, count=config.INIT_DAILY_KLINE_COUNT, start=start
                 )
                 daily_df = calc_indicators(daily_df, config.DAILY_INDICATOR_CONFIG)
                 n_daily = batch_upsert(code, "1d", daily_df)
@@ -89,7 +90,7 @@ def run_init(codes: list[str], *, force: bool = False) -> None:
 
                 # 拉取周线
                 weekly_df = provider.get_weekly(
-                    quote_ctx, code, count=config.INIT_WEEKLY_KLINE_COUNT
+                    quote_ctx, code, count=config.INIT_WEEKLY_KLINE_COUNT, start=start
                 )
                 weekly_df = calc_indicators(weekly_df, config.WEEKLY_INDICATOR_CONFIG)
                 n_weekly = batch_upsert(code, "1w", weekly_df)
@@ -128,8 +129,15 @@ def main() -> None:
         action="store_true",
         help="强制重新拉取，忽略已有数据",
     )
+    parser.add_argument(
+        "--start",
+        type=str,
+        default=None,
+        metavar="YYYY-MM-DD",
+        help="起始日期，指定后按日期范围拉取更长历史（如 2022-06-01）",
+    )
     args = parser.parse_args()
-    run_init(args.codes, force=args.force)
+    run_init(args.codes, force=args.force, start=args.start)
 
 
 if __name__ == "__main__":
