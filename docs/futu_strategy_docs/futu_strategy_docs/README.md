@@ -78,6 +78,18 @@ src/trader_analysis/
     │── Part C: API 服务层 ──────────────────────────
     ├── api_server.py         # FastAPI 服务（只读查询 SQLite，供前端消费）
     │
+    │── Part D: 认证层 ────────────────────────────
+    ├── auth.py               # JWT 签发/验证、密码哈希、FastAPI 认证依赖
+    ├── auth_storage.py       # users 表 CRUD（创建/查询/更新用户）
+    │
+    │── Part E: 标的池管理 ──────────────────────────
+    ├── watchlist_storage.py  # watchlist 表 CRUD + 迁移
+    ├── stock_info_fetcher.py # 富途选股/信息填充接口
+    │
+    │── Part F: 基本面分析 ──────────────────────────
+    ├── fundamental_fetcher.py # yfinance 数据批量采集
+    ├── fundamental_scorer.py  # 5因子基本面评分引擎
+    │
     │── 公共 ───────────────────────────────────────
     ├── runner.py             # 主入口，串联全部模块
     ├── logger.py             # 日志与审计记录

@@ -18,6 +18,9 @@ dependencies = [
   "requests>=2.32",
   "typer>=0.12",
   "uvicorn>=0.30",
+  "python-jose[cryptography]>=3.3",
+  "passlib[bcrypt]>=1.7",
+  "yfinance>=0.2.36",
 ]
 
 [project.optional-dependencies]

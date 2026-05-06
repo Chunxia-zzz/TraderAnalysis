@@ -37,13 +37,51 @@ def _to_futu_code(item: dict) -> str:
 
 _WATCHLIST_ITEMS, WATCHLIST_CATEGORIES = _load_watchlist()
 
-# Futu 格式代码列表，供 runner / init_history / daily_update 使用
-WATCHLIST: list[str] = [_to_futu_code(item) for item in _WATCHLIST_ITEMS]
-
-# 完整标的信息（带 futu_code 字段），供 API 层返回给前端
-WATCHLIST_DETAIL: list[dict] = [
+# JSON 回退列表（用于 watchlist 表为空时）
+_WATCHLIST_FROM_JSON: list[str] = [_to_futu_code(item) for item in _WATCHLIST_ITEMS]
+_WATCHLIST_DETAIL_FROM_JSON: list[dict] = [
     {**item, "futu_code": _to_futu_code(item)} for item in _WATCHLIST_ITEMS
 ]
+
+
+def get_watchlist() -> list[str]:
+    """从 SQLite 读取活跃标的列表。表为空时回退到 JSON。"""
+    try:
+        from trader_analysis.futu_strategy.watchlist_storage import get_all_codes, watchlist_count
+        if watchlist_count() > 0:
+            return get_all_codes()
+    except Exception:
+        pass
+    return _WATCHLIST_FROM_JSON
+
+
+def get_watchlist_detail() -> list[dict]:
+    """从 SQLite 读取完整标的信息。表为空时回退到 JSON。"""
+    try:
+        from trader_analysis.futu_strategy.watchlist_storage import get_watchlist_detail as _get_detail, watchlist_count
+        if watchlist_count() > 0:
+            return _get_detail()
+    except Exception:
+        pass
+    return _WATCHLIST_DETAIL_FROM_JSON
+
+
+# 兼容属性：供现有模块继续使用 config.WATCHLIST
+# 注意：这是动态属性，每次访问时从 DB 读取
+class _WatchlistProxy(list):
+    """透明代理，访问时动态读取 DB。"""
+    def __iter__(self):
+        return iter(get_watchlist())
+    def __len__(self):
+        return len(get_watchlist())
+    def __getitem__(self, idx):
+        return get_watchlist()[idx]
+    def __bool__(self):
+        return bool(get_watchlist())
+
+
+WATCHLIST = _WatchlistProxy()
+WATCHLIST_DETAIL = _WATCHLIST_DETAIL_FROM_JSON  # API 层已改为从 DB 读，此处仅兼容
 
 # ── 仓位配置 ───────────────────────────────────────────────────────────────────
 POSITION_CONFIG: dict = {
@@ -128,3 +166,24 @@ MARKET_TEMP_WEIGHTS: dict[str, float] = {
     "weekly_tech": 0.35,
     "price_pos": 0.15,
 }
+
+# ── 基本面分析 (Fundamental) ───────────────────────────────────────────────────
+FUNDAMENTAL_FETCH_INTERVAL: float = 0.5
+
+FUNDAMENTAL_WEIGHTS: dict[str, int] = {
+    "valuation_discount": 30,
+    "pe_reasonability": 20,
+    "growth": 20,
+    "financial_health": 15,
+    "analyst_consensus": 15,
+}
+
+FUNDAMENTAL_SIGNAL_UNDERVALUED: int = 75
+FUNDAMENTAL_SIGNAL_OVERVALUED: int = 40
+
+FUNDAMENTAL_SKIP_TICKERS: list[str] = ["QQQ", "SPY", "GLD", "IBIT", "07709", "VIXY", "VIX", "DRAM"]
+
+# ── 认证 (JWT) ───────────────────────────────────────────────────────────────
+JWT_SECRET_KEY: str = os.environ.get("JWT_SECRET_KEY", "")
+JWT_ALGORITHM: str = "HS256"
+JWT_EXPIRE_DAYS: int = int(os.environ.get("JWT_EXPIRE_DAYS", "7"))

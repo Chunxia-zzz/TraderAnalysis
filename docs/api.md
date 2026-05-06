@@ -1,6 +1,6 @@
 # TraderAnalysis API 文档
 
-> 最后更新：2026-05-05
+> 最后更新：2026-05-06
 > 协议：HTTP/1.1，响应格式：`application/json`，编码：UTF-8
 
 ## 策略数据服务（futu_strategy/api_server.py）
@@ -23,6 +23,84 @@ Swagger UI：`http://localhost:8000/docs`
 
 ---
 
+## 认证（Authentication）
+
+> **v2.4 新增**：所有 `/api/*` 端点（除登录外）需携带 JWT Token。
+
+### 认证流程
+
+```
+1. POST /api/auth/login → 获取 access_token
+2. 存入 localStorage（key: "token"）
+3. 后续所有请求 Header 携带: Authorization: Bearer <token>
+4. 收到 401 时清除本地 token，跳转登录页
+```
+
+### 请求头格式
+
+```
+Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
+```
+
+### 公开端点（无需 token）
+
+| 路径 | 说明 |
+|------|------|
+| `GET /health` | 健康检查 |
+| `POST /api/auth/login` | 登录 |
+| `GET /docs` | Swagger UI |
+| `GET /openapi.json` | OpenAPI Schema |
+
+### 认证错误响应
+
+| HTTP 状态码 | 场景 | 响应体 |
+|------------|------|--------|
+| `401` | 未携带 token / token 无效 / token 过期 | `{"detail": "Not authenticated"}` 或 `{"detail": "Invalid or expired token"}` |
+| `403` | token 有效但权限不足（member 访问 admin 接口） | `{"detail": "Admin access required"}` |
+
+### 前端对接代码参考
+
+```javascript
+// src/api/index.js — axios 拦截器
+import axios from 'axios'
+import router from '@/router'
+
+const api = axios.create({ baseURL: 'http://localhost:8000' })
+
+// 请求拦截器：自动附加 token
+api.interceptors.request.use(config => {
+  const token = localStorage.getItem('token')
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
+
+// 响应拦截器：401 跳转登录
+api.interceptors.response.use(
+  response => response,
+  error => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('token')
+      localStorage.removeItem('role')
+      router.push('/login')
+    }
+    return Promise.reject(error)
+  }
+)
+
+export default api
+```
+
+### 角色与权限
+
+| 角色 | 可访问 | 说明 |
+|------|--------|------|
+| `admin` | 所有接口 | 管理员 |
+| `member` | `GET /api/*` 只读接口 | 未来会员（v2 扩展） |
+
+---
+
 ## 跨域（CORS）
 
 服务已配置 CORS 中间件：
@@ -30,8 +108,8 @@ Swagger UI：`http://localhost:8000/docs`
 | 配置项 | 值 | 说明 |
 |--------|------|------|
 | `allow_origins` | `["*"]` | 允许任意域名跨域请求 |
-| `allow_methods` | `["GET"]` | 仅允许 GET 方法 |
-| `allow_headers` | `["*"]` | 允许任意请求头 |
+| `allow_methods` | `["*"]` | 允许所有 HTTP 方法（GET/POST 等） |
+| `allow_headers` | `["*"]` | 允许任意请求头（含 Authorization） |
 
 前端可直接 `fetch` 调用，无需代理。
 
@@ -52,16 +130,29 @@ Swagger UI：`http://localhost:8000/docs`
 
 ## 概览
 
-| 方法 | 路径 | 说明 | 前端页面 |
-|------|------|------|---------|
-| GET | `/health` | 健康检查 | App.vue（启动时检测） |
-| GET | `/api/indicators` | 某标的某周期最近 N 根 K 线 + 全部指标 | Chart.vue |
-| GET | `/api/indicators/latest` | 最新一根的所有指标值 | Dashboard.vue |
-| GET | `/api/scores/latest` | 单个标的评分结果（支持指定日期） | Dashboard.vue |
-| GET | `/api/scores/overview` | 全标的评分速览（按信号分组） | **机会速览页** |
-| GET | `/api/watchlist` | 完整标的池（含分类、标签、数据状态） | 标的选择器 |
-| GET | `/api/market-temperature` | 市场温度评分（3 维度综合） | **MarketTemperature.vue** |
-| GET | `/api/market-temperature/history` | 近 N 天市场温度历史 | **MarketTemperature.vue（趋势图）** |
+| 方法 | 路径 | 认证 | 说明 | 前端页面 |
+|------|------|------|------|---------|
+| GET | `/health` | 🔓 公开 | 健康检查 | App.vue（启动时检测） |
+| POST | `/api/auth/login` | 🔓 公开 | 用户登录，获取 JWT | Login.vue |
+| GET | `/api/auth/me` | 🔒 登录 | 获取当前用户信息 | App.vue / 设置页 |
+| POST | `/api/auth/change-password` | 🔒 登录 | 修改密码 | 设置页 |
+| GET | `/api/indicators` | 🔒 登录 | 某标的某周期最近 N 根 K 线 + 全部指标 | Chart.vue |
+| GET | `/api/indicators/latest` | 🔒 登录 | 最新一根的所有指标值 | Dashboard.vue |
+| GET | `/api/scores/latest` | 🔒 登录 | 单个标的评分结果（支持指定日期） | Dashboard.vue |
+| GET | `/api/scores/overview` | 🔒 登录 | 全标的评分速览（按信号分组） | **机会速览页** |
+| GET | `/api/watchlist` | 🔒 登录 | 标的池列表（支持筛选） | 标的选择器 |
+| GET | `/api/watchlist/{code}` | 🔒 登录 | 单只标的详情 | 标的详情页 |
+| POST | `/api/watchlist` | 🔒 admin | 新增标的（自动填充富途信息） | 管理页 |
+| PATCH | `/api/watchlist/{code}` | 🔒 admin | 修改标的可编辑字段 | 管理页 |
+| DELETE | `/api/watchlist/{code}` | 🔒 admin | 删除标的 | 管理页 |
+| POST | `/api/watchlist/batch` | 🔒 admin | 批量新增 | 管理页 |
+| POST | `/api/watchlist/refresh-snapshot` | 🔒 admin | 刷新静态快照字段 | 管理页 |
+| GET | `/api/stock-filter/search` | 🔒 登录 | 条件选股（需 OpenD） | 选股页 |
+| GET | `/api/stock-filter/info` | 🔒 登录 | 单股信息查询 | 选股页 |
+| GET | `/api/fundamental/latest` | 🔒 登录 | 单标的基本面数据+评分 | 基本面页 |
+| GET | `/api/fundamental/overview` | 🔒 登录 | 全标的基本面速览 | 基本面概览 |
+| GET | `/api/market-temperature` | 🔒 登录 | 市场温度评分（3 维度综合） | **MarketTemperature.vue** |
+| GET | `/api/market-temperature/history` | 🔒 登录 | 近 N 天市场温度历史 | **MarketTemperature.vue（趋势图）** |
 
 ---
 
@@ -95,6 +186,116 @@ if (res.data.data === null || res.data.message) {
 ---
 
 ## 接口详情
+
+### POST `/api/auth/login`
+
+用户登录，验证用户名密码，返回 JWT access_token。
+
+**请求参数**
+
+| 参数 | 位置 | 类型 | 说明 |
+|------|------|------|------|
+| `username` | body (JSON) | `string` | 用户名 |
+| `password` | body (JSON) | `string` | 密码 |
+
+**请求示例**
+
+```bash
+curl -X POST http://localhost:8000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "your_password"}'
+```
+
+**响应 200（成功）**
+
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "bearer",
+  "expires_in": 604800,
+  "role": "admin"
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `access_token` | string | JWT Token，后续请求放入 `Authorization: Bearer <token>` |
+| `token_type` | string | 固定 `"bearer"` |
+| `expires_in` | int | Token 有效秒数（默认 7 天 = 604800 秒） |
+| `role` | string | 用户角色：`admin` / `member` |
+
+**响应 200（失败）**
+
+```json
+{"data": null, "message": "Invalid username or password"}
+```
+
+> **前端注意**：登录失败不返回 401，而是 200 + `data: null`。前端通过判断 `access_token` 是否存在来区分成功/失败。
+
+**前端对接代码**
+
+```javascript
+async function login(username, password) {
+  const res = await api.post('/api/auth/login', { username, password })
+  if (res.data.access_token) {
+    localStorage.setItem('token', res.data.access_token)
+    localStorage.setItem('role', res.data.role)
+    return { success: true, role: res.data.role }
+  }
+  return { success: false, message: res.data.message }
+}
+```
+
+---
+
+### GET `/api/auth/me`
+
+获取当前登录用户信息。用于前端验证 token 是否有效、展示用户名。
+
+**请求头**：`Authorization: Bearer <token>`
+
+**响应 200**
+
+```json
+{
+  "id": 1,
+  "username": "admin",
+  "role": "admin",
+  "created_at": "2026-05-06T00:00:00",
+  "last_login": "2026-05-06T10:30:00"
+}
+```
+
+**响应 401**：token 无效或过期
+
+---
+
+### POST `/api/auth/change-password`
+
+修改当前用户密码。
+
+**请求头**：`Authorization: Bearer <token>`
+
+**请求参数**
+
+| 参数 | 位置 | 类型 | 说明 |
+|------|------|------|------|
+| `old_password` | body (JSON) | `string` | 当前密码 |
+| `new_password` | body (JSON) | `string` | 新密码 |
+
+**响应 200（成功）**
+
+```json
+{"message": "Password updated"}
+```
+
+**响应 200（旧密码错误）**
+
+```json
+{"data": null, "message": "Old password is incorrect"}
+```
+
+---
 
 ### GET `/health`
 
@@ -371,39 +572,161 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
 
 ### GET `/api/watchlist`
 
-返回完整标的池，数据来源为 `data/watchlist.json`。
+> **v2.6 变更**：数据来源从 `watchlist.json` 改为 SQLite `watchlist` 表，支持筛选参数。
 
-**请求参数**：无
+返回标的池列表，支持按分类/状态/市场/关键词筛选。
+
+**请求参数**
+
+| 参数 | 位置 | 类型 | 说明 |
+|------|------|------|------|
+| `category` | query | `string` | 按分类过滤（如 `mag7`） |
+| `status` | query | `string` | 按状态过滤: `watching` / `holding` / `exited` |
+| `market` | query | `string` | 按市场过滤: `US` / `HK` |
+| `search` | query | `string` | 模糊搜索 ticker/name/notes |
 
 **响应 200**
 
 ```json
 {
-  "categories": {
-    "mag7": "MAG7",
-    "storage": "存储",
-    "crypto": "加密"
-  },
+  "total": 40,
+  "categories": { "mag7": "MAG7", "storage": "存储" },
   "watchlist": [
     {
+      "code": "US.NVDA",
       "ticker": "NVDA",
       "name": "NVIDIA Corporation",
       "market": "US",
       "category": "mag7",
+      "status": "watching",
       "tags": ["AI芯片", "GPU"],
-      "futu_code": "US.NVDA",
-      "has_data": true
+      "target_price": null,
+      "forward_pe": null,
+      "trailing_pe": null,
+      "market_cap": null,
+      "current_price": null,
+      "thesis": "",
+      "notes": "",
+      "has_data": true,
+      "created_at": "2026-05-06T00:00:00",
+      "updated_at": "2026-05-06T00:00:00"
     }
   ]
 }
 ```
 
-| 字段 | 说明 |
-|------|------|
-| `categories` | 分类 ID → 中文名映射 |
-| `has_data` | `true` = 已有历史数据可查询，`false` = 尚未导入 |
+---
+
+### GET `/api/watchlist/{code}`
+
+查询单只标的详情。
+
+**Path Parameter:** `code` — Futu 格式代码（如 `US.AAPL`）
+
+**响应 200:** 完整标的字段（同列表中的单条结构）
+
+**不存在时:** `{"data": null, "message": "Stock US.XXXX not found in watchlist"}`
 
 ---
+
+### POST `/api/watchlist`（admin）
+
+新增标的。自动从富途获取基础信息（name、sector、industry 等）。OpenD 离线时降级为手动填充。
+
+**Request Body:**
+```json
+{
+  "code": "US.PLTR",
+  "category": "cloud",
+  "tags": ["AI", "data"],
+  "thesis": "Data analytics leader",
+  "target_price": 30.0
+}
+```
+
+**必填:** `code`
+
+**响应 201:** `{"message": "Stock US.PLTR added to watchlist", "data": {...}}`
+
+**已存在:** `{"data": null, "message": "Stock US.PLTR already exists in watchlist"}`
+
+---
+
+### PATCH `/api/watchlist/{code}`（admin）
+
+修改标的可编辑字段（部分更新，只传需要改的字段）。
+
+**可修改字段:** category, status, tags, target_price, stop_loss, analyst_target_mean, morningstar_fair_value, forward_pe, forward_eps, peg_ratio, revenue_growth, earnings_growth, profit_margin, roe, debt_to_equity, thesis, notes
+
+**不可修改（返回 400）:** code, ticker, name, market, sector, industry, listing_date, trailing_pe, market_cap, current_price, dividend_yield, beta, created_at
+
+**Request Body:**
+```json
+{"notes": "Q2 下调预期", "forward_pe": 25.0}
+```
+
+**响应 200:** `{"message": "Stock US.AAPL updated", "data": {...}, "updated_fields": ["notes", "forward_pe"]}`
+
+---
+
+### DELETE `/api/watchlist/{code}`（admin）
+
+删除标的（仅从 watchlist 移除，不删历史 K 线/评分数据）。
+
+**响应 200:** `{"message": "Stock US.PLTR removed from watchlist"}`
+
+---
+
+### POST `/api/watchlist/batch`（admin）
+
+批量新增标的。
+
+**Request Body:**
+```json
+{"codes": ["US.PLTR", "US.SNOW"], "category": "cloud", "tags": ["AI"]}
+```
+
+**响应 200:** `{"message": "2 stocks added, 0 skipped", "added": [...], "skipped": [...]}`
+
+---
+
+### POST `/api/watchlist/refresh-snapshot`（admin）
+
+刷新标的静态快照字段（trailing_pe, market_cap, current_price 等）。需要 OpenD。
+
+**Query Parameter:** `code`（可选，不传则刷新全部）
+
+**响应 200:** `{"message": "Refreshed 40 stocks", "updated": 38, "failed": [...]}`
+
+---
+
+### GET `/api/stock-filter/search`
+
+条件选股（需 OpenD 在线）。
+
+**请求参数**
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `market` | `string` | 市场（默认 `US`） |
+| `min_market_cap` | `float` | 最小市值（亿美元） |
+| `max_pe` | `float` | 最大市盈率 |
+| `min_price` | `float` | 最低股价 |
+| `sector` | `string` | 行业板块 |
+
+**响应 200:** `{"total": 15, "results": [{code, name, market_cap, trailing_pe, current_price, in_watchlist}, ...]}`
+
+**OpenD 离线:** `{"data": null, "message": "Futu OpenD not connected"}`
+
+---
+
+### GET `/api/stock-filter/info`
+
+单股信息查询（新增前预览）。需 OpenD。
+
+**请求参数:** `code`（必填）
+
+**响应 200:** `{code, ticker, name, market, sector, industry, listing_date, market_cap, trailing_pe, current_price, ...}`
 
 ---
 
@@ -600,8 +923,11 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
 | HTTP 状态码 | 含义 |
 |------------|------|
 | `200` | 成功（含"无数据"情况，通过 `data: null` + `message` 区分） |
+| `401` | 未认证（未携带 token / token 无效 / token 过期） |
+| `403` | 权限不足（token 有效但角色不允许访问该接口） |
 | `422` | 请求参数校验失败（如 ktype 传了非法值，FastAPI 标准格式） |
 
+> **v2.4 变更**：新增 401/403 认证相关状态码。前端需在 axios 拦截器中处理 401 跳转登录页。
 > **v2.3 变更**：所有"无数据"场景从 HTTP 404 改为 HTTP 200 + `{data: null, message: "..."}`。
 > 前端不再需要 catch 404 错误，统一在 then 分支处理。
 
@@ -736,6 +1062,58 @@ export function getMarketTemperatureHistory(days = 30) {
 1. 调接口拿 JSON
 2. 根据 `composite_score` 查映射表得到颜色/文案
 3. 渲染 UI
+
+---
+
+## 认证前端对接指南
+
+### 新增页面：Login.vue
+
+**路由**：`/login`
+
+**页面功能**：
+- 用户名 + 密码输入框
+- 登录按钮 → 调用 `POST /api/auth/login`
+- 登录成功：存储 token + role → 跳转 `/`
+- 登录失败：展示错误提示
+
+### 路由守卫
+
+```javascript
+// src/router/index.js
+router.beforeEach((to, from, next) => {
+  const token = localStorage.getItem('token')
+  if (to.path !== '/login' && !token) {
+    next('/login')
+  } else {
+    next()
+  }
+})
+```
+
+### Token 管理
+
+| 操作 | localStorage key | 说明 |
+|------|-----------------|------|
+| 登录成功 | `token` = access_token | JWT 令牌 |
+| 登录成功 | `role` = role | 用于前端 UI 权限控制 |
+| 401 响应 | 清除 `token` + `role` | 跳转 `/login` |
+| 手动登出 | 清除 `token` + `role` | 跳转 `/login` |
+
+### 页面刷新时验证
+
+```javascript
+// App.vue mounted
+async function checkAuth() {
+  try {
+    const res = await api.get('/api/auth/me')
+    // token 有效，更新用户状态
+    store.user = res.data
+  } catch (e) {
+    // token 无效/过期，拦截器自动跳转登录
+  }
+}
+```
 
 ### 完整映射代码参考（JS — v2.3）
 

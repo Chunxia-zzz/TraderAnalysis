@@ -122,6 +122,166 @@ def score(
 
 
 @app.command()
+def migrate_watchlist(
+    dry: bool = typer.Option(False, help="预览模式，不实际写入"),
+) -> None:
+    """从 watchlist.json 迁移到 SQLite（一次性操作）。"""
+    from trader_analysis.futu_strategy import config
+    from trader_analysis.futu_strategy.watchlist_storage import (
+        init_watchlist_table,
+        migrate_from_json,
+        watchlist_count,
+    )
+
+    init_watchlist_table()
+    existing = watchlist_count()
+    if existing > 0:
+        typer.echo(f"watchlist 表已有 {existing} 条记录。")
+        typer.echo("如需重新导入，请先清空表或手动删除相关记录。")
+        return
+
+    items, categories = config._load_watchlist()
+    typer.echo(f"从 watchlist.json 读取 {len(items)} 条记录")
+
+    if dry:
+        for item in items:
+            code = f"{item['market']}.{item['ticker']}"
+            typer.echo(f"  [DRY] {code} — {item['name']} ({item['category']})")
+        typer.echo(f"\n预览完成，共 {len(items)} 条。去掉 --dry 执行实际导入。")
+        return
+
+    count = migrate_from_json(items, categories)
+    typer.echo(f"迁移完成，写入 {count} 条记录。")
+
+
+@app.command()
+def refresh_snapshot(
+    codes: Optional[list[str]] = typer.Option(None, help="指定代码，不传则全部刷新"),
+) -> None:
+    """刷新标的池静态快照字段（trailing_pe, market_cap 等）。需要 OpenD。"""
+    from trader_analysis.futu_strategy.stock_info_fetcher import fetch_snapshot_batch
+    from trader_analysis.futu_strategy.watchlist_storage import (
+        get_all_codes,
+        init_watchlist_table,
+        refresh_snapshot as _refresh,
+    )
+
+    init_watchlist_table()
+    code_list = codes if codes else get_all_codes()
+    typer.echo(f"刷新 {len(code_list)} 只标的的快照数据...")
+
+    snapshots = fetch_snapshot_batch(code_list)
+    updated = 0
+    for c in code_list:
+        if c in snapshots:
+            _refresh(c, snapshots[c])
+            updated += 1
+
+    typer.echo(f"刷新完成：成功 {updated}，失败 {len(code_list) - updated}")
+
+
+@app.command()
+def fundamental(
+    codes: Optional[list[str]] = typer.Option(None, help="标的代码列表（默认全部 watchlist）"),
+) -> None:
+    """拉取基本面数据并评分（数据源：yfinance，不依赖 OpenD）。"""
+    from datetime import date
+
+    from trader_analysis.futu_strategy import config
+    from trader_analysis.futu_strategy.fundamental_fetcher import fetch_all
+    from trader_analysis.futu_strategy.fundamental_scorer import calculate_fundamental_score
+    from trader_analysis.futu_strategy.storage import init_db, upsert_fundamental
+    from trader_analysis.futu_strategy.watchlist_storage import init_watchlist_table, update_stock
+
+    init_db()
+    init_watchlist_table()
+
+    code_list = codes if codes else config.get_watchlist()
+    typer.echo(f"拉取基本面数据中... ({len(code_list)} 只标的)")
+
+    results = fetch_all(code_list)
+    typer.echo(f"完成：{len(results)} 只成功，{len(code_list) - len(results)} 只跳过（ETF/无数据）")
+
+    today = date.today().isoformat()
+    undervalued = []
+    overvalued = []
+
+    for item in results:
+        code = item["code"]
+        data = item["data"]
+
+        # 评分
+        score_result = calculate_fundamental_score(code, data)
+        # 合并数据 + 评分结果
+        full_record = {**data, **score_result}
+        upsert_fundamental(code, today, full_record)
+
+        # 同步关键字段到 watchlist 表
+        sync_fields = {}
+        for src, dst in [
+            ("forward_pe", "forward_pe"), ("forward_eps", "forward_eps"),
+            ("peg_ratio", "peg_ratio"), ("revenue_growth", "revenue_growth"),
+            ("earnings_growth", "earnings_growth"), ("profit_margin", "profit_margin"),
+            ("roe", "roe"), ("debt_to_equity", "debt_to_equity"),
+        ]:
+            if data.get(src) is not None:
+                sync_fields[dst] = data[src]
+        if sync_fields:
+            update_stock(code, sync_fields)
+
+        # 同步快照字段
+        from trader_analysis.futu_strategy.watchlist_storage import refresh_snapshot
+        snapshot = {}
+        for f in ["trailing_pe", "market_cap", "current_price", "dividend_yield", "beta"]:
+            if data.get(f) is not None:
+                snapshot[f] = data[f]
+        if snapshot:
+            refresh_snapshot(code, snapshot)
+
+        # 收集输出
+        signal = score_result["valuation_signal"]
+        if signal == "UNDERVALUED":
+            undervalued.append((code, score_result["fundamental_score"], data.get("forward_pe"), data.get("recommendation")))
+        elif signal == "OVERVALUED":
+            overvalued.append((code, score_result["fundamental_score"], data.get("forward_pe"), data.get("recommendation")))
+
+    # 打印摘要
+    typer.echo("")
+    typer.echo("── 基本面评分 ──")
+    if undervalued:
+        typer.echo(f"  UNDERVALUED ({len(undervalued)}只):")
+        for code, score, fpe, rec in sorted(undervalued, key=lambda x: -x[1]):
+            fpe_str = f"FPE={fpe:.1f}x" if fpe else "FPE=N/A"
+            typer.echo(f"    {code:12s} {score:.1f}分  {fpe_str}  {rec or ''}")
+    if overvalued:
+        typer.echo(f"  OVERVALUED ({len(overvalued)}只):")
+        for code, score, fpe, rec in sorted(overvalued, key=lambda x: -x[1]):
+            fpe_str = f"FPE={fpe:.1f}x" if fpe else "FPE=N/A"
+            typer.echo(f"    {code:12s} {score:.1f}分  {fpe_str}  {rec or ''}")
+
+
+@app.command()
+def create_admin(
+    username: str = typer.Option("admin", help="管理员用户名"),
+    password: str = typer.Option(
+        ..., prompt=True, hide_input=True, confirmation_prompt=True, help="管理员密码"
+    ),
+) -> None:
+    """创建管理员账号（首次部署时使用）。"""
+    from trader_analysis.futu_strategy.auth import hash_password
+    from trader_analysis.futu_strategy.auth_storage import create_user, init_users_table, user_exists
+
+    init_users_table()
+    if user_exists(username):
+        typer.echo(f"Error: User '{username}' already exists.", err=True)
+        raise typer.Exit(code=1)
+
+    hashed = hash_password(password)
+    create_user(username, hashed, role="admin")
+    typer.echo(f"Admin account '{username}' created successfully.")
+
+
+@app.command()
 def temperature(
     backfill: int = typer.Option(0, help="回溯天数（从已有K线数据计算历史评分，0=仅计算最新）"),
 ) -> None:

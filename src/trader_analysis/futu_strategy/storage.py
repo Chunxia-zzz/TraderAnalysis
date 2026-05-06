@@ -93,6 +93,47 @@ CREATE TABLE IF NOT EXISTS market_score_detail (
     detail_json TEXT NOT NULL,
     created_at  TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS fundamental_data (
+    code               TEXT NOT NULL,
+    date               TEXT NOT NULL,
+    current_price      REAL,
+    trailing_pe        REAL,
+    forward_pe         REAL,
+    trailing_eps       REAL,
+    forward_eps        REAL,
+    peg_ratio          REAL,
+    price_to_book      REAL,
+    ev_to_ebitda       REAL,
+    revenue_growth     REAL,
+    earnings_growth    REAL,
+    revenue_per_share  REAL,
+    target_mean        REAL,
+    target_median      REAL,
+    target_high        REAL,
+    target_low         REAL,
+    analyst_count      INTEGER,
+    recommendation     TEXT,
+    current_ratio      REAL,
+    debt_to_equity     REAL,
+    free_cashflow      REAL,
+    operating_cashflow REAL,
+    profit_margin      REAL,
+    gross_margin       REAL,
+    roe                REAL,
+    market_cap         REAL,
+    dividend_yield     REAL,
+    beta               REAL,
+    short_ratio        REAL,
+    fundamental_score  REAL,
+    valuation_signal   TEXT,
+    breakdown          TEXT,
+    updated_at         TEXT,
+    PRIMARY KEY (code, date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_fundamental_code_date
+    ON fundamental_data(code, date);
 """
 
 # K 线 + 指标列（写入顺序）
@@ -373,3 +414,83 @@ def query_market_score_history(days: int = 30) -> list[dict]:
     for item in result:
         item["extreme_triggered"] = bool(item.get("extreme_triggered"))
     return result
+
+
+# ── 基本面数据 (Fundamental) ──────────────────────────────────────────────────
+
+
+def upsert_fundamental(code: str, date: str, data: dict) -> None:
+    """写入/更新基本面数据记录。"""
+    conn = _get_conn()
+    breakdown_json = json.dumps(data.get("breakdown", {}), ensure_ascii=False)
+    conn.execute(
+        "INSERT OR REPLACE INTO fundamental_data "
+        "(code, date, current_price, trailing_pe, forward_pe, trailing_eps, forward_eps, "
+        "peg_ratio, price_to_book, ev_to_ebitda, "
+        "revenue_growth, earnings_growth, revenue_per_share, "
+        "target_mean, target_median, target_high, target_low, analyst_count, recommendation, "
+        "current_ratio, debt_to_equity, free_cashflow, operating_cashflow, "
+        "profit_margin, gross_margin, roe, "
+        "market_cap, dividend_yield, beta, short_ratio, "
+        "fundamental_score, valuation_signal, breakdown, updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
+        (
+            code, date,
+            data.get("current_price"),
+            data.get("trailing_pe"), data.get("forward_pe"),
+            data.get("trailing_eps"), data.get("forward_eps"),
+            data.get("peg_ratio"), data.get("price_to_book"), data.get("ev_to_ebitda"),
+            data.get("revenue_growth"), data.get("earnings_growth"), data.get("revenue_per_share"),
+            data.get("target_mean"), data.get("target_median"),
+            data.get("target_high"), data.get("target_low"),
+            data.get("analyst_count"), data.get("recommendation"),
+            data.get("current_ratio"), data.get("debt_to_equity"),
+            data.get("free_cashflow"), data.get("operating_cashflow"),
+            data.get("profit_margin"), data.get("gross_margin"), data.get("roe"),
+            data.get("market_cap"), data.get("dividend_yield"),
+            data.get("beta"), data.get("short_ratio"),
+            data.get("fundamental_score"), data.get("valuation_signal"),
+            breakdown_json,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def query_latest_fundamental(code: str) -> dict | None:
+    """查某标的最新基本面数据。"""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT * FROM fundamental_data WHERE code = ? ORDER BY date DESC LIMIT 1",
+        (code,),
+    ).fetchone()
+    conn.close()
+    if not row:
+        return None
+    d = dict(row)
+    d["breakdown"] = json.loads(d["breakdown"]) if d.get("breakdown") else {}
+    return d
+
+
+def query_fundamentals_overview() -> list[dict]:
+    """查所有标的最新基本面评分概览，按分数降序。"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT f.code, f.date, f.fundamental_score, f.valuation_signal, "
+        "f.forward_pe, f.target_mean, f.current_price, f.recommendation "
+        "FROM fundamental_data f "
+        "INNER JOIN (SELECT code, MAX(date) as max_date FROM fundamental_data GROUP BY code) m "
+        "ON f.code = m.code AND f.date = m.max_date "
+        "ORDER BY f.fundamental_score DESC"
+    ).fetchall()
+    conn.close()
+    results = []
+    for r in rows:
+        d = dict(r)
+        # 计算 target_upside
+        if d.get("target_mean") and d.get("current_price") and d["current_price"] > 0:
+            d["target_upside"] = round((d["target_mean"] - d["current_price"]) / d["current_price"], 4)
+        else:
+            d["target_upside"] = None
+        results.append(d)
+    return results

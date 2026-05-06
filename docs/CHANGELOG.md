@@ -4,6 +4,109 @@
 
 ---
 
+## [v2.7.0] — 2026-05-07
+
+### 新增：基本面分析模块（yfinance + 5因子评分）
+
+为系统新增基本面评估能力，与现有技术面评分互补。数据源为 yfinance，不依赖 Futu OpenD。
+
+**新 API 端点：**
+
+- **`GET /api/fundamental/latest?code=US.NVDA`**：单标的基本面数据 + 评分（分组结构化响应）
+- **`GET /api/fundamental/overview`**：全标的基本面速览（UNDERVALUED / FAIR / OVERVALUED 分组）
+
+**新 CLI 命令：**
+
+- **`trader-analysis fundamental`**：批量拉取基本面数据并评分（`--codes` 可选）
+  - 自动同步 forward_pe/eps/roe 等到 watchlist 表
+  - 自动刷新快照字段（trailing_pe, market_cap 等）
+
+**5 因子评分体系（满分 100）：**
+
+| 因子 | 权重 | 逻辑 |
+|------|------|------|
+| 估值折价 | 30 | 目标价上行空间 |
+| PE 合理性 | 20 | Forward PE 越低越好 |
+| 成长性 | 20 | 营收+盈利双增长 |
+| 财务健康 | 15 | ROE+利润率+低负债 |
+| 分析师共识 | 15 | 推荐等级×覆盖人数 |
+
+**架构变更：**
+
+- 新增 `fundamental_fetcher.py`：yfinance 批量采集 + code 映射 + 限频重试
+- 新增 `fundamental_scorer.py`：5 因子连续映射评分引擎
+- `storage.py`：新增 `fundamental_data` 表 + upsert/query 函数
+- 新增依赖：`yfinance>=0.2.36`
+
+**技术方案**：`docs/futu_strategy_docs/futu_strategy_docs/part_f_fundamental.md`
+
+---
+
+## [v2.6.0] — 2026-05-07
+
+### 新增：标的池管理模块（SQLite CRUD + 富途选股）
+
+将标的池从静态 `data/watchlist.json` 迁移到 SQLite，支持动态 CRUD 管理和富途选股填充。
+
+**新 API 端点：**
+
+- **`GET /api/watchlist`**：改为从 DB 读取，支持 `?category=&status=&market=&search=` 筛选
+- **`GET /api/watchlist/{code}`**：查询单只标的详情
+- **`POST /api/watchlist`**：新增标的（admin），自动从富途填充基础信息
+- **`PATCH /api/watchlist/{code}`**：修改可编辑字段（admin），只读字段返回 400
+- **`DELETE /api/watchlist/{code}`**：删除标的（admin），不删历史数据
+- **`POST /api/watchlist/batch`**：批量新增（admin）
+- **`POST /api/watchlist/refresh-snapshot`**：刷新静态快照字段（admin，需 OpenD）
+- **`GET /api/stock-filter/search`**：条件选股（需 OpenD）
+- **`GET /api/stock-filter/info`**：单股信息查询
+
+**新 CLI 命令：**
+
+- **`trader-analysis migrate-watchlist`**：从 JSON 一次性迁移到 SQLite（`--dry` 预览）
+- **`trader-analysis refresh-snapshot`**：刷新快照字段（`--codes` 可选）
+
+**架构变更：**
+
+- 新增 `watchlist_storage.py`：watchlist 表 DDL + 完整 CRUD
+- 新增 `stock_info_fetcher.py`：富途 `get_stock_basicinfo` / `get_market_snapshot` / `get_stock_filter` 封装
+- `config.py`：`WATCHLIST` 改为动态代理，从 DB 读取（表为空时回退 JSON）
+- 字段分层：静态（自动填充，不可改）vs 动态（用户手动维护）
+
+**技术方案**：`docs/futu_strategy_docs/futu_strategy_docs/part_e_watchlist_management.md`
+
+---
+
+## [v2.5.0] — 2026-05-06
+
+### 新增：JWT 认证体系（P0）
+
+为上云部署添加最小化认证层，阻止未授权公网访问。
+
+**新功能：**
+
+- **`POST /api/auth/login`**：用户登录，返回 JWT access_token（7 天有效期）
+- **`GET /api/auth/me`**：获取当前登录用户信息
+- **`POST /api/auth/change-password`**：修改当前用户密码
+- **`trader-analysis create-admin` CLI 命令**：首次部署创建管理员账号
+- **所有 `/api/*` 端点**：需要携带 `Authorization: Bearer <token>` 才能访问
+- **公开端点白名单**：`/health`、`/api/auth/login`、`/docs`、`/openapi.json`
+
+**架构变更：**
+
+- 新增 `auth.py`：JWT 签发/验证、密码哈希（bcrypt）、FastAPI 认证依赖
+- 新增 `auth_storage.py`：users 表（SQLite）CRUD 操作
+- CORS `allow_methods` 从 `["GET"]` 改为 `["*"]`（支持 POST）
+- 新增依赖：`python-jose[cryptography]`、`passlib[bcrypt]`
+
+**环境变量：**
+
+- `JWT_SECRET_KEY`（必须设置，生产环境通过环境变量注入）
+- `JWT_EXPIRE_DAYS`（可选，默认 7）
+
+**技术方案**：`docs/futu_strategy_docs/futu_strategy_docs/part_d_auth.md`
+
+---
+
 ## [v2.4.0] — 2026-05-05
 
 ### 个股评分系统重写（Breaking Change）

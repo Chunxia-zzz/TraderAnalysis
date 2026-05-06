@@ -9,3 +9,6 @@ numpy==2.4.3
 pandas==3.0.1
 requests==2.33.0
 typer==0.24.1
+python-jose[cryptography]==3.4.0
+passlib[bcrypt]==1.7.4
+yfinance>=0.2.36
