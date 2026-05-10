@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS watchlist (
 
     thesis          TEXT DEFAULT '',
     notes           TEXT DEFAULT '',
+    recommended_strategy TEXT DEFAULT '',
 
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
@@ -64,7 +65,7 @@ EDITABLE_FIELDS = [
     "forward_pe", "forward_eps", "peg_ratio",
     "revenue_growth", "earnings_growth",
     "profit_margin", "roe", "debt_to_equity",
-    "thesis", "notes",
+    "thesis", "notes", "recommended_strategy",
 ]
 
 READONLY_FIELDS = [

@@ -47,7 +47,12 @@ def fetch_stock_info(code: str) -> dict | None:
         from futu import RET_OK  # type: ignore[import]
 
         # 获取基础信息
-        ret, data = ctx.get_stock_basicinfo(code_list=[code])
+        from futu import Market as FutuMarket  # type: ignore[import]
+
+        market_code = code.split(".")[0] if "." in code else "US"
+        market_map = {"US": FutuMarket.US, "HK": FutuMarket.HK, "SH": FutuMarket.SH, "SZ": FutuMarket.SZ}
+        futu_market = market_map.get(market_code, FutuMarket.US)
+        ret, data = ctx.get_stock_basicinfo(futu_market, code_list=[code])
         info: dict = {}
         if ret == RET_OK and not data.empty:
             row = data.iloc[0]

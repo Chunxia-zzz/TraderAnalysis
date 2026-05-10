@@ -4,6 +4,118 @@
 
 ---
 
+## [v3.1.0] — 2026-05-11
+
+### 新增：趋势跟踪策略 + 动量评分 + 买入确认
+
+**回测引擎新增两种策略模式：**
+
+- `trend`：趋势跟踪模式——评分达标买入，收盘跌破 MA（ma5/ma10/ma20）时卖出。适合强势股吃主升浪
+- `entry_confirm=above_ma5`：买入确认——评分达标后不立即买，等收盘站上 MA5（确认止跌反转）再买入
+
+**机会速览接口增强（`GET /api/scores/overview`）：**
+
+- 每个标的新增 `above_ma5`(bool)、`close`、`ma5`、`momentum_score`(0-100) 字段
+- 新增 `actionable` 分组：评分高 + 站上MA5 = 确认反转可执行
+- 新增 `momentum_leaders` 分组：动量分≥70 = 主升浪龙头
+
+**动量评分 5 维度（满分100）：**
+
+| 维度 | 分值 | 逻辑 |
+|------|------|------|
+| 均线多头排列 | 25 | MA5>MA10>MA20>MA60 |
+| RSI强势区 | 20 | RSI 50-90 线性给分 |
+| MACD方向 | 20 | DIF>0 且 DIF>DEA |
+| 20日涨幅 | 20 | 0-30% 线性映射 |
+| 量能配合 | 15 | 量比≥1.5 满分 |
+
+---
+
+## [v3.0.0] — 2026-05-10
+
+### 新增：日内网格交易引擎 (P0)
+
+基于 Futu OpenD 实时行情推送的自动网格交易引擎，支持模拟盘/实盘切换。
+
+**新模块 `grid_trader/`：**
+
+- `engine.py`: 主引擎（行情订阅 → 网格决策 → 自动下单 → 状态持久化）
+- `strategy.py`: 网格线计算 + 穿越检测 + 状态决策
+- `executor.py`: 富途下单封装（限价单）
+- `risk_control.py`: 仓位/亏损/次数/时段 四重风控
+- `state_manager.py`: 3 张新表（grid_config/grid_orders/grid_state）
+- `quote_handler.py`: 实时报价回调
+
+**新 CLI 命令：**
+
+- `trader-analysis grid-create`: 创建网格配置
+- `trader-analysis grid-start <id>`: 启动引擎（长驻进程）
+- `trader-analysis grid-stop <id>`: 停止引擎
+- `trader-analysis grid-status [id]`: 查看状态
+
+**新 API 端点：**
+
+- `GET /api/grid/status?config_id=1`: 网格运行状态
+- `GET /api/grid/orders?config_id=1`: 交易记录
+
+---
+
+## [v2.9.0] — 2026-05-10
+
+### 新增：信号回测引擎 + 个股评分 v4
+
+**信号回测引擎：**
+
+- 新模块 `backtest.py`：验证"评分达标时买入，持有N天后卖出"的历史收益
+- CLI: `trader-analysis backtest US.SNDK --threshold 40 --holding-days 10`
+- API: `GET /api/backtest/run?code=US.SNDK&threshold=40&holding_days=10`
+- 支持冷却期去重（none/holding/custom）
+- 输出：胜率、平均收益、Sharpe-like、Profit Factor 等完整统计
+
+**个股评分 v4 重构：**
+
+- RSI 映射放宽：(70-RSI)/50 → (80-RSI)/60，更早识别回调
+- 新增 C6 回撤因子（替代 MA250偏离）：60日回撤 5%~25% 线性给分，强势股回调也能触发
+- 新增大盘温度加成：market composite < 40 时最多 +15 分
+- 信号阈值降低：BUY 70→60，STRONG_BUY 90→80
+- 回测验证：2025-04关税冲击时 NVDA/META/AMD 从 NO_ACTION 升级为 BUY
+
+**Bug 修复：**
+
+- `daily_update.py`: 修复 `timeframe` 参数缺失 + `timestamp`/`date` 列名映射
+- `storage.py`: 修复 `batch_upsert` 中 col_map 导致 date NULL 的问题
+- `providers.py`: 移除 `max_count` 参数（Futu QFQ 模式下行为异常）
+- 增量更新增加 1s 间隔避免 Futu API 限频
+
+---
+
+## [v2.8.0] — 2026-05-10
+
+### 变更：市场温度仓位映射重构（Breaking Change）
+
+仓位范围从 [10%, 90%] 扩展为 [30%, 120%]，极端层从单级改为两级。
+
+**仓位映射三层结构：**
+
+- 正常区（composite > 25）：`target = 85 - (composite - 25) × (55/75)`，范围 30%~85%
+- 轻度极端（composite ≤ 25）：`target = 85 + (25 - composite) × (15/10)`，范围 85%~100%
+- 重度极端（composite ≤ 15 AND SPY日RSI<30 AND SPY周RSI<30）：`target = 100 + (15 - composite) × (20/15)`，范围 100%~120%
+
+**变更理由：**
+
+- 美股长牛前提下，最低 30% 底仓保证不踏空（原 10% 过于保守）
+- 两级极端层让加仓节奏更平滑（轻度极端 14天触发 vs 旧方案仅1天）
+- 重度极端 RSI 门槛从 <25 放宽至 <30，避免极端恐慌时因条件过严错失加仓窗口
+
+**回测验证（900天 2022-09~2026-05）：**
+
+- 均值仓位从 39.3% 提升至 56.9%
+- 2025-04 关税冲击（SPY -14%）：仓位 48%→79%，节奏合理
+- 2025-11 回调（SPY -4.5%）：仓位 54%→85%
+- 2026-03 大跌（SPY -15%+）：轻度极端 13天 + 重度极端 1天，最高 104%
+
+---
+
 ## [v2.7.0] — 2026-05-07
 
 ### 新增：基本面分析模块（yfinance + 5因子评分）

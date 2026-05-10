@@ -96,8 +96,8 @@ POSITION_CONFIG: dict = {
 }
 
 # ── 评分阈值 ───────────────────────────────────────────────────────────────────
-SCORE_STRONG_BUY: int = 90
-SCORE_BUY: int = 70
+SCORE_STRONG_BUY: int = 80
+SCORE_BUY: int = 60
 
 # ── K 线拉取配置 ──────────────────────────────────────────────────────────────
 DAILY_KLINE_COUNT: int = 250   # 需 ≥ 200 根以计算 MA200，额外 50 根作为缓冲
@@ -168,7 +168,7 @@ MARKET_TEMP_WEIGHTS: dict[str, float] = {
 }
 
 # ── 基本面分析 (Fundamental) ───────────────────────────────────────────────────
-FUNDAMENTAL_FETCH_INTERVAL: float = 0.5
+FUNDAMENTAL_FETCH_INTERVAL: float = 2.0  # yfinance 限频保护，每标的间隔2秒
 
 FUNDAMENTAL_WEIGHTS: dict[str, int] = {
     "valuation_discount": 30,

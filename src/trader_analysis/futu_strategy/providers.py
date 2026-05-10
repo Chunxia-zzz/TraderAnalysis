@@ -145,9 +145,9 @@ class FutuLiveDataProvider:
             raise DataProviderError("futu-api 未安装，请执行: pip install futu-api") from exc
 
         if not start:
-            # 简单模式：只拉最近 count 根
+            # 简单模式：拉最近 K 线（不传 max_count，Futu 默认返回最近 250 根）
             ret, df, _ = quote_ctx.request_history_kline(
-                code, ktype=kl_type, autype=AuType.QFQ, max_count=count
+                code, ktype=kl_type, autype=AuType.QFQ
             )
             if ret != 0:
                 raise DataProviderError(f"Futu API 拉取 {code} 失败: {df}")

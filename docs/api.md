@@ -25,69 +25,53 @@ Swagger UI：`http://localhost:8000/docs`
 
 ## 认证（Authentication）
 
-> **v2.4 新增**：所有 `/api/*` 端点（除登录外）需携带 JWT Token。
+> **v2.8 变更**：认证模块暂时禁用。所有 `/api/*` 端点无需 token 即可访问。
+>
+> 前端需同步注释掉以下代码：
+> - 登录页面（Login.vue）及相关路由
+> - axios 请求拦截器中 Authorization header 附加逻辑
+> - axios 响应拦截器中 401 跳转登录逻辑
+> - 路由守卫（router.beforeEach 中 token 检查）
+> - localStorage 中 token/role 的读写
+>
+> 恢复认证时需设置环境变量 `JWT_SECRET_KEY` 并取消 api_server.py 中 auth 相关注释。
 
-### 认证流程
+### 当前状态：所有端点公开
 
 ```
-1. POST /api/auth/login → 获取 access_token
-2. 存入 localStorage（key: "token"）
-3. 后续所有请求 Header 携带: Authorization: Bearer <token>
-4. 收到 401 时清除本地 token，跳转登录页
+所有 /api/* 端点均无需认证，直接请求即可。
+前端 axios 不需要附加 Authorization header。
 ```
 
-### 请求头格式
-
-```
-Authorization: Bearer eyJhbGciOiJIUzI1NiIs...
-```
-
-### 公开端点（无需 token）
-
-| 路径 | 说明 |
-|------|------|
-| `GET /health` | 健康检查 |
-| `POST /api/auth/login` | 登录 |
-| `GET /docs` | Swagger UI |
-| `GET /openapi.json` | OpenAPI Schema |
-
-### 认证错误响应
-
-| HTTP 状态码 | 场景 | 响应体 |
-|------------|------|--------|
-| `401` | 未携带 token / token 无效 / token 过期 | `{"detail": "Not authenticated"}` 或 `{"detail": "Invalid or expired token"}` |
-| `403` | token 有效但权限不足（member 访问 admin 接口） | `{"detail": "Admin access required"}` |
-
-### 前端对接代码参考
+~~### 以下为原认证流程（暂时禁用，保留供恢复时参考）~~
 
 ```javascript
-// src/api/index.js — axios 拦截器
-import axios from 'axios'
-import router from '@/router'
-
-const api = axios.create({ baseURL: 'http://localhost:8000' })
-
-// 请求拦截器：自动附加 token
-api.interceptors.request.use(config => {
-  const token = localStorage.getItem('token')
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
-  }
-  return config
-})
-
-// 响应拦截器：401 跳转登录
-api.interceptors.response.use(
-  response => response,
-  error => {
-    if (error.response?.status === 401) {
-      localStorage.removeItem('token')
-      localStorage.removeItem('role')
-      router.push('/login')
-    }
-    return Promise.reject(error)
-  }
-)
+// 前端注释掉以下代码：
+//
+// // src/api/index.js — axios 拦截器
+// api.interceptors.request.use(config => {
+//   const token = localStorage.getItem('token')
+//   if (token) config.headers.Authorization = `Bearer ${token}`
+//   return config
+// })
+//
+// api.interceptors.response.use(
+//   response => response,
+//   error => {
+//     if (error.response?.status === 401) {
+//       localStorage.removeItem('token')
+//       router.push('/login')
+//     }
+//     return Promise.reject(error)
+//   }
+// )
+//
+// // router/index.js — 路由守卫
+// router.beforeEach((to, from, next) => {
+//   if (to.path !== '/login' && !localStorage.getItem('token')) {
+//     next('/login')
+//   } else { next() }
+// })
 
 export default api
 ```
@@ -133,26 +117,29 @@ export default api
 | 方法 | 路径 | 认证 | 说明 | 前端页面 |
 |------|------|------|------|---------|
 | GET | `/health` | 🔓 公开 | 健康检查 | App.vue（启动时检测） |
-| POST | `/api/auth/login` | 🔓 公开 | 用户登录，获取 JWT | Login.vue |
-| GET | `/api/auth/me` | 🔒 登录 | 获取当前用户信息 | App.vue / 设置页 |
-| POST | `/api/auth/change-password` | 🔒 登录 | 修改密码 | 设置页 |
-| GET | `/api/indicators` | 🔒 登录 | 某标的某周期最近 N 根 K 线 + 全部指标 | Chart.vue |
-| GET | `/api/indicators/latest` | 🔒 登录 | 最新一根的所有指标值 | Dashboard.vue |
-| GET | `/api/scores/latest` | 🔒 登录 | 单个标的评分结果（支持指定日期） | Dashboard.vue |
-| GET | `/api/scores/overview` | 🔒 登录 | 全标的评分速览（按信号分组） | **机会速览页** |
-| GET | `/api/watchlist` | 🔒 登录 | 标的池列表（支持筛选） | 标的选择器 |
-| GET | `/api/watchlist/{code}` | 🔒 登录 | 单只标的详情 | 标的详情页 |
-| POST | `/api/watchlist` | 🔒 admin | 新增标的（自动填充富途信息） | 管理页 |
-| PATCH | `/api/watchlist/{code}` | 🔒 admin | 修改标的可编辑字段 | 管理页 |
-| DELETE | `/api/watchlist/{code}` | 🔒 admin | 删除标的 | 管理页 |
-| POST | `/api/watchlist/batch` | 🔒 admin | 批量新增 | 管理页 |
-| POST | `/api/watchlist/refresh-snapshot` | 🔒 admin | 刷新静态快照字段 | 管理页 |
-| GET | `/api/stock-filter/search` | 🔒 登录 | 条件选股（需 OpenD） | 选股页 |
-| GET | `/api/stock-filter/info` | 🔒 登录 | 单股信息查询 | 选股页 |
-| GET | `/api/fundamental/latest` | 🔒 登录 | 单标的基本面数据+评分 | 基本面页 |
-| GET | `/api/fundamental/overview` | 🔒 登录 | 全标的基本面速览 | 基本面概览 |
-| GET | `/api/market-temperature` | 🔒 登录 | 市场温度评分（3 维度综合） | **MarketTemperature.vue** |
-| GET | `/api/market-temperature/history` | 🔒 登录 | 近 N 天市场温度历史 | **MarketTemperature.vue（趋势图）** |
+| ~~POST~~ | ~~`/api/auth/login`~~ | ~~禁用~~ | ~~用户登录~~ | ~~Login.vue（注释掉）~~ |
+| ~~GET~~ | ~~`/api/auth/me`~~ | ~~禁用~~ | ~~获取当前用户信息~~ | ~~注释掉~~ |
+| ~~POST~~ | ~~`/api/auth/change-password`~~ | ~~禁用~~ | ~~修改密码~~ | ~~注释掉~~ |
+| GET | `/api/indicators` | 🔓 公开 | 某标的某周期最近 N 根 K 线 + 全部指标 | Chart.vue |
+| GET | `/api/indicators/latest` | 🔓 公开 | 最新一根的所有指标值 | Dashboard.vue |
+| GET | `/api/scores/latest` | 🔓 公开 | 单个标的评分结果（支持指定日期） | Dashboard.vue |
+| GET | `/api/scores/overview` | 🔓 公开 | 全标的评分速览（按信号分组） | **机会速览页** |
+| GET | `/api/watchlist` | 🔓 公开 | 标的池列表（支持筛选） | 标的选择器 |
+| GET | `/api/watchlist/{code}` | 🔓 公开 | 单只标的详情 | 标的详情页 |
+| POST | `/api/watchlist` | 🔓 公开 | 新增标的（自动填充富途信息） | 管理页 |
+| PATCH | `/api/watchlist/{code}` | 🔓 公开 | 修改标的可编辑字段 | 管理页 |
+| DELETE | `/api/watchlist/{code}` | 🔓 公开 | 删除标的 | 管理页 |
+| POST | `/api/watchlist/batch` | 🔓 公开 | 批量新增 | 管理页 |
+| POST | `/api/watchlist/refresh-snapshot` | 🔓 公开 | 刷新静态快照字段 | 管理页 |
+| GET | `/api/stock-filter/search` | 🔓 公开 | 条件选股（需 OpenD） | 选股页 |
+| GET | `/api/stock-filter/info` | 🔓 公开 | 单股信息查询 | 选股页 |
+| GET | `/api/fundamental/latest` | 🔓 公开 | 单标的基本面数据+评分 | 基本面页 |
+| GET | `/api/fundamental/overview` | 🔓 公开 | 全标的基本面速览 | 基本面概览 |
+| GET | `/api/market-temperature` | 🔓 公开 | 市场温度评分（3 维度综合） | **MarketTemperature.vue** |
+| GET | `/api/market-temperature/history` | 🔓 公开 | 近 N 天市场温度历史 | **MarketTemperature.vue（趋势图）** |
+| GET | `/api/backtest/run` | 🔓 公开 | 信号回测（单股策略验证） | **Backtest.vue** |
+| GET | `/api/grid/status` | 🔓 公开 | 网格交易运行状态 | **GridTrading.vue** |
+| GET | `/api/grid/orders` | 🔓 公开 | 网格交易记录 | **GridTrading.vue** |
 
 ---
 
@@ -521,24 +508,36 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
 
 ```json
 {
-  "date": "2026-03-27",
-  "total_count": 40,
+  "date": "2026-05-08",
+  "total_count": 41,
   "strong_buy": [
-    {"code": "US.META", "date": "2026-03-27", "total_score": 99.7, "signal": "STRONG_BUY"},
-    {"code": "US.MSFT", "date": "2026-03-27", "total_score": 96.8, "signal": "STRONG_BUY"},
-    {"code": "US.QQQ",  "date": "2026-03-27", "total_score": 90.1, "signal": "STRONG_BUY"}
+    {"code": "US.MCD", "date": "2026-05-08", "total_score": 93.4, "signal": "STRONG_BUY",
+     "above_ma5": false, "close": 275.75, "ma5": 280.1, "momentum_score": 9}
   ],
   "buy": [
-    {"code": "US.SPY",  "date": "2026-03-27", "total_score": 89.4, "signal": "BUY"},
-    {"code": "US.NVDA", "date": "2026-03-27", "total_score": 85.2, "signal": "BUY"}
+    {"code": "US.ASTS", "date": "2026-05-08", "total_score": 70.4, "signal": "BUY",
+     "above_ma5": true, "close": 75.05, "ma5": 68.68, "momentum_score": 45}
   ],
   "no_action": [
-    {"code": "US.KO",   "date": "2026-03-27", "total_score": 12.3, "signal": "NO_ACTION"}
+    {"code": "US.MU", "date": "2026-05-08", "total_score": 2.7, "signal": "NO_ACTION",
+     "above_ma5": true, "close": 746.81, "ma5": 680.2, "momentum_score": 100}
+  ],
+  "actionable": [
+    {"code": "US.ASTS", "date": "2026-05-08", "total_score": 70.4, "signal": "BUY",
+     "above_ma5": true, "close": 75.05, "ma5": 68.68, "momentum_score": 45}
+  ],
+  "momentum_leaders": [
+    {"code": "US.MU", "date": "2026-05-08", "total_score": 2.7, "signal": "NO_ACTION",
+     "above_ma5": true, "close": 746.81, "ma5": 680.2, "momentum_score": 100},
+    {"code": "US.SNDK", "date": "2026-05-08", "total_score": 0.6, "signal": "NO_ACTION",
+     "above_ma5": true, "close": 1562.34, "ma5": 1394.89, "momentum_score": 95}
   ],
   "summary": {
-    "strong_buy_count": 3,
-    "buy_count": 14,
-    "no_action_count": 23
+    "strong_buy_count": 1,
+    "buy_count": 4,
+    "no_action_count": 36,
+    "actionable_count": 1,
+    "momentum_leaders_count": 16
   }
 }
 ```
@@ -555,10 +554,28 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
 |------|------|
 | `date` | 数据对应日期 |
 | `total_count` | 有评分数据的标的总数 |
-| `strong_buy` | 强烈买入（≥90分）的标的列表，按分数降序 |
-| `buy` | 建议买入（70~89分）的标的列表，按分数降序 |
-| `no_action` | 观望（<70分）的标的列表，按分数降序 |
-| `summary` | 各信号数量统计 |
+| `strong_buy` | 强烈买入（≥80分）的标的列表 |
+| `buy` | 建议买入（60~79分）的标的列表 |
+| `no_action` | 观望（<60分）的标的列表 |
+| `actionable` | **可执行机会**：同时满足 BUY/STRONG_BUY + 站上MA5（确认反转） |
+| `momentum_leaders` | **主升浪龙头**：动量评分≥70 的标的，按动量分降序 |
+| `summary` | 各分组数量统计 |
+
+**每个标的新增字段（v2.9+）：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `above_ma5` | bool\|null | 收盘价是否站上 MA5（确认止跌反转） |
+| `close` | float\|null | 最新收盘价 |
+| `ma5` | float\|null | MA5 值 |
+| `momentum_score` | int\|null | 动量/趋势强度评分 0-100 |
+
+**前端展示建议：**
+
+- **抄底机会区**：展示 `actionable` 列表（评分高 + 站上MA5 = 可执行）
+- **主升浪区**：展示 `momentum_leaders` 列表（趋势追涨标的）
+- `above_ma5=true` 的 BUY/STRONG_BUY 标的用绿色高亮
+- `momentum_score>=70` 用火焰/火箭图标标识
 
 **前端对接建议**
 
@@ -607,6 +624,7 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
       "current_price": null,
       "thesis": "",
       "notes": "",
+      "recommended_strategy": "swing",
       "has_data": true,
       "created_at": "2026-05-06T00:00:00",
       "updated_at": "2026-05-06T00:00:00"
@@ -614,6 +632,24 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
   ]
 }
 ```
+
+**`recommended_strategy` 字段说明（v3.1+）：**
+
+基于历史回测自动推荐的最优策略，可通过 `PATCH /api/watchlist/{code}` 手动修改。
+
+| 值 | 含义 | 适合标的 | 回测参数 |
+|-----|------|---------|---------|
+| `hold_10d` | 买入持有10天 | 稳健大票(AAPL/SPY) | mode=hold, holding_days=10 |
+| `hold_20d` | 买入持有20天 | 中长线标的(GOOGL/TSLA) | mode=hold, holding_days=20 |
+| `swing` | 波段操作(恐慌买→恢复卖) | 周期性回调股(NVDA/MU/MCD) | mode=swing, threshold=60, exit_threshold=30 |
+| `trend_ma5` | 趋势跟踪(止跌买+跌破MA5卖) | 高弹性成长股(AMD/INTC) | mode=trend, trail_ma=ma5, entry_confirm=above_ma5 |
+| `trend_ma10` | 趋势跟踪(止跌买+跌破MA10卖) | 强势主线(META/IBIT) | mode=trend, trail_ma=ma10, entry_confirm=above_ma5 |
+| `trend_ma20` | 趋势跟踪(止跌买+跌破MA20卖) | 长趋势(SNDK/MSTR/BABA) | mode=trend, trail_ma=ma20, entry_confirm=above_ma5 |
+
+**前端展示建议：**
+- 标的列表中用标签/颜色区分策略类型
+- 点击标的时可用 `recommended_strategy` 对应参数自动填充回测面板
+- 提供修改入口（下拉选择），调用 `PATCH /api/watchlist/{code} {"recommended_strategy": "trend_ma10"}`
 
 ---
 
@@ -915,6 +951,185 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
 ```
 
 > **前端注意**：`vol_score`、`volume_score`、`safe_haven_score` 固定为 `null`（已废弃维度），前端应跳过 null 值的维度不予渲染。
+
+---
+
+## 信号回测
+
+### GET `/api/backtest/run`
+
+信号回测引擎，支持三种策略模式验证历史收益。
+
+**请求参数**
+
+| 参数 | 类型 | 默认值 | 约束 | 说明 |
+|------|------|--------|------|------|
+| `code` | string | **必填** | Futu格式 | 股票代码，如 `US.SNDK` |
+| `mode` | string | `hold` | `hold`/`swing`/`trend` | 策略模式 |
+| `threshold` | integer | `40` | 1-100 | 买入评分阈值 |
+| `holding_days` | integer | `10` | 1-250 | [hold] 固定持有天数 |
+| `exit_threshold` | integer | `30` | 1-100 | [swing] 评分回落卖出阈值 |
+| `max_holding_days` | integer | `120` | 1-500 | [swing/trend] 最大持有天数 |
+| `trail_ma` | string | `ma5` | `ma5`/`ma10`/`ma20` | [trend] 跟踪止盈均线 |
+| `entry_confirm` | string | `none` | `none`/`above_ma5` | 买入确认：none=立即买, above_ma5=等站上MA5再买 |
+| `cooldown` | string | `holding` | `none`/`holding`/`custom` | 冷却期策略 |
+| `cooldown_days` | integer | — | 1-250 | [custom] 自定义冷却天数 |
+| `start_date` | string | — | YYYY-MM-DD | 回测起始日 |
+| `end_date` | string | — | YYYY-MM-DD | 回测截止日 |
+
+**三种模式说明：**
+
+| 模式 | 买入条件 | 卖出条件 | 适合场景 |
+|------|---------|---------|---------|
+| `hold` | 评分≥threshold | 固定持有N天后卖出 | 验证信号质量 |
+| `swing` | 评分≥threshold | 评分回落≤exit_threshold | 情绪波段（恐慌买→恢复卖） |
+| `trend` | 评分≥threshold | 收盘价跌破trail_ma | 强势股趋势跟踪 |
+
+**响应 200（有数据）：**
+
+```json
+{
+  "code": "US.SNDK",
+  "mode": "trend",
+  "params": {
+    "mode": "trend",
+    "threshold": 40,
+    "holding_days": null,
+    "exit_threshold": null,
+    "max_holding_days": 120,
+    "trail_ma": "ma10",
+    "cooldown": "holding",
+    "start_date": "2025-05-05",
+    "end_date": "2026-05-08"
+  },
+  "summary": {
+    "total_signals": 20,
+    "completed_trades": 18,
+    "win_count": 11,
+    "loss_count": 7,
+    "win_rate": 61.1,
+    "avg_return_pct": 16.06,
+    "median_return_pct": 2.90,
+    "max_return_pct": 161.88,
+    "min_return_pct": -20.33,
+    "total_return_pct": 289.10,
+    "avg_holding_days": 8.5,
+    "sharpe_like": 0.36,
+    "profit_factor": 7.05
+  },
+  "trades": [
+    {
+      "signal_date": "2025-12-17",
+      "entry_price": 206.83,
+      "exit_date": "2026-02-10",
+      "exit_price": 541.64,
+      "return_pct": 161.88,
+      "holding_days": 36,
+      "entry_score": 60.7,
+      "exit_score": null,
+      "exit_reason": "below_ma10",
+      "signal": "BUY",
+      "status": "complete"
+    }
+  ]
+}
+```
+
+**响应 200（无数据）：**
+
+```json
+{
+  "data": null,
+  "message": "US.SNDK 暂无评分数据"
+}
+```
+
+**前端对接要点：**
+
+- `params` 中不适用当前模式的字段为 `null`（如 hold 模式下 `exit_threshold=null`）
+- `trades[].exit_reason` 取值：`hold`（固定天数）/ `score_drop`（评分回落）/ `below_ma5`/`below_ma10`/`below_ma20`（跌破均线）/ `max_holding`（超时强制卖出）/ `incomplete`（数据不足）
+- `status="incomplete"` 的交易不计入 summary 统计
+- 前端建议用 Tab 切换三种模式，每个模式展示对应参数输入框
+
+---
+
+## 网格交易
+
+### GET `/api/grid/status`
+
+查看网格交易引擎运行状态。
+
+**请求参数**
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `config_id` | integer（必填） | 网格配置 ID |
+
+**响应 200：**
+
+```json
+{
+  "config_id": 1,
+  "code": "US.GLD",
+  "status": "running",
+  "env": "simulate",
+  "params": {
+    "price_upper": 260.0,
+    "price_lower": 240.0,
+    "grid_count": 10,
+    "grid_spacing": 2.0,
+    "order_qty": 10,
+    "max_position": 100
+  },
+  "state": {
+    "current_position": 30,
+    "cost_basis": 245.20,
+    "daily_pnl": 42.50,
+    "daily_trades": 6,
+    "last_price": 248.50,
+    "grid_status": {"0":"bought","1":"bought","2":"bought","3":"empty","4":"empty"}
+  },
+  "grid_lines": [240.0, 242.0, 244.0, 246.0, 248.0, 250.0, 252.0, 254.0, 256.0, 258.0, 260.0]
+}
+```
+
+### GET `/api/grid/orders`
+
+查看网格交易历史记录。
+
+**请求参数**
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `config_id` | integer | **必填** | 网格配置 ID |
+| `limit` | integer | `50` | 返回条数（1-500） |
+
+**响应 200：**
+
+```json
+{
+  "total": 128,
+  "orders": [
+    {
+      "id": 128,
+      "config_id": 1,
+      "code": "US.GLD",
+      "env": "simulate",
+      "direction": "SELL",
+      "grid_level": 4,
+      "grid_price": 248.0,
+      "order_qty": 10,
+      "order_id": "123456",
+      "fill_price": 248.05,
+      "fill_qty": 10,
+      "status": "filled",
+      "pnl": 28.50,
+      "triggered_at": "2026-05-06 14:23:15",
+      "filled_at": "2026-05-06 14:23:16"
+    }
+  ]
+}
+```
 
 ---
 

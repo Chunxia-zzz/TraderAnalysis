@@ -1,4 +1,4 @@
-"""评分引擎（v3 — 连续评分）。
+"""评分引擎（v4 — 连续评分 + 回撤因子 + 大盘温度加成）。
 
 从已入库的 K 线指标 DataFrame 读值，通过连续映射函数计算各维度得分（0~1），
 加权求和输出 0~100 总分及信号等级。
@@ -6,12 +6,14 @@
 纯本地评分，不依赖任何外部 API。
 
 6 维度 + 权重（合计 100）：
-  C1  周线 RSI6          25  —— (70 - rsi) / 50
+  C1  周线 RSI6          20  —— (80 - rsi) / 60
   C2  日线 MACD 百分位    20  —— 1 - percentile_rank(252)
   C3  布林带 %B          15  —— 1 - %B
-  C4  日线 RSI6          20  —— (70 - rsi) / 50
+  C4  日线 RSI6          20  —— (80 - rsi) / 60
   C5  周线 MACD 百分位    10  —— 1 - percentile_rank(52)
-  C6  MA250 偏离         10  —— (ma250 - close) / ma250 / 0.15
+  C6  60日回撤           15  —— (drawdown - 0.05) / 0.20
+
+大盘温度加成：composite < 40 时最多 +15 分。
 """
 
 from __future__ import annotations
@@ -24,12 +26,12 @@ import pandas as pd
 # ── 权重配置 ──────────────────────────────────────────────────────────────────
 
 WEIGHTS: dict[str, int] = {
-    "weekly_rsi": 25,
+    "weekly_rsi": 20,
     "daily_macd_pct": 20,
     "boll_position": 15,
     "daily_rsi": 20,
     "weekly_macd_pct": 10,
-    "ma250_deviation": 10,
+    "drawdown": 15,
 }
 
 
@@ -53,13 +55,13 @@ def _percentile_rank(series: pd.Series, current: float, lookback: int) -> float:
 
 
 def _score_weekly_rsi(weekly_df: pd.DataFrame) -> dict:
-    """C1: 周线 RSI6 连续映射。RSI=20→满分，RSI≥70→0分。"""
+    """C1: 周线 RSI6 连续映射。RSI=20→满分，RSI≥80→0分。"""
     w = weekly_df.iloc[-1]
     val = w.get("rsi6")
     if pd.isna(val):
         return {"score": 0.0, "raw": None, "ratio": 0.0}
     rsi = float(val)
-    ratio = _clamp((70 - rsi) / 50)
+    ratio = _clamp((80 - rsi) / 60)
     score = ratio * WEIGHTS["weekly_rsi"]
     return {"score": round(score, 1), "raw": round(rsi, 1), "ratio": round(ratio, 3)}
 
@@ -91,13 +93,13 @@ def _score_boll_position(daily_df: pd.DataFrame) -> dict:
 
 
 def _score_daily_rsi(daily_df: pd.DataFrame) -> dict:
-    """C4: 日线 RSI6 连续映射。RSI=20→满分，RSI≥70→0分。"""
+    """C4: 日线 RSI6 连续映射。RSI=20→满分，RSI≥80→0分。"""
     d = daily_df.iloc[-1]
     val = d.get("rsi6")
     if pd.isna(val):
         return {"score": 0.0, "raw": None, "ratio": 0.0}
     rsi = float(val)
-    ratio = _clamp((70 - rsi) / 50)
+    ratio = _clamp((80 - rsi) / 60)
     score = ratio * WEIGHTS["daily_rsi"]
     return {"score": round(score, 1), "raw": round(rsi, 1), "ratio": round(ratio, 3)}
 
@@ -114,18 +116,21 @@ def _score_weekly_macd_pct(weekly_df: pd.DataFrame) -> dict:
     return {"score": round(score, 1), "raw": round(pct, 3), "ratio": round(ratio, 3)}
 
 
-def _score_ma250_deviation(daily_df: pd.DataFrame) -> dict:
-    """C6: MA250 偏离度。价格低于MA250越多→得分越高。偏离≥15%→满分。"""
+def _score_drawdown(daily_df: pd.DataFrame) -> dict:
+    """C6: 60日回撤因子。从60日高点回撤5%开始给分，25%满分。对强势股回调有效。"""
     d = daily_df.iloc[-1]
-    ma_val = d.get("ma250")
     close_val = d.get("close")
-    if pd.isna(ma_val) or pd.isna(close_val) or float(ma_val) == 0:
+    if pd.isna(close_val):
         return {"score": 0.0, "raw": None, "ratio": 0.0}
-    # deviation > 0 means price below MA250
-    deviation = (float(ma_val) - float(close_val)) / float(ma_val)
-    ratio = _clamp(deviation / 0.15)
-    score = ratio * WEIGHTS["ma250_deviation"]
-    return {"score": round(score, 1), "raw": round(deviation, 4), "ratio": round(ratio, 3)}
+    close = float(close_val)
+    high_60d = float(daily_df.tail(60)["high"].max())
+    if high_60d <= 0:
+        return {"score": 0.0, "raw": 0.0, "ratio": 0.0}
+    drawdown = (high_60d - close) / high_60d
+    # 回撤 <5% 不给分（正常波动），5%~25% 线性给分
+    ratio = _clamp((drawdown - 0.05) / 0.20)
+    score = ratio * WEIGHTS["drawdown"]
+    return {"score": round(score, 1), "raw": round(drawdown, 4), "ratio": round(ratio, 3)}
 
 
 # ── 汇总评分 ──────────────────────────────────────────────────────────────────
@@ -135,6 +140,7 @@ def calculate_score(
     code: str,
     daily_df: pd.DataFrame,
     weekly_df: pd.DataFrame,
+    market_composite: float | None = None,
 ) -> dict:
     """汇总所有维度，返回评分结果字典。
 
@@ -142,9 +148,10 @@ def calculate_score(
 
     Parameters
     ----------
-    code      : 标的代码
-    daily_df  : 已含指标的日线 DataFrame
-    weekly_df : 已含指标的周线 DataFrame
+    code              : 标的代码
+    daily_df          : 已含指标的日线 DataFrame
+    weekly_df         : 已含指标的周线 DataFrame
+    market_composite  : 当日大盘温度评分（可选，用于恐慌加成）
 
     Returns
     -------
@@ -153,6 +160,7 @@ def calculate_score(
         "total_score": 45.2,
         "signal": "NO_ACTION",
         "breakdown": { ... },
+        "market_bonus": 5.2,
         "timestamp": "2026-05-05 20:00:00"
     }
     """
@@ -162,10 +170,17 @@ def calculate_score(
         "boll_position": _score_boll_position(daily_df),
         "daily_rsi": _score_daily_rsi(daily_df),
         "weekly_macd_pct": _score_weekly_macd_pct(weekly_df),
-        "ma250_deviation": _score_ma250_deviation(daily_df),
+        "drawdown": _score_drawdown(daily_df),
     }
 
-    total_score = round(sum(v["score"] for v in breakdown.values()), 1)
+    base_score = round(sum(v["score"] for v in breakdown.values()), 1)
+
+    # 大盘温度加成：composite < 40 时最多加 15 分
+    market_bonus = 0.0
+    if market_composite is not None and market_composite < 40:
+        market_bonus = round(_clamp((40 - market_composite) / 40) * 15, 1)
+
+    total_score = min(100.0, round(base_score + market_bonus, 1))
 
     from trader_analysis.futu_strategy import config
 
@@ -181,5 +196,6 @@ def calculate_score(
         "total_score": total_score,
         "signal": signal,
         "breakdown": breakdown,
+        "market_bonus": market_bonus,
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }

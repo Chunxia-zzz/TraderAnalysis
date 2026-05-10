@@ -72,6 +72,18 @@ trader-analysis score --backfill 900   # 回溯 900 天历史评分
 trader-analysis temperature
 trader-analysis temperature --backfill 900
 
+# 信号回测（3 种模式：买入持有 / 波段操作 / 趋势跟踪）
+trader-analysis backtest US.SNDK --mode hold --threshold 40 --holding-days 10
+trader-analysis backtest US.NVDA --mode swing --threshold 60 --exit-threshold 30
+trader-analysis backtest US.MU --mode trend --threshold 40 --trail-ma ma10
+trader-analysis backtest US.MU --mode trend --threshold 40 --trail-ma ma10 --entry-confirm above_ma5
+
+# 网格交易引擎（日内自动交易，需要 OpenD）
+trader-analysis grid-create --code US.GLD --upper 445 --lower 425 --grid-count 10 --order-qty 10
+trader-analysis grid-start 1       # 启动（长驻进程）
+trader-analysis grid-status 1      # 查看状态
+trader-analysis grid-stop 1        # 停止
+
 # 完整策略流程：增量更新 → 评分 → 模拟盘交易（需要 OpenD）
 trader-analysis run
 ```
@@ -84,9 +96,12 @@ trader-analysis run
 | GET | `/api/indicators?code=US.AAPL&ktype=1d&days=60` | K 线 + 技术指标 |
 | GET | `/api/indicators/latest?code=US.AAPL` | 最新一根指标值 |
 | GET | `/api/scores/latest?code=US.AAPL` | 个股评分（支持 `&date=YYYY-MM-DD`） |
-| GET | `/api/scores/overview` | 全标的评分速览（按信号分组） |
+| GET | `/api/scores/overview` | 全标的评分速览（含动量分+MA5确认） |
 | GET | `/api/market-temperature` | 市场温度评分（3 维度综合） |
 | GET | `/api/market-temperature/history?days=30` | 市场温度历史趋势 |
+| GET | `/api/backtest/run?code=US.SNDK&mode=trend` | 信号回测（3种策略模式） |
+| GET | `/api/grid/status?config_id=1` | 网格交易运行状态 |
+| GET | `/api/grid/orders?config_id=1` | 网格交易记录 |
 
 所有接口无数据时返回 HTTP 200 + `{data: null, message: "提示文案"}`。
 

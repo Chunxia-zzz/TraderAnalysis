@@ -78,10 +78,17 @@ def score(
     init_db()
     code_list = codes if codes else config.WATCHLIST
 
+    # 读取大盘温度历史（用于恐慌加成）
+    import sqlite3
+
+    db_path = config.DB_PATH
+    _conn = sqlite3.connect(db_path)
+    market_temps = dict(_conn.execute("SELECT date, composite_score FROM market_score").fetchall())
+    _conn.close()
+
     if backfill > 0:
         typer.echo(f"回溯 {backfill} 天，{len(code_list)} 个标的...")
         total_written = 0
-        # 读取全量数据一次
         for code in code_list:
             daily_all = query_recent(code, "1d", limit=backfill + 300)
             weekly_all = query_recent(code, "1w", limit=500)
@@ -97,7 +104,8 @@ def score(
                 if weekly_slice.empty:
                     continue
                 try:
-                    result = calculate_score(code, daily_slice, weekly_slice)
+                    mc = market_temps.get(score_date)
+                    result = calculate_score(code, daily_slice, weekly_slice, market_composite=mc)
                     upsert_score(code, score_date, result)
                     total_written += 1
                 except Exception:
@@ -112,8 +120,9 @@ def score(
             if daily_df.empty or weekly_df.empty:
                 skipped += 1
                 continue
-            result = calculate_score(code, daily_df, weekly_df)
             score_date = str(daily_df.iloc[-1].get("date", today))
+            mc = market_temps.get(score_date)
+            result = calculate_score(code, daily_df, weekly_df, market_composite=mc)
             upsert_score(code, score_date, result)
             scored += 1
             if result["signal"] != "NO_ACTION":
@@ -312,3 +321,231 @@ def temperature(
     typer.echo("── 维度拆解 ──")
     for dim in result["dimensions"]:
         typer.echo(f"  {dim['label']:6s} [{dim['weight']:.0%}]  {dim['score']:.1f}")
+
+
+@app.command()
+def backtest(
+    code: str = typer.Argument(..., help="股票代码 (Futu 格式, 如 US.SNDK)"),
+    mode: str = typer.Option("hold", help="策略模式: hold(买入持有) / swing(波段操作) / trend(趋势跟踪)"),
+    threshold: int = typer.Option(40, help="买入评分阈值 (1-100)"),
+    holding_days: int = typer.Option(10, "--holding-days", help="[hold] 持有交易日数"),
+    exit_threshold: int = typer.Option(30, "--exit-threshold", help="[swing] 评分回落卖出阈值"),
+    max_holding_days: int = typer.Option(120, "--max-holding-days", help="[swing/trend] 最大持有天数"),
+    trail_ma: str = typer.Option("ma5", "--trail-ma", help="[trend] 跟踪止盈均线: ma5/ma10/ma20"),
+    entry_confirm: str = typer.Option("none", "--entry-confirm", help="买入确认: none(立即) / above_ma5(站上MA5再买)"),
+    cooldown: str = typer.Option("holding", help="去重策略: none/holding/custom"),
+    cooldown_days: int = typer.Option(None, "--cooldown-days", help="custom 模式冷却天数"),
+    start_date: Optional[str] = typer.Option(None, "--start-date", help="起始日期 YYYY-MM-DD"),
+    end_date: Optional[str] = typer.Option(None, "--end-date", help="截止日期 YYYY-MM-DD"),
+) -> None:
+    """信号回测：验证评分信号的历史收益表现。支持 hold/swing 两种模式。"""
+    from trader_analysis.futu_strategy.backtest import BacktestParams, run_backtest
+    from trader_analysis.futu_strategy.storage import init_db
+
+    init_db()
+
+    params = BacktestParams(
+        code=code,
+        mode=mode,
+        threshold=threshold,
+        holding_days=holding_days,
+        exit_threshold=exit_threshold,
+        max_holding_days=max_holding_days,
+        trail_ma=trail_ma,
+        entry_confirm=entry_confirm,
+        cooldown=cooldown,
+        cooldown_days=cooldown_days,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    result = run_backtest(params)
+
+    # 无数据
+    if "data" in result and result["data"] is None:
+        typer.echo(result["message"])
+        raise typer.Exit(code=1)
+
+    # 输出参数
+    p = result["params"]
+    typer.echo(f"\nSignal Backtest: {result['code']} [{p['mode']}]")
+    typer.echo("━" * 56)
+    if p["mode"] == "swing":
+        typer.echo(f"Parameters: buy≥{p['threshold']}, sell≤{p['exit_threshold']}, max_hold={p['max_holding_days']}d, cooldown={p['cooldown']}")
+    elif p["mode"] == "trend":
+        typer.echo(f"Parameters: buy≥{p['threshold']}, trail={p['trail_ma']}, max_hold={p['max_holding_days']}d, cooldown={p['cooldown']}")
+    else:
+        typer.echo(f"Parameters: threshold={p['threshold']}, holding={p['holding_days']}d, cooldown={p['cooldown']}")
+    typer.echo(f"Date Range: {p['start_date']} → {p['end_date']}")
+
+    # 输出汇总
+    s = result["summary"]
+    typer.echo(f"\nSummary:")
+    typer.echo(f"  Signals triggered:   {s['total_signals']}")
+    typer.echo(f"  Completed trades:    {s['completed_trades']}")
+    typer.echo(f"  Win rate:            {s['win_rate']:.1f}%  ({s['win_count']}W / {s['loss_count']}L)")
+    typer.echo(f"  Avg return:          {s['avg_return_pct']:+.2f}%")
+    typer.echo(f"  Median return:       {s['median_return_pct']:+.2f}%")
+    typer.echo(f"  Best / Worst:        {s['max_return_pct']:+.2f}% / {s['min_return_pct']:+.2f}%")
+    typer.echo(f"  Total return:        {s['total_return_pct']:+.2f}%")
+    typer.echo(f"  Profit factor:       {s['profit_factor']:.2f}")
+    typer.echo(f"  Sharpe-like:         {s['sharpe_like']:.2f}")
+
+    # 输出平均持有天数（swing 模式有意义）
+    if result.get("mode") == "swing" and s.get("avg_holding_days"):
+        typer.echo(f"  Avg holding days:    {s['avg_holding_days']:.1f}")
+
+    # 输出最近交易
+    trades = result["trades"]
+    completed = [t for t in trades if t["status"] == "complete"]
+    recent = completed[-10:] if len(completed) > 10 else completed
+    if recent:
+        typer.echo(f"\nRecent Trades (last {len(recent)}):")
+        typer.echo(f"  {'Date':>10}  {'Entry':>8}  {'Exit Date':>10}  {'Exit':>8}  {'Return':>8}  {'Days':>4}  {'Reason':>10}")
+        typer.echo(f"  {'-'*10}  {'-'*8}  {'-'*10}  {'-'*8}  {'-'*8}  {'-'*4}  {'-'*10}")
+        for t in recent:
+            days_str = f"{t['holding_days']:>4}" if t.get("holding_days") else "   -"
+            reason = t.get("exit_reason", "")[:10] if t.get("exit_reason") else ""
+            typer.echo(
+                f"  {t['signal_date']:>10}  {t['entry_price']:>8.2f}  "
+                f"{t['exit_date']:>10}  {t['exit_price']:>8.2f}  "
+                f"{t['return_pct']:>+7.2f}%  {days_str}  {reason:>10}"
+            )
+
+
+# ── 网格交易命令 ──────────────────────────────────────────────────────────────
+
+
+@app.command("grid-create")
+def grid_create(
+    code: str = typer.Option(..., help="标的代码 (US.GLD)"),
+    upper: float = typer.Option(..., help="网格上界"),
+    lower: float = typer.Option(..., help="网格下界"),
+    grid_count: int = typer.Option(10, help="网格数量"),
+    order_qty: int = typer.Option(10, "--order-qty", help="每格下单股数"),
+    max_position: int = typer.Option(100, "--max-position", help="最大持仓股数"),
+    env: str = typer.Option("simulate", help="环境: simulate/live"),
+    name: str = typer.Option("", help="配置名称"),
+    daily_loss_limit: float = typer.Option(-500.0, "--daily-loss-limit", help="单日最大亏损(美元)"),
+) -> None:
+    """创建网格交易配置。"""
+    from trader_analysis.futu_strategy.grid_trader.state_manager import create_config, init_grid_tables
+
+    if upper <= lower:
+        typer.echo("Error: upper must be greater than lower", err=True)
+        raise typer.Exit(code=1)
+
+    init_grid_tables()
+    config_id = create_config(
+        code=code,
+        price_upper=upper,
+        price_lower=lower,
+        grid_count=grid_count,
+        order_qty=order_qty,
+        max_position=max_position,
+        env=env,
+        name=name,
+        daily_loss_limit=daily_loss_limit,
+    )
+    spacing = (upper - lower) / grid_count
+    typer.echo(f"Grid config #{config_id} created.")
+    typer.echo(f"  Code: {code} | Env: {env}")
+    typer.echo(f"  Range: ${lower:.2f} - ${upper:.2f} | Grids: {grid_count} | Spacing: ${spacing:.2f}")
+    typer.echo(f"  Order qty: {order_qty} | Max position: {max_position}")
+    typer.echo(f"\nStart with: trader-analysis grid-start {config_id}")
+
+
+@app.command("grid-start")
+def grid_start(
+    config_id: int = typer.Argument(..., help="网格配置 ID"),
+) -> None:
+    """启动网格交易引擎（长驻进程，Ctrl+C 停止）。"""
+    import logging
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+
+    from trader_analysis.futu_strategy.grid_trader.engine import GridEngine
+    from trader_analysis.futu_strategy.grid_trader.state_manager import get_config, init_grid_tables
+
+    init_grid_tables()
+    cfg = get_config(config_id)
+    if not cfg:
+        typer.echo(f"Error: Grid config #{config_id} not found", err=True)
+        raise typer.Exit(code=1)
+
+    if cfg.env == "live":
+        confirm = typer.confirm("LIVE TRADING MODE - Real money at risk. Continue?")
+        if not confirm:
+            raise typer.Exit()
+
+    engine = GridEngine(config_id)
+    engine.start()
+
+
+@app.command("grid-stop")
+def grid_stop(
+    config_id: int = typer.Argument(..., help="网格配置 ID"),
+) -> None:
+    """停止网格交易引擎（发送停止信号）。"""
+    from trader_analysis.futu_strategy.grid_trader.state_manager import get_config, init_grid_tables, update_config_status
+
+    init_grid_tables()
+    cfg = get_config(config_id)
+    if not cfg:
+        typer.echo(f"Error: Grid config #{config_id} not found", err=True)
+        raise typer.Exit(code=1)
+
+    update_config_status(config_id, "stopped")
+    typer.echo(f"Grid #{config_id} stop signal sent. Engine will exit on next cycle.")
+
+
+@app.command("grid-status")
+def grid_status(
+    config_id: Optional[int] = typer.Argument(None, help="配置 ID（不传则显示全部）"),
+) -> None:
+    """查看网格交易运行状态。"""
+    from trader_analysis.futu_strategy.grid_trader.state_manager import (
+        get_config,
+        get_state,
+        init_grid_tables,
+        list_configs,
+    )
+    from trader_analysis.futu_strategy.grid_trader.strategy import calculate_grid_lines
+
+    init_grid_tables()
+
+    if config_id is None:
+        configs = list_configs()
+        if not configs:
+            typer.echo("No grid configs found. Create one with: trader-analysis grid-create")
+            return
+        for c in configs:
+            typer.echo(f"  #{c['id']}: {c['code']} [{c['status'].upper()}] {c['env']} "
+                       f"${c['price_lower']:.0f}-${c['price_upper']:.0f} x{c['grid_count']}")
+        return
+
+    cfg = get_config(config_id)
+    if not cfg:
+        typer.echo(f"Error: Grid config #{config_id} not found", err=True)
+        raise typer.Exit(code=1)
+
+    state = get_state(config_id)
+    grid_lines = calculate_grid_lines(cfg)
+
+    typer.echo(f"\nGrid #{cfg.id}: {cfg.code} [{cfg.status.upper()}] {cfg.env}")
+    typer.echo(f"  Range: ${cfg.price_lower:.2f} - ${cfg.price_upper:.2f} | Spacing: ${cfg.grid_spacing:.2f}")
+    if state.last_price:
+        typer.echo(f"  Price: ${state.last_price:.2f} | Position: {state.current_position} shares | Cost: ${state.cost_basis:.2f}")
+    else:
+        typer.echo(f"  Price: N/A | Position: {state.current_position} shares")
+    typer.echo(f"  Today: {state.daily_trades} trades | PnL: ${state.daily_pnl:+.2f}")
+
+    # 网格可视化
+    grid_vis = []
+    for i in range(len(grid_lines)):
+        s = state.grid_status.get(str(i), "empty")
+        grid_vis.append("[B]" if s == "bought" else "[ ]")
+    typer.echo(f"  Grid: {''.join(grid_vis)}")

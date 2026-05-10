@@ -49,12 +49,17 @@ def _update_ktype(
 
     kl_type = KLType.K_DAY if ktype == "1d" else KLType.K_WEEK
     new_df = provider.get_kline(
-        quote_ctx, code, kl_type=kl_type, count=max_count
+        quote_ctx, code, kl_type=kl_type, count=max_count, timeframe=ktype
     )
 
+    # 统一列名为 date
+    if "date" not in new_df.columns:
+        if "timestamp" in new_df.columns:
+            new_df = new_df.rename(columns={"timestamp": "date"})
+        elif "time_key" in new_df.columns:
+            new_df = new_df.rename(columns={"time_key": "date"})
+
     # 只保留比本地更新的行
-    if "date" not in new_df.columns and "time_key" in new_df.columns:
-        new_df = new_df.rename(columns={"time_key": "date"})
     if "date" in new_df.columns:
         new_df["date"] = pd.to_datetime(new_df["date"]).dt.strftime("%Y-%m-%d")
         new_df = new_df[new_df["date"] > last_date]
@@ -103,9 +108,11 @@ def run_update(codes: list[str], quote_ctx=None) -> None:
 
         provider = FutuLiveDataProvider()
 
-        for code in codes:
+        import time as _time
+
+        for idx, code in enumerate(codes):
             try:
-                logger.info(f"── 增量更新 {code} ──")
+                logger.info(f"── 增量更新 {code} ({idx+1}/{len(codes)}) ──")
 
                 _update_ktype(
                     quote_ctx,
@@ -126,6 +133,10 @@ def run_update(codes: list[str], quote_ctx=None) -> None:
 
             except Exception as exc:
                 logger.error(f"  {code} 增量更新失败：{exc}")
+
+            # Futu API 限频：每30秒60次，每个标的2次请求，留余量
+            if idx < len(codes) - 1:
+                _time.sleep(1.0)
 
     finally:
         if own_ctx:

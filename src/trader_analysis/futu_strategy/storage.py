@@ -168,8 +168,11 @@ def batch_upsert(code: str, ktype: str, df: pd.DataFrame) -> int:
     col_names = ",".join(["code", "ktype"] + _KLINE_COLS + ["updated_at"])
     sql = f"INSERT OR REPLACE INTO kline_indicators ({col_names}) VALUES ({placeholders})"
 
-    # DataFrame 列名 → DB 列名映射（normalize_ohlcv 产出 "timestamp"，DB 存 "date"）
-    col_map = {"date": "timestamp"}
+    # DataFrame 列名 → DB 列名映射
+    # 支持两种输入：列名为 "date"（daily_update 已 rename）或 "timestamp"（原始 provider 输出）
+    col_map = {}
+    if "timestamp" in df.columns and "date" not in df.columns:
+        col_map = {"date": "timestamp"}
 
     for _, row in df.iterrows():
         values = [code, ktype]
@@ -494,3 +497,74 @@ def query_fundamentals_overview() -> list[dict]:
             d["target_upside"] = None
         results.append(d)
     return results
+
+
+# ── 回测引擎查询 ─────────────────────────────────────────────────────────────
+
+
+def query_all_scores(code: str, start_date: str | None = None, end_date: str | None = None) -> list[dict]:
+    """查询某股票在日期范围内的所有评分记录，按日期升序。"""
+    conn = _get_conn()
+    sql = "SELECT code, date, total_score, signal FROM score_results WHERE code = ?"
+    params: list = [code]
+    if start_date:
+        sql += " AND date >= ?"
+        params.append(start_date)
+    if end_date:
+        sql += " AND date <= ?"
+        params.append(end_date)
+    sql += " ORDER BY date ASC"
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def query_close_prices(code: str, start_date: str | None = None, end_date: str | None = None) -> dict[str, float]:
+    """查询某股票日线收盘价，返回 {date: close} 字典。"""
+    conn = _get_conn()
+    sql = "SELECT date, close FROM kline_indicators WHERE code = ? AND ktype = '1d'"
+    params: list = [code]
+    if start_date:
+        sql += " AND date >= ?"
+        params.append(start_date)
+    if end_date:
+        sql += " AND date <= ?"
+        params.append(end_date)
+    sql += " ORDER BY date ASC"
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return {r["date"]: float(r["close"]) for r in rows}
+
+
+def query_price_and_ma(code: str, ma_col: str = "ma5", start_date: str | None = None, end_date: str | None = None) -> dict[str, dict]:
+    """查询日线 close + 指定 MA，返回 {date: {"close": float, "ma": float}}。"""
+    conn = _get_conn()
+    sql = f"SELECT date, close, {ma_col} FROM kline_indicators WHERE code = ? AND ktype = '1d'"
+    params: list = [code]
+    if start_date:
+        sql += " AND date >= ?"
+        params.append(start_date)
+    if end_date:
+        sql += " AND date <= ?"
+        params.append(end_date)
+    sql += " ORDER BY date ASC"
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return {r["date"]: {"close": float(r["close"]), "ma": float(r[ma_col]) if r[ma_col] else None} for r in rows}
+
+
+def query_trading_dates(code: str, start_date: str | None = None, end_date: str | None = None) -> list[str]:
+    """查询交易日历（从 kline 数据推导），返回日期列表升序。"""
+    conn = _get_conn()
+    sql = "SELECT DISTINCT date FROM kline_indicators WHERE code = ? AND ktype = '1d'"
+    params: list = [code]
+    if start_date:
+        sql += " AND date >= ?"
+        params.append(start_date)
+    if end_date:
+        sql += " AND date <= ?"
+        params.append(end_date)
+    sql += " ORDER BY date ASC"
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return [r["date"] for r in rows]

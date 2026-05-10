@@ -263,17 +263,26 @@ def _compute_score(
     spy_daily_rsi = float(spy_daily.iloc[-1].get("rsi6", 50)) if has_spy else 50
     spy_weekly_rsi = float(spy_weekly.iloc[-1].get("rsi6", 50)) if has_spy_w else 50
 
-    extreme_triggered = (
+    # 极端层判断（两级）
+    heavy_extreme = (
         composite <= 15
-        and spy_daily_rsi < 25
+        and spy_daily_rsi < 30
         and spy_weekly_rsi < 30
     )
+    light_extreme = composite <= 25 and not heavy_extreme
 
-    # 仓位映射
-    if extreme_triggered:
-        target_position = _clamp(90 + (15 - composite) * 2, 90, 120)
+    extreme_triggered = heavy_extreme or light_extreme
+
+    # 仓位映射: 30% ~ 120%
+    if heavy_extreme:
+        # composite 15->0 映射到 100->120%
+        target_position = _clamp(100 + (15 - composite) * (20.0 / 15), 100, 120)
+    elif light_extreme:
+        # composite 25->15 映射到 85->100%
+        target_position = _clamp(85 + (25 - composite) * (15.0 / 10), 85, 100)
     else:
-        target_position = _clamp(90 - composite * 0.8, 10, 90)
+        # 正常区: composite 25->100 映射到 85->30%
+        target_position = _clamp(85 - (composite - 25) * (55.0 / 75), 30, 85)
 
     # 杠杆工具建议
     leverage_tool = "none"
@@ -281,6 +290,9 @@ def _compute_score(
         leverage_tool = "margin + OTM_call"
     elif target_position > 90:
         leverage_tool = "margin"
+
+    # 极端层级别标记
+    extreme_level = "heavy" if heavy_extreme else ("light" if light_extreme else "none")
 
     # 状态文案
     market_status, action_suggestion = _map_status(composite)
@@ -328,6 +340,7 @@ def _compute_score(
         "composite_score": round(composite, 1),
         "target_position_pct": round(target_position, 1),
         "extreme_triggered": extreme_triggered,
+        "extreme_level": extreme_level,
         "leverage_tool": leverage_tool,
         "market_status": market_status,
         "action_suggestion": action_suggestion,
