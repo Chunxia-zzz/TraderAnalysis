@@ -123,14 +123,17 @@ ALLOW_PYRAMID: bool = False
 # 日线指标配置（传入 250+ 根日线）
 DAILY_INDICATOR_CONFIG: dict = {
     "ma": [5, 10, 20, 60, 120, 200, 250],
+    "ema": [5, 10, 15, 20, 25, 30],
     "rsi": [6, 12, 24],
     "macd": {"fast": 12, "slow": 26, "signal": 9},
     "boll": {"length": 20, "std": 2},
     "vol_ma": [20],
+    "atr": [14],
 }
 
 # 周线指标配置（传入 60+ 根周线）
 WEEKLY_INDICATOR_CONFIG: dict = {
+    "ema": [5, 10, 15, 20, 25, 30],
     "rsi": [6, 12, 24],
     "macd": {"fast": 12, "slow": 26, "signal": 9},
     "boll": {"length": 20, "std": 2},
@@ -144,6 +147,13 @@ _PROJECT_ROOT = os.path.normpath(
 DB_PATH: str = os.environ.get(
     "TA_DB_PATH", os.path.join(_PROJECT_ROOT, "data", "indicators.db")
 )
+
+# ── TP/SL 止盈止损配置 ─────────────────────────────────────────────────────
+TPSL_ATR_PERIOD: int = 14
+TPSL_ATR_MULTIPLIER: float = 2.0
+TPSL_SWING_LOOKBACK: int = 60
+TPSL_SWING_DISTANCE: int = 5
+TPSL_MIN_RR_RATIO: float = 2.0
 
 # ── 历史初始化拉取数量（仅 init_history.py 使用）────────────────────────────
 INIT_DAILY_KLINE_COUNT: int = 1000   # API 单次上限

@@ -133,10 +133,11 @@ export default api
 | POST | `/api/watchlist/refresh-snapshot` | 🔓 公开 | 刷新静态快照字段 | 管理页 |
 | GET | `/api/stock-filter/search` | 🔓 公开 | 条件选股（需 OpenD） | 选股页 |
 | GET | `/api/stock-filter/info` | 🔓 公开 | 单股信息查询 | 选股页 |
-| GET | `/api/fundamental/latest` | 🔓 公开 | 单标的基本面数据+评分 | 基本面页 |
-| GET | `/api/fundamental/overview` | 🔓 公开 | 全标的基本面速览 | 基本面概览 |
+| ~~GET~~ | ~~`/api/fundamental/latest`~~ | - | ~~单标的基本面数据+评分~~ | **已停用**（Yahoo Finance 中国不可用） |
+| ~~GET~~ | ~~`/api/fundamental/overview`~~ | - | ~~全标的基本面速览~~ | **已停用** |
 | GET | `/api/market-temperature` | 🔓 公开 | 市场温度评分（3 维度综合） | **MarketTemperature.vue** |
 | GET | `/api/market-temperature/history` | 🔓 公开 | 近 N 天市场温度历史 | **MarketTemperature.vue（趋势图）** |
+| GET | `/api/tp-sl` | 🔓 公开 | 止盈止损自动计算（ATR+支撑/阻力） | 前端待接入 |
 | GET | `/api/backtest/run` | 🔓 公开 | 信号回测（单股策略验证） | **Backtest.vue** |
 | GET | `/api/grid/status` | 🔓 公开 | 网格交易运行状态 | **GridTrading.vue** |
 | GET | `/api/grid/orders` | 🔓 公开 | 网格交易记录 | **GridTrading.vue** |
@@ -323,11 +324,12 @@ async function login(username, password) {
       "date": "2026-02-14",
       "open": 398.0, "high": 405.0, "low": 396.0, "close": 402.0,
       "volume": 12340000,
-      "ma5": 399.2, "ma10": 397.8, "ma20": 394.1, "ma60": 385.3, "ma120": 375.0, "ma250": 358.0,
-      "rsi14": 54.2,
+      "ma5": 399.2, "ma10": 397.8, "ma20": 394.1, "ma60": 385.3, "ma120": 375.0, "ma200": 365.0, "ma250": 358.0,
+      "rsi6": 54.2, "rsi12": 50.1, "rsi24": 48.5,
       "dif": 2.31, "dea": 1.85, "macd": 0.92,
       "boll_upper": 418.5, "boll_mid": 394.1, "boll_lower": 369.7,
-      "vol_ma20": 11200000
+      "vol_ma20": 11200000,
+      "ema5": 401.2, "ema10": 398.5, "ema15": 396.1, "ema20": 393.8, "ema25": 391.5, "ema30": 389.2
     }
   ]
 }
@@ -376,7 +378,7 @@ async function login(username, password) {
   "ma60": 385.3,
   "ma120": 375.0,
   "ma250": 358.0,
-  "rsi14": 54.2,
+  "rsi6": 54.2, "rsi12": 50.1, "rsi24": 48.5,
   "dif": 2.31,
   "dea": 1.85,
   "macd": 0.92,
@@ -384,6 +386,7 @@ async function login(username, password) {
   "boll_mid": 394.1,
   "boll_lower": 369.7,
   "vol_ma20": 11200000,
+  "ema5": 401.2, "ema10": 398.5, "ema15": 396.1, "ema20": 393.8, "ema25": 391.5, "ema30": 389.2,
   "updated_at": "2026-05-01T04:15:00"
 }
 ```
@@ -1050,6 +1053,82 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
 - `trades[].exit_reason` 取值：`hold`（固定天数）/ `score_drop`（评分回落）/ `below_ma5`/`below_ma10`/`below_ma20`（跌破均线）/ `max_holding`（超时强制卖出）/ `incomplete`（数据不足）
 - `status="incomplete"` 的交易不计入 summary 统计
 - 前端建议用 Tab 切换三种模式，每个模式展示对应参数输入框
+
+---
+
+## 止盈止损
+
+### GET `/api/tp-sl`
+
+基于 ATR（波动率）+ 支撑/阻力位（技术面）的混合算法，自动计算止盈止损价位。
+
+**请求参数**
+
+| 参数 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `code` | string | 是 | - | 标的代码（Futu 格式，如 `US.AAPL`） |
+| `atr_multiplier` | float | 否 | 2.0 | ATR 止损乘数（0.5~5.0） |
+| `min_rr_ratio` | float | 否 | 2.0 | 最低风险回报比（1.0~10.0） |
+
+**成功响应**
+
+```json
+{
+  "code": "US.NVDA",
+  "current_price": 219.44,
+  "date": "2026-05-11",
+  "atr14": 6.76,
+  "stop_loss": {
+    "price": 205.92,
+    "method": "atr",
+    "atr_stop": 205.92,
+    "support_stop": 204.69,
+    "support_type": "ma20",
+    "distance_pct": 0.0616
+  },
+  "take_profit": {
+    "price": 246.48,
+    "method": "rr_ratio",
+    "rr_target": 246.48,
+    "resistance_target": null,
+    "resistance_type": null,
+    "distance_pct": 0.1232
+  },
+  "risk_reward_ratio": 2.0,
+  "risk_per_share": 13.52,
+  "reward_per_share": 27.04,
+  "support_levels": {
+    "ma20": 204.69,
+    "ma60": 189.17,
+    "boll_lower": 190.45,
+    "swing_low_nearest": 194.74,
+    "swing_low_strongest": 164.27
+  },
+  "resistance_levels": {
+    "boll_upper": 218.92,
+    "swing_high_nearest": 216.82,
+    "swing_high_strongest": 216.82
+  },
+  "position_sizing": {
+    "risk_1pct_of_10k": 7
+  },
+  "timestamp": "2026-05-12 21:13:59"
+}
+```
+
+**无数据时**
+
+```json
+{"data": null, "message": "US.GDXU 暂无日线数据，请等待历史数据导入完成"}
+```
+
+**算法说明**
+
+- **止损** = max(ATR止损, 支撑位止损) — 取较紧者，保证不低于波动率底线
+- **止盈** = min(阻力位, R:R目标) — 取较保守者，阻力位优先
+- **支撑候选**：MA20、MA60、布林下轨、近期 swing low
+- **阻力候选**：布林上轨、近期 swing high
+- **仓位建议**：以 $10,000 账户、1% 最大风险计算建议股数
 
 ---
 

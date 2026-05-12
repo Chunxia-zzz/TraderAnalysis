@@ -42,6 +42,13 @@ CREATE TABLE IF NOT EXISTS kline_indicators (
     boll_mid     REAL,
     boll_lower   REAL,
     vol_ma20     REAL,
+    ema5         REAL,
+    ema10        REAL,
+    ema15        REAL,
+    ema20        REAL,
+    ema25        REAL,
+    ema30        REAL,
+    atr14        REAL,
     updated_at   TEXT,
     PRIMARY KEY (code, ktype, date)
 );
@@ -142,6 +149,8 @@ _KLINE_COLS = [
     "ma5", "ma10", "ma20", "ma60", "ma120", "ma200", "ma250",
     "rsi6", "rsi12", "rsi24", "dif", "dea", "macd",
     "boll_upper", "boll_mid", "boll_lower", "vol_ma20",
+    "ema5", "ema10", "ema15", "ema20", "ema25", "ema30",
+    "atr14",
 ]
 
 
@@ -226,7 +235,8 @@ def query_range(code: str, ktype: str, days: int = 60) -> list[dict]:
         "SELECT date, open, high, low, close, volume, "
         "ma5, ma10, ma20, ma60, ma120, ma200, ma250, "
         "rsi6, rsi12, rsi24, dif, dea, macd, "
-        "boll_upper, boll_mid, boll_lower, vol_ma20 "
+        "boll_upper, boll_mid, boll_lower, vol_ma20, "
+        "ema5, ema10, ema15, ema20, ema25, ema30, atr14 "
         "FROM kline_indicators WHERE code = ? AND ktype = ? "
         "ORDER BY date DESC LIMIT ?",
         (code, ktype, days),

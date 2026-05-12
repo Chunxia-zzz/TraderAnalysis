@@ -100,6 +100,7 @@ trader-analysis run
 | GET | `/api/market-temperature` | 市场温度评分（3 维度综合） |
 | GET | `/api/market-temperature/history?days=30` | 市场温度历史趋势 |
 | GET | `/api/backtest/run?code=US.SNDK&mode=trend` | 信号回测（3种策略模式） |
+| GET | `/api/tp-sl?code=US.NVDA` | 止盈止损自动计算（ATR + 支撑/阻力） |
 | GET | `/api/grid/status?config_id=1` | 网格交易运行状态 |
 | GET | `/api/grid/orders?config_id=1` | 网格交易记录 |
 

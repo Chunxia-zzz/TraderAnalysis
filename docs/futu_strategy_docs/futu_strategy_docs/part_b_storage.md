@@ -95,6 +95,15 @@ CREATE TABLE IF NOT EXISTS kline_indicators (
     boll_lower   REAL,
     -- 成交量均线
     vol_ma20     REAL,
+    -- EMA（多空飘带）
+    ema5         REAL,
+    ema10        REAL,
+    ema15        REAL,
+    ema20        REAL,
+    ema25        REAL,
+    ema30        REAL,
+    -- ATR（止盈止损基准）
+    atr14        REAL,
     -- 元数据
     updated_at   TEXT,
 
@@ -150,8 +159,11 @@ def batch_upsert(code: str, ktype: str, df: pd.DataFrame):
     """批量写入，主键冲突时覆盖"""
     conn = get_conn()
     cols = ['date','open','high','low','close','volume','turnover',
-            'ma5','ma10','ma20','ma60','ma120','ma250','rsi14',
-            'dif','dea','macd','boll_upper','boll_mid','boll_lower','vol_ma20']
+            'ma5','ma10','ma20','ma60','ma120','ma200','ma250',
+            'rsi6','rsi12','rsi24','dif','dea','macd',
+            'boll_upper','boll_mid','boll_lower','vol_ma20',
+            'ema5','ema10','ema15','ema20','ema25','ema30',
+            'atr14']
     for _, row in df.iterrows():
         values = [code, ktype] + [row.get(c) for c in cols] + [pd.Timestamp.now().isoformat()]
         placeholders = ','.join(['?'] * (len(cols) + 3))
@@ -190,9 +202,11 @@ def query_range(code: str, ktype: str, days: int = 60) -> list[dict]:
     conn = get_conn()
     rows = conn.execute("""
         SELECT date, open, high, low, close, volume,
-               ma5, ma10, ma20, ma60, ma120, ma250,
-               rsi14, dif, dea, macd,
-               boll_upper, boll_mid, boll_lower, vol_ma20
+               ma5, ma10, ma20, ma60, ma120, ma200, ma250,
+               rsi6, rsi12, rsi24, dif, dea, macd,
+               boll_upper, boll_mid, boll_lower, vol_ma20,
+               ema5, ema10, ema15, ema20, ema25, ema30,
+               atr14
         FROM kline_indicators
         WHERE code = ? AND ktype = ?
         ORDER BY date DESC LIMIT ?

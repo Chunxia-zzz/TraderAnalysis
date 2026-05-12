@@ -53,6 +53,17 @@ def _bbands(
     return upper, mid, lower
 
 
+def _atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int) -> pd.Series:
+    """Average True Range (Wilder smoothing)."""
+    prev_close = close.shift(1)
+    tr = pd.concat([
+        high - low,
+        (high - prev_close).abs(),
+        (low - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    return tr.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
+
+
 # ── 对外主函数 ────────────────────────────────────────────────────────────────
 
 def calc_indicators(df: pd.DataFrame, config: dict) -> pd.DataFrame:
@@ -102,6 +113,10 @@ def calc_indicators(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     # 成交量均线
     for period in config.get("vol_ma", []):
         df[f"vol_ma{period}"] = df["volume"].rolling(window=period).mean()
+
+    # ATR（平均真实波幅）
+    for period in config.get("atr", []):
+        df[f"atr{period}"] = _atr(df["high"], df["low"], df["close"], period)
 
     return df
 

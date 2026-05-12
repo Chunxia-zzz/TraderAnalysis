@@ -4,6 +4,51 @@
 
 ---
 
+## [v3.2.0] — 2026-05-12
+
+### 新增：止盈止损自动计算 (TP/SL)
+
+**新模块 `tp_sl.py`：**
+
+- 基于 ATR（波动率）+ 支撑/阻力位（技术面）的混合算法
+- 止损 = max(ATR止损, 支撑位止损) — 取较紧者
+- 止盈 = min(阻力位, R:R目标) — 取较保守者
+- 输出：止损/止盈价、方法来源、盈亏比、仓位建议
+
+**新 API 端点 `GET /api/tp-sl?code=US.NVDA`：**
+
+- 参数：`atr_multiplier`(默认2.0)、`min_rr_ratio`(默认2.0)
+- 返回完整风险评估 JSON（支撑位、阻力位、R:R、仓位建议）
+
+**新指标 ATR14：**
+
+- `indicators.py` 新增 `_atr()` 函数（Wilder smoothing）
+- `config.py` 日线配置新增 `"atr": [14]`
+- `storage.py` 新增 `atr14` 列
+- 已全量回填 41 只标的历史 ATR 数据
+
+### 新增：多空飘带指标 (MA Ribbon)
+
+**后端：**
+
+- `config.py`：日线/周线配置新增 `"ema": [5, 10, 15, 20, 25, 30]`
+- `indicators.py`：EMA 计算逻辑已有，现通过配置激活
+- `storage.py`：`kline_indicators` 表新增 `ema5`~`ema30` 六列
+- `/api/indicators` 响应新增 `ema5`~`ema30` 字段，前端可直接使用
+
+**用途：**
+
+多空飘带是一组 EMA 形成的带状区域，用颜色区分多空趋势：
+- 短 EMA（ema5）> 长 EMA（ema30）→ 红色飘带（多头）
+- 短 EMA（ema5）< 长 EMA（ema30）→ 绿色飘带（空头）
+- 飘带宽度反映趋势强度，收窄为方向选择信号
+
+### 修复
+
+- `runner.py`：修复评分后日志 `KeyError: 'triggered'`（v4 评分 breakdown 不再含 triggered 字段，改为展示得分最高的前 3 因子）
+
+---
+
 ## [v3.1.0] — 2026-05-11
 
 ### 新增：趋势跟踪策略 + 动量评分 + 买入确认

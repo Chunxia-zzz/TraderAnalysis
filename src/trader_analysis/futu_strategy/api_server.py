@@ -401,89 +401,11 @@ def get_scores_overview(
 # ── 基本面接口 ────────────────────────────────────────────────────────────────
 
 
-@app.get("/api/fundamental/latest")
-def get_fundamental_latest(
-    code: str = Query(...),
-
-):
-    """返回某标的最新基本面分析数据。"""
-    result = storage.query_latest_fundamental(code)
-    if not result:
-        return {"data": None, "message": f"{code} 暂无基本面数据，请先运行 trader-analysis fundamental"}
-    # 结构化响应
-    return {
-        "code": result["code"],
-        "date": result["date"],
-        "current_price": result.get("current_price"),
-        "valuation": {
-            "trailing_pe": result.get("trailing_pe"),
-            "forward_pe": result.get("forward_pe"),
-            "trailing_eps": result.get("trailing_eps"),
-            "forward_eps": result.get("forward_eps"),
-            "peg_ratio": result.get("peg_ratio"),
-            "price_to_book": result.get("price_to_book"),
-            "ev_to_ebitda": result.get("ev_to_ebitda"),
-        },
-        "growth": {
-            "revenue_growth": result.get("revenue_growth"),
-            "earnings_growth": result.get("earnings_growth"),
-        },
-        "analyst": {
-            "target_mean": result.get("target_mean"),
-            "target_median": result.get("target_median"),
-            "target_high": result.get("target_high"),
-            "target_low": result.get("target_low"),
-            "analyst_count": result.get("analyst_count"),
-            "recommendation": result.get("recommendation"),
-        },
-        "financial_health": {
-            "roe": result.get("roe"),
-            "profit_margin": result.get("profit_margin"),
-            "gross_margin": result.get("gross_margin"),
-            "debt_to_equity": result.get("debt_to_equity"),
-            "free_cashflow": result.get("free_cashflow"),
-            "current_ratio": result.get("current_ratio"),
-        },
-        "score": {
-            "fundamental_score": result.get("fundamental_score"),
-            "valuation_signal": result.get("valuation_signal"),
-            "breakdown": result.get("breakdown", {}),
-        },
-        "updated_at": result.get("updated_at"),
-    }
-
-
-@app.get("/api/fundamental/overview")
-def get_fundamental_overview():
-    """全标的基本面速览，按评分降序分组。"""
-    rows = storage.query_fundamentals_overview()
-    if not rows:
-        return {"data": None, "message": "暂无基本面数据，请先运行 trader-analysis fundamental"}
-
-    undervalued = [r for r in rows if r.get("valuation_signal") == "UNDERVALUED"]
-    fair = [r for r in rows if r.get("valuation_signal") == "FAIR"]
-    overvalued = [r for r in rows if r.get("valuation_signal") == "OVERVALUED"]
-
-    # 跳过的 ETF/杠杆产品
-    from trader_analysis.futu_strategy.config import FUNDAMENTAL_SKIP_TICKERS, get_watchlist
-    all_codes = get_watchlist()
-    scored_codes = {r["code"] for r in rows}
-    skipped = [c for c in all_codes if c not in scored_codes]
-
-    return {
-        "date": rows[0]["date"] if rows else None,
-        "total_count": len(rows),
-        "undervalued": undervalued,
-        "fair": fair,
-        "overvalued": overvalued,
-        "skipped": skipped,
-        "summary": {
-            "undervalued_count": len(undervalued),
-            "fair_count": len(fair),
-            "overvalued_count": len(overvalued),
-            "skipped_count": len(skipped),
-        },
-    }
+# ── 基本面接口（已停用：Yahoo Finance 中国不可用）─────────────────────────
+# @app.get("/api/fundamental/latest")
+# @app.get("/api/fundamental/overview")
+# 数据源 yfinance 在中国大陆被封，端点暂时注释。
+# 若找到替代数据源可恢复，代码保留在 git 历史中。
 
 
 @app.get("/api/market-temperature")
@@ -541,6 +463,37 @@ def run_backtest_api(
         end_date=end_date,
     )
     return run_backtest(params)
+
+
+# ── TP/SL 止盈止损接口 ────────────────────────────────────────────────────────
+
+
+@app.get("/api/tp-sl")
+def get_tp_sl(
+    code: str = Query(..., description="标的代码 (Futu 格式, 如 US.AAPL)"),
+    atr_multiplier: float = Query(default=2.0, ge=0.5, le=5.0, description="ATR 止损乘数"),
+    min_rr_ratio: float = Query(default=2.0, ge=1.0, le=10.0, description="最低风险回报比"),
+):
+    """计算自动止盈/止损价位和风险回报比。
+
+    基于 ATR（波动率）+ 支撑/阻力位（技术面）的混合算法。
+    """
+    from trader_analysis.futu_strategy import config as app_config
+    from trader_analysis.futu_strategy.tp_sl import calculate_tp_sl
+
+    daily_df = storage.query_recent(code, "1d", limit=250)
+    if daily_df.empty:
+        return {"data": None, "message": f"{code} 暂无日线数据，请等待历史数据导入完成"}
+
+    return calculate_tp_sl(
+        code=code,
+        daily_df=daily_df,
+        atr_period=app_config.TPSL_ATR_PERIOD,
+        atr_multiplier=atr_multiplier,
+        swing_lookback=app_config.TPSL_SWING_LOOKBACK,
+        swing_distance=app_config.TPSL_SWING_DISTANCE,
+        min_rr_ratio=min_rr_ratio,
+    )
 
 
 # ── 网格交易接口 ──────────────────────────────────────────────────────────────

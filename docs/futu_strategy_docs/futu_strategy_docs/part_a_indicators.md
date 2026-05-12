@@ -9,12 +9,12 @@
 | # | 指标 | 输入 | 输出列 | 实现方式 |
 |---|------|------|--------|---------|
 | B1 | MA（移动平均） | close | ma5, ma10, ma20, ma60, ma120, ma250 | pandas-ta `ta.sma()` |
-| B2 | RSI（相对强弱） | close | rsi14 | pandas-ta `ta.rsi()` |
-| B3 | MACD | close | dif, dea, macd | pandas-ta `ta.macd()` |
-| B4 | 布林带 | close | boll_upper, boll_mid, boll_lower | pandas-ta `ta.bbands()` |
-| B5 | 成交量均线 | volume | vol_ma20 | pandas `rolling().mean()` |
-| B6 | MACD 柱线底背离 | low + macd | bool | 自实现（依赖 scipy `find_peaks`） |
-| B7 | 恐慌放量后缩量 | volume + vol_ma20 | bool | 自实现（纯 pandas） |
+| B2 | EMA（多空飘带） | close | ema5~ema30（6列） | pandas-ta `ta.ema()` |
+| B3 | RSI（相对强弱） | close | rsi6, rsi12, rsi24 | pandas-ta `ta.rsi()` |
+| B4 | MACD | close | dif, dea, macd | pandas-ta `ta.macd()` |
+| B5 | 布林带 | close | boll_upper, boll_mid, boll_lower | pandas-ta `ta.bbands()` |
+| B6 | 成交量均线 | volume | vol_ma20 | pandas `rolling().mean()` |
+| B7 | ATR（真实波幅） | high, low, close | atr14 | 自实现（Wilder EWM 平滑） |
 
 ---
 
@@ -100,6 +100,16 @@ def calc_indicators(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     for period in config.get('vol_ma', []):
         df[f'vol_ma{period}'] = df['volume'].rolling(window=period).mean()
 
+    # ATR（Average True Range，Wilder 平滑）
+    for period in config.get('atr', []):
+        prev_close = df['close'].shift(1)
+        tr = pd.concat([
+            df['high'] - df['low'],
+            (df['high'] - prev_close).abs(),
+            (df['low']  - prev_close).abs(),
+        ], axis=1).max(axis=1)
+        df[f'atr{period}'] = tr.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
+
     return df
 ```
 
@@ -108,17 +118,21 @@ def calc_indicators(df: pd.DataFrame, config: dict) -> pd.DataFrame:
 ```python
 # 日线指标配置（传入 250 根日线）
 DAILY_INDICATOR_CONFIG = {
-    'ma':     [5, 10, 20, 60, 120, 250],
-    'rsi':    [14],
+    'ma':     [5, 10, 20, 60, 120, 200, 250],
+    'ema':    [5, 10, 15, 20, 25, 30],   # 多空飘带 (MA Ribbon)
+    'rsi':    [6, 12, 24],
     'macd':   {'fast': 12, 'slow': 26, 'signal': 9},
     'boll':   {'length': 20, 'std': 2},
     'vol_ma': [20],
+    'atr':    [14],                       # 止盈止损 ATR 基准
 }
 
 # 周线指标配置（传入 60 根周线）
 WEEKLY_INDICATOR_CONFIG = {
-    'rsi':  [14],
+    'ema':  [5, 10, 15, 20, 25, 30],   # 多空飘带 (MA Ribbon)
+    'rsi':  [6, 12, 24],
     'macd': {'fast': 12, 'slow': 26, 'signal': 9},
+    'boll': {'length': 20, 'std': 2},
 }
 ```
 
@@ -218,8 +232,9 @@ def detect_panic_volume(df: pd.DataFrame, lookback: int = 20, panic_multiplier: 
 
 | 列名 | 来源 | 说明 |
 |------|------|------|
-| `ma5` ~ `ma250` | MA | 简单移动平均（5/10/20/60/120/250） |
-| `rsi14` | RSI | 取值 0~100 |
+| `ma5` ~ `ma250` | MA | 简单移动平均（5/10/20/60/120/200/250） |
+| `ema5` ~ `ema30` | EMA | 指数移动平均（5/10/15/20/25/30），用于多空飘带 |
+| `rsi6` / `rsi12` / `rsi24` | RSI | 取值 0~100 |
 | `dif` | MACD | EMA 快线 − EMA 慢线 |
 | `dea` | MACD | DIF 的信号线 |
 | `macd` | MACD | 柱线 = (DIF − DEA) × 2 |

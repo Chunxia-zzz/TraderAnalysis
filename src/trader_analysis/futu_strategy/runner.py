@@ -82,12 +82,15 @@ def run_strategy(codes: list[str]) -> None:
                 upsert_score(code, today, result)
                 log_score(result)
 
-                triggered = [
-                    k for k, v in result["breakdown"].items() if v["triggered"]
-                ]
+                top_factors = [
+                    k for k, v in sorted(
+                        result["breakdown"].items(),
+                        key=lambda x: x[1]["score"], reverse=True
+                    ) if v["score"] > 0
+                ][:3]
                 logger.info(
                     f"{code}  总分={result['total_score']}  信号={result['signal']}"
-                    f"  触发项={triggered}"
+                    f"  主因={top_factors}"
                 )
 
                 if result["signal"] in ("BUY", "STRONG_BUY"):
