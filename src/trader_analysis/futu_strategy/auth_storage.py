@@ -97,3 +97,40 @@ def user_exists(username: str) -> bool:
         return row is not None
     finally:
         conn.close()
+
+
+def list_users() -> list[dict]:
+    """列出所有用户（不含密码哈希）。"""
+    conn = _get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT id, username, role, is_active, created_at, last_login FROM users ORDER BY id"
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def set_user_active(username: str, is_active: bool) -> bool:
+    """启用/禁用用户，返回是否找到该用户。"""
+    conn = _get_conn()
+    try:
+        cur = conn.execute(
+            "UPDATE users SET is_active = ? WHERE username = ?",
+            (1 if is_active else 0, username),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def delete_user(username: str) -> bool:
+    """删除用户，返回是否找到该用户。"""
+    conn = _get_conn()
+    try:
+        cur = conn.execute("DELETE FROM users WHERE username = ?", (username,))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()

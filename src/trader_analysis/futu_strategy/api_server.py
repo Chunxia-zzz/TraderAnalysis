@@ -9,27 +9,20 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from trader_analysis.futu_strategy import config, storage, watchlist_storage
-
-# AUTH DISABLED: 认证模块暂时禁用，所有接口无需登录即可访问
-# from trader_analysis.futu_strategy import auth_storage
-# from trader_analysis.futu_strategy.auth import (
-#     ChangePasswordRequest,
-#     LoginRequest,
-#     create_access_token,
-#     get_current_user,
-#     hash_password,
-#     require_admin,
-#     verify_password,
-# )
-# stock_info_fetcher: 仅保留 fetch_stock_info 供 watchlist 新增时获取基础信息
-from trader_analysis.futu_strategy.stock_info_fetcher import (
-    fetch_stock_info,
+from trader_analysis.futu_strategy import auth_storage, config, storage, watchlist_storage
+from trader_analysis.futu_strategy.auth import (
+    LoginRequest,
+    create_access_token,
+    get_current_user,
+    hash_password,
+    require_admin,
+    verify_password,
 )
+from trader_analysis.futu_strategy.stock_info_fetcher import fetch_stock_info
 
 app = FastAPI(title="Strategy Indicators API")
 
@@ -44,7 +37,7 @@ app.add_middleware(
 @app.on_event("startup")
 def _ensure_db() -> None:
     storage.init_db()
-    # auth_storage.init_users_table()  # AUTH DISABLED
+    auth_storage.init_users_table()
     watchlist_storage.init_watchlist_table()
 
 
@@ -53,22 +46,107 @@ def _ensure_db() -> None:
 
 @app.get("/health")
 def health_check():
-    """健康检查，前端启动时调用以检测后端是否在线。"""
+    """健康检查，无需登录。"""
     return {"status": "ok"}
 
 
-# AUTH DISABLED: 登录/用户信息/修改密码端点暂时禁用
-# @app.post("/api/auth/login")
-# def login(body: LoginRequest):
-#     ...
-#
-# @app.get("/api/auth/me")
-# def get_me(user: dict = Depends(get_current_user)):
-#     ...
-#
-# @app.post("/api/auth/change-password")
-# def change_password(body: ChangePasswordRequest, user: dict = Depends(get_current_user)):
-#     ...
+# ── 认证端点 ──────────────────────────────────────────────────────────────────
+
+
+@app.post("/api/auth/login")
+def login(body: LoginRequest):
+    """登录，返回 JWT access_token。"""
+    user = auth_storage.query_user_by_username(body.username)
+    if not user or not verify_password(body.password, user["password_hash"]):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
+    if not user["is_active"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="账号已被禁用")
+    auth_storage.update_last_login(body.username)
+    token = create_access_token(body.username, user["role"])
+    return {"access_token": token, "token_type": "bearer", "role": user["role"]}
+
+
+@app.get("/api/auth/me")
+def get_me(user: dict = Depends(get_current_user)):
+    """返回当前登录用户信息。"""
+    return {
+        "username": user["username"],
+        "role": user["role"],
+        "is_active": user["is_active"],
+        "last_login": user["last_login"],
+    }
+
+
+# ── 用户管理端点（仅 admin）──────────────────────────────────────────────────
+
+
+class CreateUserRequest(BaseModel):
+    username: str
+    password: str
+    role: str = "member"
+
+
+class ResetPasswordRequest(BaseModel):
+    new_password: str
+
+
+@app.get("/api/users")
+def list_users(admin: dict = Depends(require_admin)):
+    """列出所有用户。"""
+    return {"users": auth_storage.list_users()}
+
+
+@app.post("/api/users", status_code=201)
+def create_user(body: CreateUserRequest, admin: dict = Depends(require_admin)):
+    """创建新用户。"""
+    if body.role not in ("admin", "member"):
+        raise HTTPException(status_code=400, detail="role 只能为 admin 或 member")
+    if auth_storage.user_exists(body.username):
+        raise HTTPException(status_code=409, detail=f"用户 {body.username} 已存在")
+    uid = auth_storage.create_user(body.username, hash_password(body.password), body.role)
+    return {"message": f"用户 {body.username} 创建成功", "id": uid}
+
+
+@app.patch("/api/users/{username}/status")
+def set_user_status(
+    username: str,
+    is_active: bool = Query(..., description="true=启用，false=禁用"),
+    admin: dict = Depends(require_admin),
+):
+    """启用或禁用用户。"""
+    if username == admin["username"]:
+        raise HTTPException(status_code=400, detail="不能操作自己的账号")
+    found = auth_storage.set_user_active(username, is_active)
+    if not found:
+        raise HTTPException(status_code=404, detail=f"用户 {username} 不存在")
+    return {"message": f"用户 {username} 已{'启用' if is_active else '禁用'}"}
+
+
+@app.post("/api/users/{username}/reset-password")
+def reset_password(
+    username: str,
+    body: ResetPasswordRequest,
+    admin: dict = Depends(require_admin),
+):
+    """重置用户密码（admin 直接设置新密码）。"""
+    if not auth_storage.user_exists(username):
+        raise HTTPException(status_code=404, detail=f"用户 {username} 不存在")
+    auth_storage.update_password(username, hash_password(body.new_password))
+    return {"message": f"用户 {username} 密码已重置"}
+
+
+@app.delete("/api/users/{username}")
+def delete_user(username: str, admin: dict = Depends(require_admin)):
+    """删除用户。"""
+    if username == admin["username"]:
+        raise HTTPException(status_code=400, detail="不能删除自己的账号")
+    found = auth_storage.delete_user(username)
+    if not found:
+        raise HTTPException(status_code=404, detail=f"用户 {username} 不存在")
+    return {"message": f"用户 {username} 已删除"}
+
+
+# ── 指标接口（需登录）────────────────────────────────────────────────────────
 
 
 @app.get("/api/indicators")
@@ -76,7 +154,7 @@ def get_indicators(
     code: str,
     ktype: str = Query(default="1d", pattern="^(1d|1w)$"),
     days: int = Query(default=60, ge=1, le=500),
-
+    user: dict = Depends(get_current_user),
 ):
     """返回某标的某周期最近 N 根 K 线 + 全部指标（日期升序，供图表使用）。"""
     rows = storage.query_range(code, ktype, days)
@@ -95,7 +173,7 @@ def get_indicators(
 def get_latest(
     code: str,
     ktype: str = Query(default="1d", pattern="^(1d|1w)$"),
-
+    user: dict = Depends(get_current_user),
 ):
     """返回最新一根的所有指标值。"""
     result = storage.query_latest(code, ktype)
@@ -108,7 +186,7 @@ def get_latest(
 def get_latest_score(
     code: str,
     date: str | None = Query(default=None, description="指定日期 YYYY-MM-DD，不传则返回最新"),
-
+    user: dict = Depends(get_current_user),
 ):
     """返回评分结果。支持查询指定日期的历史评分。"""
     if date is not None:
@@ -122,15 +200,18 @@ def get_latest_score(
     return result
 
 
+# ── 标的池接口 ────────────────────────────────────────────────────────────────
+
+
 @app.get("/api/watchlist")
 def get_watchlist(
     category: str | None = Query(default=None),
     status: str | None = Query(default=None),
     market: str | None = Query(default=None),
     search: str | None = Query(default=None),
-
+    user: dict = Depends(get_current_user),
 ):
-    """返回标的池（支持筛选）。数据来源为 SQLite watchlist 表。"""
+    """返回标的池（支持筛选）。"""
     items = watchlist_storage.list_watchlist(category, status, market, search)
     codes_in_db = set(storage.list_codes())
     for item in items:
@@ -143,7 +224,7 @@ def get_watchlist(
 
 
 @app.get("/api/watchlist/{code}")
-def get_watchlist_item(code: str):
+def get_watchlist_item(code: str, user: dict = Depends(get_current_user)):
     """查询单只标的详情。"""
     item = watchlist_storage.get_stock(code)
     if not item:
@@ -164,45 +245,34 @@ class WatchlistAddRequest(BaseModel):
 
 
 @app.post("/api/watchlist", status_code=201)
-def add_watchlist_item(body: WatchlistAddRequest):
-    """新增标的。自动从富途获取基础信息填充。"""
+def add_watchlist_item(body: WatchlistAddRequest, admin: dict = Depends(require_admin)):
+    """新增标的（仅 admin）。"""
     existing = watchlist_storage.get_stock(body.code)
     if existing:
         return {"data": None, "message": f"Stock {body.code} already exists in watchlist"}
-
-    # 尝试从富途获取基础信息
     futu_info = fetch_stock_info(body.code)
-
     data = body.model_dump()
     if futu_info:
         data.update({k: v for k, v in futu_info.items() if v is not None})
-
     record = watchlist_storage.add_stock(data)
     return {"message": f"Stock {body.code} added to watchlist", "data": record}
 
 
 @app.patch("/api/watchlist/{code}")
-def update_watchlist_item(code: str, body: dict):
-    """修改标的可编辑字段（部分更新）。"""
+def update_watchlist_item(code: str, body: dict, admin: dict = Depends(require_admin)):
+    """修改标的（仅 admin）。"""
     existing = watchlist_storage.get_stock(code)
     if not existing:
         return {"data": None, "message": f"Stock {code} not found in watchlist"}
-
     result, updated_or_violations = watchlist_storage.update_stock(code, body)
     if result is None:
-        # readonly violation
         return {"data": None, "message": f"Fields not editable: {', '.join(updated_or_violations)}"}
-
-    return {
-        "message": f"Stock {code} updated",
-        "data": result,
-        "updated_fields": updated_or_violations,
-    }
+    return {"message": f"Stock {code} updated", "data": result, "updated_fields": updated_or_violations}
 
 
 @app.delete("/api/watchlist/{code}")
-def delete_watchlist_item(code: str):
-    """删除标的（仅从 watchlist 移除，不删历史数据）。"""
+def delete_watchlist_item(code: str, admin: dict = Depends(require_admin)):
+    """删除标的（仅 admin）。"""
     watchlist_storage.delete_stock(code)
     return {"message": f"Stock {code} removed from watchlist"}
 
@@ -214,8 +284,8 @@ class WatchlistBatchRequest(BaseModel):
 
 
 @app.post("/api/watchlist/batch")
-def batch_add_watchlist(body: WatchlistBatchRequest):
-    """批量新增标的。"""
+def batch_add_watchlist(body: WatchlistBatchRequest, admin: dict = Depends(require_admin)):
+    """批量新增标的（仅 admin）。"""
     defaults = {"category": body.category, "tags": body.tags}
     added, skipped = watchlist_storage.batch_add(body.codes, defaults)
     return {
@@ -228,15 +298,12 @@ def batch_add_watchlist(body: WatchlistBatchRequest):
 @app.post("/api/watchlist/refresh-snapshot")
 def refresh_watchlist_snapshot(
     code: str | None = Query(default=None),
+    admin: dict = Depends(require_admin),
 ):
-    """刷新标的静态快照字段（trailing_pe, market_cap 等）。"""
+    """刷新标的静态快照字段（仅 admin）。"""
     from trader_analysis.futu_strategy.stock_info_fetcher import fetch_snapshot_batch
 
-    if code:
-        codes = [code]
-    else:
-        codes = watchlist_storage.get_all_codes()
-
+    codes = [code] if code else watchlist_storage.get_all_codes()
     snapshots = fetch_snapshot_batch(codes)
     updated = 0
     failed = []
@@ -246,21 +313,14 @@ def refresh_watchlist_snapshot(
             updated += 1
         else:
             failed.append(c)
-
     return {"message": f"Refreshed {updated} stocks", "updated": updated, "failed": failed}
 
 
-# ── 选股接口（已禁用）─────────────────────────────────────────────────────────
-# 条件选股功能已移除：标的池已手动筛选龙头，新增标的通过 POST /api/watchlist 即可。
-# @app.get("/api/stock-filter/search")
-# @app.get("/api/stock-filter/info")
+# ── 评分概览 ──────────────────────────────────────────────────────────────────
 
 
 def _calc_momentum(kline_rows: list) -> int:
-    """计算动量/趋势强度评分 (0-100)。用于识别主升浪标的。
-
-    5 维度：均线排列(25) + RSI强势(20) + MACD方向(20) + 20日涨幅(20) + 量能(15)
-    """
+    """计算动量/趋势强度评分 (0-100)。"""
     if not kline_rows:
         return 0
     r = kline_rows[0]
@@ -278,7 +338,6 @@ def _calc_momentum(kline_rows: list) -> int:
 
     score = 0
 
-    # 1. 均线多头排列 (0-25)
     if all([ma5, ma10, ma20, ma60]):
         if ma5 > ma10 > ma20 > ma60:
             score += 25
@@ -287,15 +346,13 @@ def _calc_momentum(kline_rows: list) -> int:
         elif ma5 > ma10:
             score += 8
 
-    # 2. RSI 强势区 (0-20): 50-90 给分
     if 50 <= rsi <= 80:
         score += round((rsi - 50) / 30 * 20)
     elif 80 < rsi <= 90:
         score += 20
     elif rsi > 90:
-        score += 15  # 过热稍扣
+        score += 15
 
-    # 3. MACD 正值且扩张 (0-20)
     if dif > 0 and dif > dea:
         score += 20
     elif dif > 0:
@@ -303,14 +360,12 @@ def _calc_momentum(kline_rows: list) -> int:
     elif macd > 0:
         score += 5
 
-    # 4. 20日涨幅 (0-20)
     if len(kline_rows) >= 20:
         close_20d_ago = float(kline_rows[19]["close"]) if kline_rows[19]["close"] else 0
         if close_20d_ago > 0:
             pct_20d = (close - close_20d_ago) / close_20d_ago
             score += round(min(max(pct_20d / 0.30, 0), 1.0) * 20)
 
-    # 5. 量能配合 (0-15)
     vol_ratio = vol / vol_ma if vol_ma > 0 else 1
     if vol_ratio >= 1.5:
         score += 15
@@ -323,21 +378,15 @@ def _calc_momentum(kline_rows: list) -> int:
 @app.get("/api/scores/overview")
 def get_scores_overview(
     date: str | None = Query(default=None, description="指定日期 YYYY-MM-DD，不传则取各标的最新评分"),
-
+    user: dict = Depends(get_current_user),
 ):
-    """返回所有标的的评分概览，按分数降序，按信号分组。用于速览买入机会。
-
-    每个标的额外标注 `above_ma5`：收盘价是否站上 MA5（确认反转信号）。
-    同时触发 BUY/STRONG_BUY + above_ma5 = 值得关注的买入机会。
-    """
+    """返回所有标的的评分概览，按分数降序，按信号分组。"""
     rows = storage.query_scores_overview(date)
     if not rows:
         msg = "暂无评分数据" if not date else f"{date} 暂无评分数据（可能为非交易日）"
         return {"data": None, "message": msg}
 
-    # 为每个标的查最新技术状态（MA5确认 + 动量评分）
     import sqlite3
-
     from trader_analysis.futu_strategy import config as app_config
 
     conn = sqlite3.connect(app_config.DB_PATH)
@@ -355,8 +404,6 @@ def get_scores_overview(
             r["close"] = round(close, 2) if close else None
             r["ma5"] = round(ma5, 2) if ma5 else None
             r["above_ma5"] = close > ma5 if (close and ma5) else None
-
-            # 动量评分 (0-100)
             r["momentum_score"] = _calc_momentum(kline_rows)
         else:
             r["above_ma5"] = None
@@ -365,15 +412,10 @@ def get_scores_overview(
             r["momentum_score"] = None
     conn.close()
 
-    # 按信号分组
     strong_buy = [r for r in rows if r["signal"] == "STRONG_BUY"]
     buy = [r for r in rows if r["signal"] == "BUY"]
     no_action = [r for r in rows if r["signal"] == "NO_ACTION"]
-
-    # 统计有多少买入信号同时站上MA5
     actionable = [r for r in rows if r["signal"] in ("STRONG_BUY", "BUY") and r.get("above_ma5")]
-
-    # 动量领先者（主升浪标的）: momentum_score >= 70
     momentum_leaders = sorted(
         [r for r in rows if r.get("momentum_score") and r["momentum_score"] >= 70],
         key=lambda x: x["momentum_score"],
@@ -398,19 +440,12 @@ def get_scores_overview(
     }
 
 
-# ── 基本面接口 ────────────────────────────────────────────────────────────────
-
-
-# ── 基本面接口（已停用：Yahoo Finance 中国不可用）─────────────────────────
-# @app.get("/api/fundamental/latest")
-# @app.get("/api/fundamental/overview")
-# 数据源 yfinance 在中国大陆被封，端点暂时注释。
-# 若找到替代数据源可恢复，代码保留在 git 历史中。
+# ── 市场温度接口 ──────────────────────────────────────────────────────────────
 
 
 @app.get("/api/market-temperature")
-def get_market_temperature():
-    """返回最新一期市场温度评分，供前端仪表盘展示。"""
+def get_market_temperature(user: dict = Depends(get_current_user)):
+    """返回最新一期市场温度评分。"""
     result = storage.query_latest_market_score()
     if not result:
         return {"data": None, "message": "暂无市场温度数据，请先运行 trader-analysis temperature 命令"}
@@ -420,9 +455,9 @@ def get_market_temperature():
 @app.get("/api/market-temperature/history")
 def get_market_temperature_history(
     days: int = Query(default=30, ge=1, le=365),
-
+    user: dict = Depends(get_current_user),
 ):
-    """返回近 N 天的市场温度评分历史，用于趋势图。"""
+    """返回近 N 天的市场温度评分历史。"""
     history = storage.query_market_score_history(days)
     return {"history": history}
 
@@ -433,19 +468,20 @@ def get_market_temperature_history(
 @app.get("/api/backtest/run")
 def run_backtest_api(
     code: str = Query(..., description="股票代码 (Futu 格式, 如 US.SNDK)"),
-    mode: str = Query(default="hold", description="策略模式: hold(买入持有) / swing(波段操作) / trend(趋势跟踪)"),
-    threshold: int = Query(default=40, ge=1, le=100, description="买入评分阈值"),
-    holding_days: int = Query(default=10, ge=1, le=250, description="[hold] 持有交易日数"),
-    exit_threshold: int = Query(default=30, ge=1, le=100, description="[swing] 卖出评分阈值"),
-    max_holding_days: int = Query(default=120, ge=1, le=500, description="[swing/trend] 最大持有天数"),
-    trail_ma: str = Query(default="ma5", description="[trend] 跟踪止盈均线: ma5/ma10/ma20"),
-    entry_confirm: str = Query(default="none", description="买入确认: none(立即买) / above_ma5(站上MA5再买)"),
-    cooldown: str = Query(default="holding", description="去重策略: none/holding/custom"),
-    cooldown_days: int | None = Query(default=None, ge=1, le=250, description="custom 模式冷却天数"),
-    start_date: str | None = Query(default=None, description="起始日期 YYYY-MM-DD"),
-    end_date: str | None = Query(default=None, description="截止日期 YYYY-MM-DD"),
+    mode: str = Query(default="hold", description="策略模式: hold / swing / trend"),
+    threshold: int = Query(default=40, ge=1, le=100),
+    holding_days: int = Query(default=10, ge=1, le=250),
+    exit_threshold: int = Query(default=30, ge=1, le=100),
+    max_holding_days: int = Query(default=120, ge=1, le=500),
+    trail_ma: str = Query(default="ma5"),
+    entry_confirm: str = Query(default="none"),
+    cooldown: str = Query(default="holding"),
+    cooldown_days: int | None = Query(default=None, ge=1, le=250),
+    start_date: str | None = Query(default=None),
+    end_date: str | None = Query(default=None),
+    user: dict = Depends(get_current_user),
 ):
-    """信号回测：验证评分信号的历史收益表现。支持 hold(买入持有) 和 swing(波段操作) 两种模式。"""
+    """信号回测。"""
     from trader_analysis.futu_strategy.backtest import BacktestParams, run_backtest
 
     params = BacktestParams(
@@ -465,19 +501,17 @@ def run_backtest_api(
     return run_backtest(params)
 
 
-# ── TP/SL 止盈止损接口 ────────────────────────────────────────────────────────
+# ── TP/SL 接口 ────────────────────────────────────────────────────────────────
 
 
 @app.get("/api/tp-sl")
 def get_tp_sl(
-    code: str = Query(..., description="标的代码 (Futu 格式, 如 US.AAPL)"),
-    atr_multiplier: float = Query(default=2.0, ge=0.5, le=5.0, description="ATR 止损乘数"),
-    min_rr_ratio: float = Query(default=2.0, ge=1.0, le=10.0, description="最低风险回报比"),
+    code: str = Query(...),
+    atr_multiplier: float = Query(default=2.0, ge=0.5, le=5.0),
+    min_rr_ratio: float = Query(default=2.0, ge=1.0, le=10.0),
+    user: dict = Depends(get_current_user),
 ):
-    """计算自动止盈/止损价位和风险回报比。
-
-    基于 ATR（波动率）+ 支撑/阻力位（技术面）的混合算法。
-    """
+    """计算自动止盈/止损价位和风险回报比。"""
     from trader_analysis.futu_strategy import config as app_config
     from trader_analysis.futu_strategy.tp_sl import calculate_tp_sl
 
@@ -501,7 +535,8 @@ def get_tp_sl(
 
 @app.get("/api/grid/status")
 def get_grid_status(
-    config_id: int = Query(..., description="网格配置 ID"),
+    config_id: int = Query(...),
+    user: dict = Depends(get_current_user),
 ):
     """查看网格交易运行状态。"""
     from trader_analysis.futu_strategy.grid_trader import state_manager
@@ -542,8 +577,9 @@ def get_grid_status(
 
 @app.get("/api/grid/orders")
 def get_grid_orders(
-    config_id: int = Query(..., description="网格配置 ID"),
+    config_id: int = Query(...),
     limit: int = Query(default=50, ge=1, le=500),
+    user: dict = Depends(get_current_user),
 ):
     """查看网格交易记录。"""
     from trader_analysis.futu_strategy.grid_trader import state_manager
