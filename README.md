@@ -215,3 +215,57 @@ docker compose exec trader-api python -m trader_analysis temperature
 - SQLite 比 PostgreSQL 省内存，当前方案足够
 - Python 进程约占 150MB，OpenD 约占 300MB，剩余 ~1.5G 余量充足
 - 如果内存紧张，可关闭 OpenD 的行情推送功能
+
+---
+
+## 日常更新线上服务（scp 方案）
+
+> 服务器访问 GitHub 不稳定，采用 scp 手动上传的方式更新代码和数据。
+> 以下命令均在**本地 Windows Git Bash** 中执行。
+> 服务器信息：`root@47.106.175.84`
+
+### 1. 更新后端代码
+
+将改动的文件逐一 scp 上传，然后重启服务：
+
+```bash
+# 示例：上传某个改动的文件
+scp /f/TraderAnalysis/src/trader_analysis/futu_strategy/api_server.py \
+    root@47.106.175.84:/opt/trader-analysis/src/trader_analysis/futu_strategy/api_server.py
+
+# 上传完后重启后端服务
+ssh root@47.106.175.84 "systemctl restart trader-api && systemctl status trader-api"
+```
+
+### 2. 更新前端代码
+
+本地构建后，将 dist 目录整个传上去：
+
+```bash
+# 本地构建
+cd /f/TraderAnalysisFrontend && npm run build
+
+# 上传 dist 到服务器
+scp -r /f/TraderAnalysisFrontend/dist/* root@47.106.175.84:/var/www/trader-frontend/
+```
+
+> 前端是静态文件，Nginx 直接读取，上传完毕即生效，无需重启。
+
+### 3. 同步行情数据库
+
+本地跑完 update / temperature / score 后，同步 db 到服务器：
+
+```bash
+scp /f/TraderAnalysis/data/indicators.db \
+    root@47.106.175.84:/opt/trader-analysis/data/indicators.db
+```
+
+### 4. 常用服务器命令
+
+登录服务器后可用：
+
+```bash
+systemctl status trader-api        # 查看后端状态
+systemctl restart trader-api       # 重启后端
+journalctl -u trader-api -n 50     # 查看后端日志
+```
