@@ -563,6 +563,23 @@ def query_price_and_ma(code: str, ma_col: str = "ma5", start_date: str | None = 
     return {r["date"]: {"close": float(r["close"]), "ma": float(r[ma_col]) if r[ma_col] else None} for r in rows}
 
 
+def query_ema_ribbon_data(code: str, start_date: str | None = None, end_date: str | None = None) -> list[dict]:
+    """查询日线 ema5, ema30, close，用于 EMA 飘带回测，返回按日期升序的列表。"""
+    conn = _get_conn()
+    sql = "SELECT date, close, ema5, ema30 FROM kline_indicators WHERE code = ? AND ktype = '1d' AND ema5 IS NOT NULL AND ema30 IS NOT NULL"
+    params: list = [code]
+    if start_date:
+        sql += " AND date >= ?"
+        params.append(start_date)
+    if end_date:
+        sql += " AND date <= ?"
+        params.append(end_date)
+    sql += " ORDER BY date ASC"
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+    return [{"date": r["date"], "close": float(r["close"]), "ema5": float(r["ema5"]), "ema30": float(r["ema30"])} for r in rows]
+
+
 def query_trading_dates(code: str, start_date: str | None = None, end_date: str | None = None) -> list[str]:
     """查询交易日历（从 kline 数据推导），返回日期列表升序。"""
     conn = _get_conn()

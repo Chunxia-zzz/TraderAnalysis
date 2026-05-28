@@ -117,9 +117,6 @@ export default api
 | 方法 | 路径 | 认证 | 说明 | 前端页面 |
 |------|------|------|------|---------|
 | GET | `/health` | 🔓 公开 | 健康检查 | App.vue（启动时检测） |
-| ~~POST~~ | ~~`/api/auth/login`~~ | ~~禁用~~ | ~~用户登录~~ | ~~Login.vue（注释掉）~~ |
-| ~~GET~~ | ~~`/api/auth/me`~~ | ~~禁用~~ | ~~获取当前用户信息~~ | ~~注释掉~~ |
-| ~~POST~~ | ~~`/api/auth/change-password`~~ | ~~禁用~~ | ~~修改密码~~ | ~~注释掉~~ |
 | GET | `/api/indicators` | 🔓 公开 | 某标的某周期最近 N 根 K 线 + 全部指标 | Chart.vue |
 | GET | `/api/indicators/latest` | 🔓 公开 | 最新一根的所有指标值 | Dashboard.vue |
 | GET | `/api/scores/latest` | 🔓 公开 | 单个标的评分结果（支持指定日期） | Dashboard.vue |
@@ -515,19 +512,23 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
   "total_count": 41,
   "strong_buy": [
     {"code": "US.MCD", "date": "2026-05-08", "total_score": 93.4, "signal": "STRONG_BUY",
-     "above_ma5": false, "close": 275.75, "ma5": 280.1, "momentum_score": 9}
+     "above_ma5": false, "close": 275.75, "ma5": 280.1, "momentum_score": 9,
+     "ema_ribbon": "red"}
   ],
   "buy": [
     {"code": "US.ASTS", "date": "2026-05-08", "total_score": 70.4, "signal": "BUY",
-     "above_ma5": true, "close": 75.05, "ma5": 68.68, "momentum_score": 45}
+     "above_ma5": true, "close": 75.05, "ma5": 68.68, "momentum_score": 45,
+     "ema_ribbon": "green"}
   ],
   "no_action": [
     {"code": "US.MU", "date": "2026-05-08", "total_score": 2.7, "signal": "NO_ACTION",
-     "above_ma5": true, "close": 746.81, "ma5": 680.2, "momentum_score": 100}
+     "above_ma5": true, "close": 746.81, "ma5": 680.2, "momentum_score": 100,
+     "ema_ribbon": "mixed"}
   ],
   "actionable": [
     {"code": "US.ASTS", "date": "2026-05-08", "total_score": 70.4, "signal": "BUY",
-     "above_ma5": true, "close": 75.05, "ma5": 68.68, "momentum_score": 45}
+     "above_ma5": true, "close": 75.05, "ma5": 68.68, "momentum_score": 45,
+     "ema_ribbon": "green"}
   ],
   "momentum_leaders": [
     {"code": "US.MU", "date": "2026-05-08", "total_score": 2.7, "signal": "NO_ACTION",
@@ -968,7 +969,7 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
 | 参数 | 类型 | 默认值 | 约束 | 说明 |
 |------|------|--------|------|------|
 | `code` | string | **必填** | Futu格式 | 股票代码，如 `US.SNDK` |
-| `mode` | string | `hold` | `hold`/`swing`/`trend` | 策略模式 |
+| `mode` | string | `hold` | `hold`/`swing`/`trend`/`ribbon_long`/`ribbon_short` | 策略模式 |
 | `threshold` | integer | `40` | 1-100 | 买入评分阈值 |
 | `holding_days` | integer | `10` | 1-250 | [hold] 固定持有天数 |
 | `exit_threshold` | integer | `30` | 1-100 | [swing] 评分回落卖出阈值 |
@@ -980,13 +981,17 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
 | `start_date` | string | — | YYYY-MM-DD | 回测起始日 |
 | `end_date` | string | — | YYYY-MM-DD | 回测截止日 |
 
-**三种模式说明：**
+**五种模式说明：**
 
-| 模式 | 买入条件 | 卖出条件 | 适合场景 |
-|------|---------|---------|---------|
-| `hold` | 评分≥threshold | 固定持有N天后卖出 | 验证信号质量 |
-| `swing` | 评分≥threshold | 评分回落≤exit_threshold | 情绪波段（恐慌买→恢复卖） |
-| `trend` | 评分≥threshold | 收盘价跌破trail_ma | 强势股趋势跟踪 |
+| 模式 | 入场条件 | 出场条件 | 方向 | 适合场景 |
+|------|---------|---------|------|---------|
+| `hold` | 评分≥threshold | 固定持有N天后卖出 | 多头 | 验证信号质量 |
+| `swing` | 评分≥threshold | 评分回落≤exit_threshold | 多头 | 情绪波段（恐慌买→恢复卖） |
+| `trend` | 评分≥threshold | 收盘价跌破trail_ma | 多头 | 强势股趋势跟踪 |
+| `ribbon_long` | EMA飘带空转多（ema5上穿ema30） | EMA飘带多转空（ema5下穿ema30） | 多头 | 大市值长牛股趋势确认，无需阈值参数 |
+| `ribbon_short` | EMA飘带多转空（ema5下穿ema30） | EMA飘带空转多（ema5上穿ema30） | 空头 | 验证做空飘带策略，收益率=(入场价-出场价)/入场价 |
+
+> `ribbon_long`/`ribbon_short` 模式不使用 `threshold` 参数，信号完全由 EMA 飘带翻转驱动。
 
 **响应 200（有数据）：**
 

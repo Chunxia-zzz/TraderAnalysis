@@ -4,6 +4,27 @@
 
 ---
 
+## [v3.4.0] — 2026-05-28
+
+### 新增
+- **EMA 飘带回测策略**（`backtest.py`）：新增 `ribbon_long`（空转多买入/多转空卖出）和 `ribbon_short`（多转空做空/空转多平空）两种模式，不依赖评分系统，由 ema5/ema30 翻转驱动
+- **EMA 飘带状态字段**（`api_server.py`）：`/api/scores/overview` 响应新增 `ema_ribbon` 字段（`green`/`red`/`mixed`），标识各标的当前 EMA 多空排列状态
+- **机会速览 EMA 飘带徽标**（`ScoresOverview.vue`）：每张股票卡片显示飘带状态（多头带/空头带/纠缠中），空头带卡片有警示背景
+- **K 线图飘带翻转标记**（`IndicatorChart.vue`）：开启 EMA 多空带后，在翻转日显示绿色向上三角（空转多）和红色向下三角（多转空），悬停显示日期
+- **新增标的 US.KORU**：加入标的池（半导体分类），拉取近一年日线（270根）+ 周线（52根）数据
+- **Chart.vue 默认指标**：从机会速览跳转时自动读取 URL `code` 参数；默认开启 EMA 多空带，关闭 MA5/MA10/BOLL
+- **机会速览点击跳转**：由个股技术分析页改为跳转至 K 线图页面（`/chart?code=...`）
+
+### 变更
+- **移除认证系统**（`api_server.py`）：删除 `/api/auth/*` 和 `/api/users/*` 所有端点及 `get_current_user`/`require_admin` 依赖，全端点无需鉴权
+- **前端认证清理**（`trader.js`、`router/index.js`、`App.vue`）：移除 Bearer token 拦截器、401 跳转、路由守卫、登录/用户管理路由及导航入口
+- **storage.py**：新增 `query_ema_ribbon_data()` 函数，供飘带回测模式读取 ema5/ema30 历史数据
+
+### 修复
+- 修复 `App.vue` 重构后 `computed`/`useRoute` 未 import 导致的启动报错
+
+---
+
 ## [v3.3.0] — 2026-05-23
 
 ### 前端：机会速览拆分为两个独立页面

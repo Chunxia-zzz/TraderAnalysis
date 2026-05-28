@@ -228,10 +228,9 @@ docker compose exec trader-api python -m trader_analysis temperature
 
 将改动的文件逐一 scp 上传，然后重启服务：
 
-```bash
+```bash 以下是windows开发机示例
 # 示例：上传某个改动的文件
-scp /f/TraderAnalysis/src/trader_analysis/futu_strategy/api_server.py \
-    root@47.106.175.84:/opt/trader-analysis/src/trader_analysis/futu_strategy/api_server.py
+scp F:\TraderAnalysis\src\trader_analysis\futu_strategy\api_server.py root@47.106.175.84:/opt/trader-analysis/src/trader_analysis/futu_strategy/api_server.py
 
 # 上传完后重启后端服务
 ssh root@47.106.175.84 "systemctl restart trader-api && systemctl status trader-api"

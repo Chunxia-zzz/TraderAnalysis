@@ -25,6 +25,7 @@ from statistics import median, stdev
 from trader_analysis.futu_strategy.storage import (
     query_all_scores,
     query_close_prices,
+    query_ema_ribbon_data,
     query_price_and_ma,
     query_trading_dates,
 )
@@ -33,7 +34,7 @@ from trader_analysis.futu_strategy.storage import (
 @dataclass
 class BacktestParams:
     code: str
-    mode: str = "hold"  # hold | swing | trend
+    mode: str = "hold"  # hold | swing | trend | ribbon_long | ribbon_short
     threshold: int = 40
     # hold 模式参数
     holding_days: int = 10
@@ -419,6 +420,102 @@ def _run_trend_mode(params: BacktestParams, scores: list[dict], prices: dict, tr
     return trades
 
 
+def _run_ribbon_long_mode(params: BacktestParams, ema_data: list[dict]) -> list[Trade]:
+    """策略D: EMA 飘带多头模式。空转多买入，多转空卖出。"""
+    trades: list[Trade] = []
+
+    # 找所有翻转点
+    bull_dates: list[str] = []   # 空转多（入场）
+    bear_dates: list[str] = []   # 多转空（出场）
+    for i in range(1, len(ema_data)):
+        prev = ema_data[i - 1]
+        cur = ema_data[i]
+        prev_bull = prev["ema5"] >= prev["ema30"]
+        cur_bull = cur["ema5"] >= cur["ema30"]
+        if not prev_bull and cur_bull:
+            bull_dates.append(cur["date"])
+        elif prev_bull and not cur_bull:
+            bear_dates.append(cur["date"])
+
+    close_by_date = {d["date"]: d["close"] for d in ema_data}
+
+    for entry_date in bull_dates:
+        entry_price = close_by_date.get(entry_date)
+        if entry_price is None:
+            continue
+        # 找下一个多转空日期
+        exit_date = next((d for d in bear_dates if d > entry_date), None)
+        if exit_date is None:
+            trades.append(Trade(
+                signal_date=entry_date, entry_price=round(entry_price, 2),
+                exit_date=None, exit_price=None, return_pct=None,
+                holding_days=None, entry_score=0.0, exit_score=None,
+                exit_reason="incomplete", signal="RIBBON_LONG", status="incomplete",
+            ))
+            continue
+        exit_price = close_by_date.get(exit_date)
+        if exit_price is None:
+            continue
+        return_pct = round((exit_price - entry_price) / entry_price * 100, 2)
+        trades.append(Trade(
+            signal_date=entry_date, entry_price=round(entry_price, 2),
+            exit_date=exit_date, exit_price=round(exit_price, 2),
+            return_pct=return_pct, holding_days=None,
+            entry_score=0.0, exit_score=None,
+            exit_reason="ribbon_flip_short", signal="RIBBON_LONG", status="complete",
+        ))
+
+    return trades
+
+
+def _run_ribbon_short_mode(params: BacktestParams, ema_data: list[dict]) -> list[Trade]:
+    """策略E: EMA 飘带空头模式。多转空做空，空转多平空。收益率 = (入场价 - 出场价) / 入场价。"""
+    trades: list[Trade] = []
+
+    bull_dates: list[str] = []   # 空转多（平空）
+    bear_dates: list[str] = []   # 多转空（入场做空）
+    for i in range(1, len(ema_data)):
+        prev = ema_data[i - 1]
+        cur = ema_data[i]
+        prev_bull = prev["ema5"] >= prev["ema30"]
+        cur_bull = cur["ema5"] >= cur["ema30"]
+        if not prev_bull and cur_bull:
+            bull_dates.append(cur["date"])
+        elif prev_bull and not cur_bull:
+            bear_dates.append(cur["date"])
+
+    close_by_date = {d["date"]: d["close"] for d in ema_data}
+
+    for entry_date in bear_dates:
+        entry_price = close_by_date.get(entry_date)
+        if entry_price is None:
+            continue
+        # 找下一个空转多日期（平空）
+        exit_date = next((d for d in bull_dates if d > entry_date), None)
+        if exit_date is None:
+            trades.append(Trade(
+                signal_date=entry_date, entry_price=round(entry_price, 2),
+                exit_date=None, exit_price=None, return_pct=None,
+                holding_days=None, entry_score=0.0, exit_score=None,
+                exit_reason="incomplete", signal="RIBBON_SHORT", status="incomplete",
+            ))
+            continue
+        exit_price = close_by_date.get(exit_date)
+        if exit_price is None:
+            continue
+        # 空头收益：价格下跌为正收益
+        return_pct = round((entry_price - exit_price) / entry_price * 100, 2)
+        trades.append(Trade(
+            signal_date=entry_date, entry_price=round(entry_price, 2),
+            exit_date=exit_date, exit_price=round(exit_price, 2),
+            return_pct=return_pct, holding_days=None,
+            entry_score=0.0, exit_score=None,
+            exit_reason="ribbon_flip_long", signal="RIBBON_SHORT", status="complete",
+        ))
+
+    return trades
+
+
 def run_backtest(params: BacktestParams) -> dict:
     """执行单股信号回测。
 
@@ -432,6 +529,48 @@ def run_backtest(params: BacktestParams) -> dict:
     -------
     dict with keys: code, params, summary, trades
     """
+    mode = params.mode
+    if mode == "signal_exit":
+        mode = "swing"
+    elif mode == "trailing_stop":
+        mode = "trend"
+
+    # ── EMA 飘带策略（不需要评分数据）──────────────────────────────
+    if mode in ("ribbon_long", "ribbon_short"):
+        ema_data = query_ema_ribbon_data(params.code, params.start_date, params.end_date)
+        if not ema_data:
+            return {"data": None, "message": f"{params.code} 暂无 EMA 数据，请先运行 init/update"}
+        if mode == "ribbon_long":
+            trades = _run_ribbon_long_mode(params, ema_data)
+        else:
+            trades = _run_ribbon_short_mode(params, ema_data)
+        summary = _calculate_summary(trades)
+        actual_start = ema_data[0]["date"]
+        actual_end = ema_data[-1]["date"]
+        return {
+            "code": params.code,
+            "mode": mode,
+            "params": {"mode": mode, "start_date": actual_start, "end_date": actual_end},
+            "summary": summary,
+            "trades": [
+                {
+                    "signal_date": t.signal_date,
+                    "entry_price": t.entry_price,
+                    "exit_date": t.exit_date,
+                    "exit_price": t.exit_price,
+                    "return_pct": t.return_pct,
+                    "holding_days": t.holding_days,
+                    "entry_score": t.entry_score,
+                    "exit_score": t.exit_score,
+                    "exit_reason": t.exit_reason,
+                    "signal": t.signal,
+                    "status": t.status,
+                }
+                for t in trades
+            ],
+        }
+
+    # ── 评分策略 ──────────────────────────────────────────────────
     # Step 1: 获取数据
     scores = query_all_scores(params.code, params.start_date, params.end_date)
     if not scores:
@@ -451,13 +590,7 @@ def run_backtest(params: BacktestParams) -> dict:
     if params.entry_confirm == "above_ma5":
         price_ma5 = query_price_and_ma(params.code, "ma5", params.start_date, params.end_date)
 
-    # Step 3: 按模式执行（兼容前端别名）
-    mode = params.mode
-    if mode == "signal_exit":
-        mode = "swing"
-    elif mode == "trailing_stop":
-        mode = "trend"
-
+    # Step 3: 按模式执行
     if mode == "swing":
         trades = _run_swing_mode(params, scores, prices, trading_dates, date_index, price_ma5)
     elif mode == "trend":

@@ -2,6 +2,7 @@
 
 将存储层数据暴露为 HTTP 接口，供前端图表组件消费。
 只做读取，不调用 Futu SDK，不做任何计算，可独立于后端运行。
+全开放，无需鉴权。
 
 启动：uvicorn trader_analysis.futu_strategy.api_server:app --host 0.0.0.0 --port 8000
 文档：http://localhost:8000/docs
@@ -9,19 +10,11 @@
 
 from __future__ import annotations
 
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from trader_analysis.futu_strategy import auth_storage, config, storage, watchlist_storage
-from trader_analysis.futu_strategy.auth import (
-    LoginRequest,
-    create_access_token,
-    get_current_user,
-    hash_password,
-    require_admin,
-    verify_password,
-)
+from trader_analysis.futu_strategy import config, storage, watchlist_storage
 from trader_analysis.futu_strategy.stock_info_fetcher import fetch_stock_info
 
 app = FastAPI(title="Strategy Indicators API")
@@ -37,7 +30,6 @@ app.add_middleware(
 @app.on_event("startup")
 def _ensure_db() -> None:
     storage.init_db()
-    auth_storage.init_users_table()
     watchlist_storage.init_watchlist_table()
 
 
@@ -46,107 +38,11 @@ def _ensure_db() -> None:
 
 @app.get("/health")
 def health_check():
-    """健康检查，无需登录。"""
+    """健康检查。"""
     return {"status": "ok"}
 
 
-# ── 认证端点 ──────────────────────────────────────────────────────────────────
-
-
-@app.post("/api/auth/login")
-def login(body: LoginRequest):
-    """登录，返回 JWT access_token。"""
-    user = auth_storage.query_user_by_username(body.username)
-    if not user or not verify_password(body.password, user["password_hash"]):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
-    if not user["is_active"]:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="账号已被禁用")
-    auth_storage.update_last_login(body.username)
-    token = create_access_token(body.username, user["role"])
-    return {"access_token": token, "token_type": "bearer", "role": user["role"]}
-
-
-@app.get("/api/auth/me")
-def get_me(user: dict = Depends(get_current_user)):
-    """返回当前登录用户信息。"""
-    return {
-        "username": user["username"],
-        "role": user["role"],
-        "is_active": user["is_active"],
-        "last_login": user["last_login"],
-    }
-
-
-# ── 用户管理端点（仅 admin）──────────────────────────────────────────────────
-
-
-class CreateUserRequest(BaseModel):
-    username: str
-    password: str
-    role: str = "member"
-
-
-class ResetPasswordRequest(BaseModel):
-    new_password: str
-
-
-@app.get("/api/users")
-def list_users(admin: dict = Depends(require_admin)):
-    """列出所有用户。"""
-    return {"users": auth_storage.list_users()}
-
-
-@app.post("/api/users", status_code=201)
-def create_user(body: CreateUserRequest, admin: dict = Depends(require_admin)):
-    """创建新用户。"""
-    if body.role not in ("admin", "member"):
-        raise HTTPException(status_code=400, detail="role 只能为 admin 或 member")
-    if auth_storage.user_exists(body.username):
-        raise HTTPException(status_code=409, detail=f"用户 {body.username} 已存在")
-    uid = auth_storage.create_user(body.username, hash_password(body.password), body.role)
-    return {"message": f"用户 {body.username} 创建成功", "id": uid}
-
-
-@app.patch("/api/users/{username}/status")
-def set_user_status(
-    username: str,
-    is_active: bool = Query(..., description="true=启用，false=禁用"),
-    admin: dict = Depends(require_admin),
-):
-    """启用或禁用用户。"""
-    if username == admin["username"]:
-        raise HTTPException(status_code=400, detail="不能操作自己的账号")
-    found = auth_storage.set_user_active(username, is_active)
-    if not found:
-        raise HTTPException(status_code=404, detail=f"用户 {username} 不存在")
-    return {"message": f"用户 {username} 已{'启用' if is_active else '禁用'}"}
-
-
-@app.post("/api/users/{username}/reset-password")
-def reset_password(
-    username: str,
-    body: ResetPasswordRequest,
-    admin: dict = Depends(require_admin),
-):
-    """重置用户密码（admin 直接设置新密码）。"""
-    if not auth_storage.user_exists(username):
-        raise HTTPException(status_code=404, detail=f"用户 {username} 不存在")
-    auth_storage.update_password(username, hash_password(body.new_password))
-    return {"message": f"用户 {username} 密码已重置"}
-
-
-@app.delete("/api/users/{username}")
-def delete_user(username: str, admin: dict = Depends(require_admin)):
-    """删除用户。"""
-    if username == admin["username"]:
-        raise HTTPException(status_code=400, detail="不能删除自己的账号")
-    found = auth_storage.delete_user(username)
-    if not found:
-        raise HTTPException(status_code=404, detail=f"用户 {username} 不存在")
-    return {"message": f"用户 {username} 已删除"}
-
-
-# ── 指标接口（需登录）────────────────────────────────────────────────────────
+# ── 指标接口 ──────────────────────────────────────────────────────────────────
 
 
 @app.get("/api/indicators")
@@ -154,7 +50,6 @@ def get_indicators(
     code: str,
     ktype: str = Query(default="1d", pattern="^(1d|1w)$"),
     days: int = Query(default=60, ge=1, le=500),
-    user: dict = Depends(get_current_user),
 ):
     """返回某标的某周期最近 N 根 K 线 + 全部指标（日期升序，供图表使用）。"""
     rows = storage.query_range(code, ktype, days)
@@ -173,7 +68,6 @@ def get_indicators(
 def get_latest(
     code: str,
     ktype: str = Query(default="1d", pattern="^(1d|1w)$"),
-    user: dict = Depends(get_current_user),
 ):
     """返回最新一根的所有指标值。"""
     result = storage.query_latest(code, ktype)
@@ -186,7 +80,6 @@ def get_latest(
 def get_latest_score(
     code: str,
     date: str | None = Query(default=None, description="指定日期 YYYY-MM-DD，不传则返回最新"),
-    user: dict = Depends(get_current_user),
 ):
     """返回评分结果。支持查询指定日期的历史评分。"""
     if date is not None:
@@ -209,7 +102,6 @@ def get_watchlist(
     status: str | None = Query(default=None),
     market: str | None = Query(default=None),
     search: str | None = Query(default=None),
-    user: dict = Depends(get_current_user),
 ):
     """返回标的池（支持筛选）。"""
     items = watchlist_storage.list_watchlist(category, status, market, search)
@@ -224,7 +116,7 @@ def get_watchlist(
 
 
 @app.get("/api/watchlist/{code}")
-def get_watchlist_item(code: str, user: dict = Depends(get_current_user)):
+def get_watchlist_item(code: str):
     """查询单只标的详情。"""
     item = watchlist_storage.get_stock(code)
     if not item:
@@ -245,8 +137,8 @@ class WatchlistAddRequest(BaseModel):
 
 
 @app.post("/api/watchlist", status_code=201)
-def add_watchlist_item(body: WatchlistAddRequest, admin: dict = Depends(require_admin)):
-    """新增标的（仅 admin）。"""
+def add_watchlist_item(body: WatchlistAddRequest):
+    """新增标的。"""
     existing = watchlist_storage.get_stock(body.code)
     if existing:
         return {"data": None, "message": f"Stock {body.code} already exists in watchlist"}
@@ -259,8 +151,8 @@ def add_watchlist_item(body: WatchlistAddRequest, admin: dict = Depends(require_
 
 
 @app.patch("/api/watchlist/{code}")
-def update_watchlist_item(code: str, body: dict, admin: dict = Depends(require_admin)):
-    """修改标的（仅 admin）。"""
+def update_watchlist_item(code: str, body: dict):
+    """修改标的。"""
     existing = watchlist_storage.get_stock(code)
     if not existing:
         return {"data": None, "message": f"Stock {code} not found in watchlist"}
@@ -271,8 +163,8 @@ def update_watchlist_item(code: str, body: dict, admin: dict = Depends(require_a
 
 
 @app.delete("/api/watchlist/{code}")
-def delete_watchlist_item(code: str, admin: dict = Depends(require_admin)):
-    """删除标的（仅 admin）。"""
+def delete_watchlist_item(code: str):
+    """删除标的。"""
     watchlist_storage.delete_stock(code)
     return {"message": f"Stock {code} removed from watchlist"}
 
@@ -284,8 +176,8 @@ class WatchlistBatchRequest(BaseModel):
 
 
 @app.post("/api/watchlist/batch")
-def batch_add_watchlist(body: WatchlistBatchRequest, admin: dict = Depends(require_admin)):
-    """批量新增标的（仅 admin）。"""
+def batch_add_watchlist(body: WatchlistBatchRequest):
+    """批量新增标的。"""
     defaults = {"category": body.category, "tags": body.tags}
     added, skipped = watchlist_storage.batch_add(body.codes, defaults)
     return {
@@ -298,9 +190,8 @@ def batch_add_watchlist(body: WatchlistBatchRequest, admin: dict = Depends(requi
 @app.post("/api/watchlist/refresh-snapshot")
 def refresh_watchlist_snapshot(
     code: str | None = Query(default=None),
-    admin: dict = Depends(require_admin),
 ):
-    """刷新标的静态快照字段（仅 admin）。"""
+    """刷新标的静态快照字段。"""
     from trader_analysis.futu_strategy.stock_info_fetcher import fetch_snapshot_batch
 
     codes = [code] if code else watchlist_storage.get_all_codes()
@@ -378,7 +269,6 @@ def _calc_momentum(kline_rows: list) -> int:
 @app.get("/api/scores/overview")
 def get_scores_overview(
     date: str | None = Query(default=None, description="指定日期 YYYY-MM-DD，不传则取各标的最新评分"),
-    user: dict = Depends(get_current_user),
 ):
     """返回所有标的的评分概览，按分数降序，按信号分组。"""
     rows = storage.query_scores_overview(date)
@@ -393,7 +283,8 @@ def get_scores_overview(
     conn.row_factory = sqlite3.Row
     for r in rows:
         kline_rows = conn.execute(
-            "SELECT close, ma5, ma10, ma20, ma60, rsi6, macd, dif, dea, volume, vol_ma20 "
+            "SELECT close, ma5, ma10, ma20, ma60, rsi6, macd, dif, dea, volume, vol_ma20,"
+            " ema5, ema10, ema15, ema20, ema25, ema30 "
             "FROM kline_indicators WHERE code = ? AND ktype = '1d' ORDER BY date DESC LIMIT 20",
             (r["code"],),
         ).fetchall()
@@ -405,11 +296,24 @@ def get_scores_overview(
             r["ma5"] = round(ma5, 2) if ma5 else None
             r["above_ma5"] = close > ma5 if (close and ma5) else None
             r["momentum_score"] = _calc_momentum(kline_rows)
+            # EMA 飘带状态
+            emas = [k[f"ema{p}"] for p in (5, 10, 15, 20, 25, 30)]
+            if all(emas):
+                e5, e10, e15, e20, e25, e30 = [float(e) for e in emas]
+                if e5 > e10 > e15 > e20 > e25 > e30:
+                    r["ema_ribbon"] = "green"
+                elif e5 < e10 < e15 < e20 < e25 < e30:
+                    r["ema_ribbon"] = "red"
+                else:
+                    r["ema_ribbon"] = "mixed"
+            else:
+                r["ema_ribbon"] = None
         else:
             r["above_ma5"] = None
             r["close"] = None
             r["ma5"] = None
             r["momentum_score"] = None
+            r["ema_ribbon"] = None
     conn.close()
 
     strong_buy = [r for r in rows if r["signal"] == "STRONG_BUY"]
@@ -444,7 +348,7 @@ def get_scores_overview(
 
 
 @app.get("/api/market-temperature")
-def get_market_temperature(user: dict = Depends(get_current_user)):
+def get_market_temperature():
     """返回最新一期市场温度评分。"""
     result = storage.query_latest_market_score()
     if not result:
@@ -455,7 +359,6 @@ def get_market_temperature(user: dict = Depends(get_current_user)):
 @app.get("/api/market-temperature/history")
 def get_market_temperature_history(
     days: int = Query(default=30, ge=1, le=365),
-    user: dict = Depends(get_current_user),
 ):
     """返回近 N 天的市场温度评分历史。"""
     history = storage.query_market_score_history(days)
@@ -479,7 +382,6 @@ def run_backtest_api(
     cooldown_days: int | None = Query(default=None, ge=1, le=250),
     start_date: str | None = Query(default=None),
     end_date: str | None = Query(default=None),
-    user: dict = Depends(get_current_user),
 ):
     """信号回测。"""
     from trader_analysis.futu_strategy.backtest import BacktestParams, run_backtest
@@ -509,7 +411,6 @@ def get_tp_sl(
     code: str = Query(...),
     atr_multiplier: float = Query(default=2.0, ge=0.5, le=5.0),
     min_rr_ratio: float = Query(default=2.0, ge=1.0, le=10.0),
-    user: dict = Depends(get_current_user),
 ):
     """计算自动止盈/止损价位和风险回报比。"""
     from trader_analysis.futu_strategy import config as app_config
@@ -536,7 +437,6 @@ def get_tp_sl(
 @app.get("/api/grid/status")
 def get_grid_status(
     config_id: int = Query(...),
-    user: dict = Depends(get_current_user),
 ):
     """查看网格交易运行状态。"""
     from trader_analysis.futu_strategy.grid_trader import state_manager
@@ -579,7 +479,6 @@ def get_grid_status(
 def get_grid_orders(
     config_id: int = Query(...),
     limit: int = Query(default=50, ge=1, le=500),
-    user: dict = Depends(get_current_user),
 ):
     """查看网格交易记录。"""
     from trader_analysis.futu_strategy.grid_trader import state_manager
