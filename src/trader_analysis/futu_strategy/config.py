@@ -103,17 +103,6 @@ SCORE_BUY: int = 60
 DAILY_KLINE_COUNT: int = 250   # 需 ≥ 200 根以计算 MA200，额外 50 根作为缓冲
 WEEKLY_KLINE_COUNT: int = 60   # 约 14 个月的周线数据
 
-# ── 外部数据 ───────────────────────────────────────────────────────────────────
-# CNN Fear & Greed 非官方接口
-CNN_FG_URL: str = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
-HTTP_TIMEOUT: int = 10  # 秒
-
-# HTTP 代理（国内访问 CNN 可能需要，设为 None 则不使用）
-# 示例：{"https": "http://127.0.0.1:7890"}
-HTTP_PROXIES: dict | None = None
-
-# VIX 行情代码；若 US.VIX 不可用可改为 "US.VIXY"
-VIX_CODE: str = "US.VIX"
 
 # ── 交易设置 ───────────────────────────────────────────────────────────────────
 # 是否允许对已持有标的加仓（金字塔加仓）
@@ -193,7 +182,3 @@ FUNDAMENTAL_SIGNAL_OVERVALUED: int = 40
 
 FUNDAMENTAL_SKIP_TICKERS: list[str] = ["QQQ", "SPY", "GLD", "IBIT", "07709", "VIXY", "VIX", "DRAM"]
 
-# ── 认证 (JWT) ───────────────────────────────────────────────────────────────
-JWT_SECRET_KEY: str = os.environ.get("JWT_SECRET_KEY", "")
-JWT_ALGORITHM: str = "HS256"
-JWT_EXPIRE_DAYS: int = int(os.environ.get("JWT_EXPIRE_DAYS", "7"))

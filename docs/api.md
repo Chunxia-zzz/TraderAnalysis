@@ -23,68 +23,6 @@ Swagger UI：`http://localhost:8000/docs`
 
 ---
 
-## 认证（Authentication）
-
-> **v2.8 变更**：认证模块暂时禁用。所有 `/api/*` 端点无需 token 即可访问。
->
-> 前端需同步注释掉以下代码：
-> - 登录页面（Login.vue）及相关路由
-> - axios 请求拦截器中 Authorization header 附加逻辑
-> - axios 响应拦截器中 401 跳转登录逻辑
-> - 路由守卫（router.beforeEach 中 token 检查）
-> - localStorage 中 token/role 的读写
->
-> 恢复认证时需设置环境变量 `JWT_SECRET_KEY` 并取消 api_server.py 中 auth 相关注释。
-
-### 当前状态：所有端点公开
-
-```
-所有 /api/* 端点均无需认证，直接请求即可。
-前端 axios 不需要附加 Authorization header。
-```
-
-~~### 以下为原认证流程（暂时禁用，保留供恢复时参考）~~
-
-```javascript
-// 前端注释掉以下代码：
-//
-// // src/api/index.js — axios 拦截器
-// api.interceptors.request.use(config => {
-//   const token = localStorage.getItem('token')
-//   if (token) config.headers.Authorization = `Bearer ${token}`
-//   return config
-// })
-//
-// api.interceptors.response.use(
-//   response => response,
-//   error => {
-//     if (error.response?.status === 401) {
-//       localStorage.removeItem('token')
-//       router.push('/login')
-//     }
-//     return Promise.reject(error)
-//   }
-// )
-//
-// // router/index.js — 路由守卫
-// router.beforeEach((to, from, next) => {
-//   if (to.path !== '/login' && !localStorage.getItem('token')) {
-//     next('/login')
-//   } else { next() }
-// })
-
-export default api
-```
-
-### 角色与权限
-
-| 角色 | 可访问 | 说明 |
-|------|--------|------|
-| `admin` | 所有接口 | 管理员 |
-| `member` | `GET /api/*` 只读接口 | 未来会员（v2 扩展） |
-
----
-
 ## 跨域（CORS）
 
 服务已配置 CORS 中间件：
@@ -114,31 +52,31 @@ export default api
 
 ## 概览
 
-| 方法 | 路径 | 认证 | 说明 | 前端页面 |
-|------|------|------|------|---------|
-| GET | `/health` | 🔓 公开 | 健康检查 | App.vue（启动时检测） |
-| GET | `/api/indicators` | 🔓 公开 | 某标的某周期最近 N 根 K 线 + 全部指标 | Chart.vue |
-| GET | `/api/indicators/latest` | 🔓 公开 | 最新一根的所有指标值 | Dashboard.vue |
-| GET | `/api/scores/latest` | 🔓 公开 | 单个标的评分结果（支持指定日期） | Dashboard.vue |
-| GET | `/api/scores/overview` | 🔓 公开 | 全标的评分速览（按信号分组） | **机会速览页** |
-| GET | `/api/watchlist` | 🔓 公开 | 标的池列表（支持筛选） | 标的选择器 |
-| GET | `/api/watchlist/{code}` | 🔓 公开 | 单只标的详情 | 标的详情页 |
-| POST | `/api/watchlist` | 🔓 公开 | 新增标的（自动填充富途信息） | 管理页 |
-| PATCH | `/api/watchlist/{code}` | 🔓 公开 | 修改标的可编辑字段 | 管理页 |
-| DELETE | `/api/watchlist/{code}` | 🔓 公开 | 删除标的 | 管理页 |
-| POST | `/api/watchlist/batch` | 🔓 公开 | 批量新增 | 管理页 |
-| POST | `/api/watchlist/refresh-snapshot` | 🔓 公开 | 刷新静态快照字段 | 管理页 |
-| GET | `/api/stock-filter/search` | 🔓 公开 | 条件选股（需 OpenD） | 选股页 |
-| GET | `/api/stock-filter/info` | 🔓 公开 | 单股信息查询 | 选股页 |
-| ~~GET~~ | ~~`/api/fundamental/latest`~~ | - | ~~单标的基本面数据+评分~~ | **已停用**（Yahoo Finance 中国不可用） |
-| ~~GET~~ | ~~`/api/fundamental/overview`~~ | - | ~~全标的基本面速览~~ | **已停用** |
-| GET | `/api/market-temperature` | 🔓 公开 | 市场温度评分（3 维度综合），附 GLD/BTC 单资产温度 | **MarketTemperature.vue** |
-| GET | `/api/market-temperature/history` | 🔓 公开 | 近 N 天市场温度历史 | **MarketTemperature.vue（趋势图）** |
-| GET | `/api/asset-temperature/history` | 🔓 公开 | 单资产（GLD/BTC）历史温度评分序列（实时计算） | **MarketTemperature.vue（黄金/比特币趋势图）** |
-| GET | `/api/tp-sl` | 🔓 公开 | 止盈止损自动计算（ATR+支撑/阻力） | 前端待接入 |
-| GET | `/api/backtest/run` | 🔓 公开 | 信号回测（单股策略验证） | **Backtest.vue** |
-| GET | `/api/grid/status` | 🔓 公开 | 网格交易运行状态 | **GridTrading.vue** |
-| GET | `/api/grid/orders` | 🔓 公开 | 网格交易记录 | **GridTrading.vue** |
+| 方法 | 路径 | 说明 | 前端页面 |
+|------|------|------|---------|
+| GET | `/health` | 健康检查 | App.vue（启动时检测） |
+| GET | `/api/indicators` | 某标的某周期最近 N 根 K 线 + 全部指标 | Chart.vue |
+| GET | `/api/indicators/latest` | 最新一根的所有指标值 | Dashboard.vue |
+| GET | `/api/scores/latest` | 单个标的评分结果（支持指定日期） | Dashboard.vue |
+| GET | `/api/scores/overview` | 全标的评分速览（按信号分组） | **机会速览页** |
+| GET | `/api/watchlist` | 标的池列表（支持筛选） | 标的选择器 |
+| GET | `/api/watchlist/{code}` | 单只标的详情 | 标的详情页 |
+| POST | `/api/watchlist` | 新增标的（自动填充富途信息） | 管理页 |
+| PATCH | `/api/watchlist/{code}` | 修改标的可编辑字段 | 管理页 |
+| DELETE | `/api/watchlist/{code}` | 删除标的 | 管理页 |
+| POST | `/api/watchlist/batch` | 批量新增 | 管理页 |
+| POST | `/api/watchlist/refresh-snapshot` | 刷新静态快照字段 | 管理页 |
+| GET | `/api/stock-filter/search` | 条件选股（需 OpenD） | 选股页 |
+| GET | `/api/stock-filter/info` | 单股信息查询 | 选股页 |
+| ~~GET~~ | ~~`/api/fundamental/latest`~~ | ~~单标的基本面数据+评分~~ **已停用**（Yahoo Finance 中国不可用） | - |
+| ~~GET~~ | ~~`/api/fundamental/overview`~~ | ~~全标的基本面速览~~ **已停用** | - |
+| GET | `/api/market-temperature` | 市场温度评分（3 维度综合），附 GLD/BTC 单资产温度 | **MarketTemperature.vue** |
+| GET | `/api/market-temperature/history` | 近 N 天市场温度历史 | **MarketTemperature.vue（趋势图）** |
+| GET | `/api/asset-temperature/history` | 单资产（GLD/BTC）历史温度评分序列（实时计算） | **MarketTemperature.vue（黄金/比特币趋势图）** |
+| GET | `/api/tp-sl` | 止盈止损自动计算（ATR+支撑/阻力） | 前端待接入 |
+| GET | `/api/backtest/run` | 信号回测（单股策略验证） | **Backtest.vue** |
+| GET | `/api/grid/status` | 网格交易运行状态 | **GridTrading.vue** |
+| GET | `/api/grid/orders` | 网格交易记录 | **GridTrading.vue** |
 
 ---
 
@@ -172,116 +110,6 @@ if (res.data.data === null || res.data.message) {
 ---
 
 ## 接口详情
-
-### POST `/api/auth/login`
-
-用户登录，验证用户名密码，返回 JWT access_token。
-
-**请求参数**
-
-| 参数 | 位置 | 类型 | 说明 |
-|------|------|------|------|
-| `username` | body (JSON) | `string` | 用户名 |
-| `password` | body (JSON) | `string` | 密码 |
-
-**请求示例**
-
-```bash
-curl -X POST http://localhost:8000/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username": "admin", "password": "your_password"}'
-```
-
-**响应 200（成功）**
-
-```json
-{
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "token_type": "bearer",
-  "expires_in": 604800,
-  "role": "admin"
-}
-```
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `access_token` | string | JWT Token，后续请求放入 `Authorization: Bearer <token>` |
-| `token_type` | string | 固定 `"bearer"` |
-| `expires_in` | int | Token 有效秒数（默认 7 天 = 604800 秒） |
-| `role` | string | 用户角色：`admin` / `member` |
-
-**响应 200（失败）**
-
-```json
-{"data": null, "message": "Invalid username or password"}
-```
-
-> **前端注意**：登录失败不返回 401，而是 200 + `data: null`。前端通过判断 `access_token` 是否存在来区分成功/失败。
-
-**前端对接代码**
-
-```javascript
-async function login(username, password) {
-  const res = await api.post('/api/auth/login', { username, password })
-  if (res.data.access_token) {
-    localStorage.setItem('token', res.data.access_token)
-    localStorage.setItem('role', res.data.role)
-    return { success: true, role: res.data.role }
-  }
-  return { success: false, message: res.data.message }
-}
-```
-
----
-
-### GET `/api/auth/me`
-
-获取当前登录用户信息。用于前端验证 token 是否有效、展示用户名。
-
-**请求头**：`Authorization: Bearer <token>`
-
-**响应 200**
-
-```json
-{
-  "id": 1,
-  "username": "admin",
-  "role": "admin",
-  "created_at": "2026-05-06T00:00:00",
-  "last_login": "2026-05-06T10:30:00"
-}
-```
-
-**响应 401**：token 无效或过期
-
----
-
-### POST `/api/auth/change-password`
-
-修改当前用户密码。
-
-**请求头**：`Authorization: Bearer <token>`
-
-**请求参数**
-
-| 参数 | 位置 | 类型 | 说明 |
-|------|------|------|------|
-| `old_password` | body (JSON) | `string` | 当前密码 |
-| `new_password` | body (JSON) | `string` | 新密码 |
-
-**响应 200（成功）**
-
-```json
-{"message": "Password updated"}
-```
-
-**响应 200（旧密码错误）**
-
-```json
-{"data": null, "message": "Old password is incorrect"}
-```
-
----
 
 ### GET `/health`
 
@@ -1303,11 +1131,8 @@ export const getAssetTemperatureHistory = (asset, days = 60) =>
 | HTTP 状态码 | 含义 |
 |------------|------|
 | `200` | 成功（含"无数据"情况，通过 `data: null` + `message` 区分） |
-| `401` | 未认证（未携带 token / token 无效 / token 过期） |
-| `403` | 权限不足（token 有效但角色不允许访问该接口） |
 | `422` | 请求参数校验失败（如 ktype 传了非法值，FastAPI 标准格式） |
 
-> **v2.4 变更**：新增 401/403 认证相关状态码。前端需在 axios 拦截器中处理 401 跳转登录页。
 > **v2.3 变更**：所有"无数据"场景从 HTTP 404 改为 HTTP 200 + `{data: null, message: "..."}`。
 > 前端不再需要 catch 404 错误，统一在 then 分支处理。
 
@@ -1442,58 +1267,6 @@ export function getMarketTemperatureHistory(days = 30) {
 1. 调接口拿 JSON
 2. 根据 `composite_score` 查映射表得到颜色/文案
 3. 渲染 UI
-
----
-
-## 认证前端对接指南
-
-### 新增页面：Login.vue
-
-**路由**：`/login`
-
-**页面功能**：
-- 用户名 + 密码输入框
-- 登录按钮 → 调用 `POST /api/auth/login`
-- 登录成功：存储 token + role → 跳转 `/`
-- 登录失败：展示错误提示
-
-### 路由守卫
-
-```javascript
-// src/router/index.js
-router.beforeEach((to, from, next) => {
-  const token = localStorage.getItem('token')
-  if (to.path !== '/login' && !token) {
-    next('/login')
-  } else {
-    next()
-  }
-})
-```
-
-### Token 管理
-
-| 操作 | localStorage key | 说明 |
-|------|-----------------|------|
-| 登录成功 | `token` = access_token | JWT 令牌 |
-| 登录成功 | `role` = role | 用于前端 UI 权限控制 |
-| 401 响应 | 清除 `token` + `role` | 跳转 `/login` |
-| 手动登出 | 清除 `token` + `role` | 跳转 `/login` |
-
-### 页面刷新时验证
-
-```javascript
-// App.vue mounted
-async function checkAuth() {
-  try {
-    const res = await api.get('/api/auth/me')
-    // token 有效，更新用户状态
-    store.user = res.data
-  } catch (e) {
-    // token 无效/过期，拦截器自动跳转登录
-  }
-}
-```
 
 ### 完整映射代码参考（JS — v2.3）
 
