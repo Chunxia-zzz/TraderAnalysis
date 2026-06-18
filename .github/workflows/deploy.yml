@@ -1,0 +1,33 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Upload backend source to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "src/trader_analysis/"
+          target: "/opt/trader-analysis/src/"
+          strip_components: 1
+
+      - name: Restart API service
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            systemctl restart trader-api
+            sleep 2
+            systemctl is-active trader-api && echo "✅ trader-api restarted OK" || echo "❌ trader-api failed"
