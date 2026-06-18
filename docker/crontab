@@ -1,7 +1,0 @@
-# TraderAnalysis scheduled tasks
-# Runs in Beijing time (container should set TZ=Asia/Shanghai)
-#
-# 每日收盘后执行增量更新 + 市场温度计算（北京时间 04:15，即美东 16:15）
-15 4 * * 1-6 root cd /app && python -m trader_analysis update >> /app/logs/cron.log 2>&1 && python -m trader_analysis temperature >> /app/logs/cron.log 2>&1
-
-# 空行结尾（cron 要求）

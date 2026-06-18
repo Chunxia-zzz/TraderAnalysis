@@ -421,10 +421,6 @@
 
 ### 新增
 - **`/health` 端点**：健康检查，供前端启动时检测后端是否在线
-- **Docker Compose 方案**：API + 定时任务一体化容器部署
-  - `docker/entrypoint.sh`：多模式入口（serve/all/init/update/temperature/run）
-  - `docker/crontab`：北京时间 04:15 自动增量更新 + 市场温度计算
-  - `docker-compose.yml`：trader-api（常驻）+ trader-init（一次性初始化）
 - **市场温度评分系统**（`market_scorer.py`）：6 维度加权评估市场情绪冷热
   - 日线技术面（30%）：SPY/QQQ 的 RSI + MACD 百分位 + 布林 %B
   - 周线技术面（15%）：SPY/QQQ 的周线 RSI + MACD 百分位
@@ -471,7 +467,6 @@
 ### 变更
 - `__init__.py` 版本号修正为 `0.2.0`（与 pyproject.toml 一致）
 - `pyproject.toml` 描述更新为 Futu 量化评分系统
-- `Dockerfile` 更新环境变量和 healthcheck
 - `.env.example` 更新为当前可用的环境变量
 
 ### 文档
@@ -520,4 +515,3 @@
 - 共享层：OHLCV Schema、多数据源（CSV/JSON/Parquet/Live Futu）、IndicatorSpec 流水线
 - 信号模块、策略框架、回测引擎
 - CLI 入口（typer）
-- Docker 支持
