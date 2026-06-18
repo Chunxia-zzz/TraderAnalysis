@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from trader_analysis.futu_strategy import config, storage, watchlist_storage
+from trader_analysis.futu_strategy.market_scorer import compute_asset_temperature
 from trader_analysis.futu_strategy.stock_info_fetcher import fetch_stock_info
 
 app = FastAPI(title="Strategy Indicators API")
@@ -349,10 +350,12 @@ def get_scores_overview(
 
 @app.get("/api/market-temperature")
 def get_market_temperature():
-    """返回最新一期市场温度评分。"""
+    """返回最新一期市场温度评分，附加黄金/BTC 单资产温度（实时计算）。"""
     result = storage.query_latest_market_score()
     if not result:
         return {"data": None, "message": "暂无市场温度数据，请先运行 trader-analysis temperature 命令"}
+    result["gld_temp"] = compute_asset_temperature("GLD")
+    result["btc_temp"] = compute_asset_temperature("BTC")
     return result
 
 
@@ -363,6 +366,17 @@ def get_market_temperature_history(
     """返回近 N 天的市场温度评分历史。"""
     history = storage.query_market_score_history(days)
     return {"history": history}
+
+
+@app.get("/api/asset-temperature/history")
+def get_asset_temperature_history(
+    asset: str = Query(..., description="资产 key：GLD 或 BTC"),
+    days: int = Query(default=60, ge=1, le=365),
+):
+    """返回单资产（黄金/比特币）历史温度评分序列（实时计算，较慢）。"""
+    from trader_analysis.futu_strategy.market_scorer import compute_asset_temperature_history
+    history = compute_asset_temperature_history(asset, days)
+    return {"asset": asset, "history": history}
 
 
 # ── 回测接口 ──────────────────────────────────────────────────────────────────

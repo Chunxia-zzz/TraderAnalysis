@@ -2,8 +2,8 @@
   "meta": {
     "name": "Investment Watchlist",
     "created": "2026-04-13",
-    "last_updated": "2026-04-22",
-    "version": "2.1",
+    "last_updated": "2026-06-18",
+    "version": "2.3",
     "currency": "USD"
   },
   "categories": {
@@ -16,7 +16,8 @@
     "space": "太空",
     "cloud": "云",
     "china_adr": "中概",
-    "defensive_consumer": "防守消费股"
+    "defensive_consumer": "防守消费股",
+    "emerging_market": "新兴市场"
   },
   "watchlist": [
     {"ticker":"QQQ","name":"Invesco QQQ Trust","market":"US","category":"market_gold_btc","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["纳斯达克100","大盘指数"],"notes":""},
@@ -32,6 +33,7 @@
     {"ticker":"COHR","name":"Coherent Corp.","market":"US","category":"optical","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["光通信","激光"],"notes":""},
     {"ticker":"MRVL","name":"Marvell Technology Inc.","market":"US","category":"optical","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["网络芯片","数据中心"],"notes":""},
 
+    {"ticker":"MAGS","name":"Roundhill Magnificent Seven ETF","market":"US","category":"mag7","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["MAG7 ETF","等权重"],"notes":""},
     {"ticker":"NVDA","name":"NVIDIA Corporation","market":"US","category":"mag7","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["AI芯片","GPU"],"notes":""},
     {"ticker":"GOOGL","name":"Alphabet Inc.","market":"US","category":"mag7","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["搜索","云计算","AI"],"notes":""},
     {"ticker":"AAPL","name":"Apple Inc.","market":"US","category":"mag7","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["消费电子","生态系统"],"notes":""},
@@ -50,6 +52,11 @@
     {"ticker":"INTC","name":"Intel Corporation","market":"US","category":"semiconductor","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["CPU","代工"],"notes":""},
     {"ticker":"TSM","name":"Taiwan Semiconductor Manufacturing Co.","market":"US","category":"semiconductor","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["代工龙头","先进制程"],"notes":""},
     {"ticker":"AVGO","name":"Broadcom Inc.","market":"US","category":"semiconductor","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["网络芯片","AI定制芯片"],"notes":""},
+    {"ticker":"EUV","name":"EUV ETF","market":"US","category":"semiconductor","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["光刻","半导体设备"],"notes":""},
+    {"ticker":"FOTO","name":"FOTO ETF","market":"US","category":"semiconductor","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["半导体","光学"],"notes":""},
+    {"ticker":"ASML","name":"ASML Holding N.V.","market":"US","category":"semiconductor","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["EUV光刻机","半导体设备"],"notes":""},
+    {"ticker":"SOXX","name":"iShares Semiconductor ETF","market":"US","category":"semiconductor","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["半导体ETF","行业指数"],"notes":""},
+    {"ticker":"SOXL","name":"Direxion Daily Semiconductor Bull 3X Shares","market":"US","category":"semiconductor","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["半导体3倍杠杆","做多ETF"],"notes":""},
 
     {"ticker":"RKLB","name":"Rocket Lab USA Inc.","market":"US","category":"space","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["火箭发射","小型卫星"],"notes":""},
     {"ticker":"ASTS","name":"AST SpaceMobile Inc.","market":"US","category":"space","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["卫星通信","手机直连"],"notes":""},
@@ -66,6 +73,10 @@
     {"ticker":"KO","name":"The Coca-Cola Company","market":"US","category":"defensive_consumer","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["饮料","股息"],"notes":""},
     {"ticker":"PEP","name":"PepsiCo Inc.","market":"US","category":"defensive_consumer","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["饮料","零食","股息"],"notes":""},
     {"ticker":"YUMC","name":"Yum China Holdings Inc.","market":"US","category":"defensive_consumer","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["餐饮","肯德基","必胜客"],"notes":""},
-    {"ticker":"MCD","name":"McDonald's Corporation","market":"US","category":"defensive_consumer","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["快餐","股息","全球连锁"],"notes":""}
+    {"ticker":"MCD","name":"McDonald's Corporation","market":"US","category":"defensive_consumer","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["快餐","股息","全球连锁"],"notes":""},
+
+    {"ticker":"EWY","name":"iShares MSCI South Korea ETF","market":"US","category":"emerging_market","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["韩国","新兴市场ETF"],"notes":""},
+    {"ticker":"EWJ","name":"iShares MSCI Japan ETF","market":"US","category":"emerging_market","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["日本","发达市场ETF"],"notes":""},
+    {"ticker":"EWT","name":"iShares MSCI Taiwan ETF","market":"US","category":"emerging_market","thesis":"","target_price":null,"stop_loss":null,"status":"watching","tags":["台湾","新兴市场ETF"],"notes":""}
   ]
 }

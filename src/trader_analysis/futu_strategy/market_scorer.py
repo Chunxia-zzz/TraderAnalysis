@@ -394,6 +394,247 @@ def calculate_market_temperature() -> dict:
     return result
 
 
+# ── 单资产温度评分（黄金 / BTC）────────────────────────────────────────────────
+
+_ASSET_CONFIGS: dict[str, dict] = {
+    "GLD": {
+        "label":              "黄金",
+        "code_daily":         "US.GLD",
+        "code_weekly":        "US.GLD",
+        "ath_drawdown_zero":  0.25,   # 回撤 25% → 0 分（黄金正常回调幅度较大）
+        "ma200_range":        0.20,   # MA200 偏离映射区间 ±20%
+    },
+    "BTC": {
+        "label":              "比特币 (IBIT)",
+        "code_daily":         "US.IBIT",
+        "code_weekly":        "US.IBIT",
+        "ath_drawdown_zero":  0.50,   # 回撤 50% → 0 分（BTC 腰斩为常态）
+        "ma200_range":        0.60,   # MA200 偏离映射区间 ±60%
+        "note":               "IBIT 上市于2024年初，历史样本有限，百分位置信度较低",
+    },
+}
+
+
+def _score_asset_daily(df: pd.DataFrame, cfg: dict) -> dict:
+    """单资产日线技术面：RSI + MACD 百分位 + 布林 %B，三项平均。"""
+    last = df.iloc[-1]
+    scores, breakdown = [], {}
+
+    rsi = float(last.get("rsi6", 50))
+    rsi_score = _clamp(int(rsi / 10) * 10.0)
+    scores.append(rsi_score)
+    breakdown["daily_rsi"] = round(rsi, 1)
+    breakdown["daily_rsi_score"] = round(rsi_score, 1)
+
+    macd_current = float(last.get("macd", 0))
+    macd_pct = _percentile_rank(df["macd"].dropna(), macd_current, 252)
+    macd_score = macd_pct * 100
+    scores.append(macd_score)
+    breakdown["daily_macd_score"] = round(macd_score, 1)
+
+    pct_b = _calc_pct_b(
+        float(last.get("close", 0)),
+        float(last.get("boll_upper", 0)),
+        float(last.get("boll_lower", 0)),
+    )
+    bb_score = _clamp(pct_b * 100)
+    scores.append(bb_score)
+    breakdown["daily_bb_pctB"] = round(pct_b, 3)
+    breakdown["daily_bb_score"] = round(bb_score, 1)
+
+    return {"score": sum(scores) / len(scores), "breakdown": breakdown}
+
+
+def _score_asset_weekly(df: pd.DataFrame, cfg: dict) -> dict:
+    """单资产周线技术面：RSI + MACD 百分位 + 布林 %B，三项平均。"""
+    last = df.iloc[-1]
+    scores, breakdown = [], {}
+
+    rsi = float(last.get("rsi6", 50))
+    rsi_score = _clamp(int(rsi / 10) * 10.0)
+    scores.append(rsi_score)
+    breakdown["weekly_rsi"] = round(rsi, 1)
+    breakdown["weekly_rsi_score"] = round(rsi_score, 1)
+
+    macd_current = float(last.get("macd", 0))
+    macd_pct = _percentile_rank(df["macd"].dropna(), macd_current, 52)
+    macd_score = macd_pct * 100
+    scores.append(macd_score)
+    breakdown["weekly_macd_score"] = round(macd_score, 1)
+
+    pct_b = _calc_pct_b(
+        float(last.get("close", 0)),
+        float(last.get("boll_upper", 0)),
+        float(last.get("boll_lower", 0)),
+    )
+    bb_score = _clamp(pct_b * 100)
+    scores.append(bb_score)
+    breakdown["weekly_bb_pctB"] = round(pct_b, 3)
+    breakdown["weekly_bb_score"] = round(bb_score, 1)
+
+    return {"score": sum(scores) / len(scores), "breakdown": breakdown}
+
+
+def _score_asset_price_position(df: pd.DataFrame, cfg: dict) -> dict:
+    """单资产价格位置：52w 高低位 + ATH 回撤 + MA200 偏离，三项平均。"""
+    scores, breakdown = [], {}
+    current_price = float(df.iloc[-1]["close"])
+
+    # 52 周位置
+    recent_252 = df.tail(252)
+    high_52w = float(recent_252["high"].max())
+    low_52w  = float(recent_252["low"].min())
+    pos_52w  = (current_price - low_52w) / (high_52w - low_52w) if high_52w > low_52w else 0.5
+    score_52w = _clamp(pos_52w * 100)
+    scores.append(score_52w)
+    breakdown["pos_52w"]   = round(pos_52w, 3)
+    breakdown["score_52w"] = round(score_52w, 1)
+
+    # ATH 回撤（阈值按资产类型调整）
+    ath = float(df["high"].max())
+    drawdown  = (ath - current_price) / ath if ath > 0 else 0
+    ath_zero  = cfg["ath_drawdown_zero"]
+    ath_score = _clamp((1 - drawdown / ath_zero) * 100)
+    scores.append(ath_score)
+    breakdown["ath_drawdown"] = round(drawdown, 4)
+    breakdown["ath_score"]    = round(ath_score, 1)
+
+    # MA200 偏离（映射区间按资产类型调整）
+    closes   = df["close"].dropna()
+    ma_range = cfg["ma200_range"]
+    if len(closes) >= 200:
+        ma200     = float(closes.tail(200).mean())
+        deviation = (current_price - ma200) / ma200
+    else:
+        ma200     = float(closes.mean())
+        deviation = 0.0
+    ma200_score = _clamp((deviation + ma_range) / (2 * ma_range) * 100)
+    scores.append(ma200_score)
+    breakdown["ma200_dev"]   = round(deviation, 4)
+    breakdown["ma200_score"] = round(ma200_score, 1)
+
+    return {"score": sum(scores) / len(scores), "breakdown": breakdown}
+
+
+def compute_asset_temperature(asset_key: str) -> dict | None:
+    """
+    计算单资产（GLD / BTC）的温度评分。
+
+    与大盘温度共用三维度框架，但阈值按资产波动特性独立校准。
+    完全从 storage 读取，无需 Futu OpenD。
+
+    Returns:
+        结果字典，数据不足时返回 None。
+    """
+    cfg = _ASSET_CONFIGS.get(asset_key)
+    if not cfg:
+        logger.warning(f"未知资产 key: {asset_key}")
+        return None
+
+    daily_df  = storage.query_recent(cfg["code_daily"],  "1d", limit=300)
+    weekly_df = storage.query_recent(cfg["code_weekly"], "1w", limit=60)
+
+    if daily_df.empty:
+        logger.warning(f"{asset_key} 日线数据为空")
+        return None
+
+    weights = {"daily_tech": 0.50, "weekly_tech": 0.35, "price_pos": 0.15}
+
+    daily_tech = _safe_score(_score_asset_daily,  daily_df,  cfg, dimension_name=f"{asset_key} 日线技术面")
+    if not weekly_df.empty:
+        weekly_tech = _safe_score(_score_asset_weekly, weekly_df, cfg, dimension_name=f"{asset_key} 周线技术面")
+    else:
+        weekly_tech = {"score": NEUTRAL_SCORE, "breakdown": {"error": "周线数据不足"}}
+    price_pos = _safe_score(_score_asset_price_position, daily_df, cfg, dimension_name=f"{asset_key} 价格位置")
+
+    composite = (
+        daily_tech["score"]  * weights["daily_tech"]
+        + weekly_tech["score"] * weights["weekly_tech"]
+        + price_pos["score"]   * weights["price_pos"]
+    )
+
+    market_status, action_suggestion = _map_status(composite)
+    last = daily_df.iloc[-1]
+    weekly_rsi = float(weekly_df.iloc[-1].get("rsi6", 50)) if not weekly_df.empty else None
+
+    return {
+        "label":              cfg["label"],
+        "code":               cfg["code_daily"],
+        "composite_score":    round(composite, 1),
+        "market_status":      market_status,
+        "action_suggestion":  action_suggestion,
+        "price":              round(float(last["close"]), 2),
+        "daily_rsi":          round(float(last.get("rsi6", 0)), 1),
+        "weekly_rsi":         round(weekly_rsi, 1) if weekly_rsi is not None else None,
+        "ma200_dev":          price_pos["breakdown"].get("ma200_dev"),
+        "ath_drawdown":       price_pos["breakdown"].get("ath_drawdown"),
+        "pos_52w":            price_pos["breakdown"].get("pos_52w"),
+        "daily_tech_score":   round(daily_tech["score"], 1),
+        "weekly_tech_score":  round(weekly_tech["score"], 1),
+        "price_score":        round(price_pos["score"], 1),
+        "note":               cfg.get("note"),
+    }
+
+
+def compute_asset_temperature_history(asset_key: str, days: int = 60) -> list[dict]:
+    """
+    计算单资产（GLD / BTC）历史温度评分序列。
+
+    对最近 days 个交易日做滑窗切片，每天独立计算一次温度评分，
+    与 backfill_market_temperature 逻辑一致，完全从 storage 读取。
+
+    Returns:
+        按日期升序的 [{"date": ..., "composite_score": ...}, ...] 列表
+    """
+    cfg = _ASSET_CONFIGS.get(asset_key)
+    if not cfg:
+        return []
+
+    read_limit = days + 300
+    daily_all  = storage.query_recent(cfg["code_daily"],  "1d", limit=read_limit)
+    weekly_all = storage.query_recent(cfg["code_weekly"], "1w", limit=days + 100)
+
+    if daily_all.empty:
+        return []
+
+    weights = {"daily_tech": 0.50, "weekly_tech": 0.35, "price_pos": 0.15}
+    total_rows = len(daily_all)
+    min_rows = 60
+    backfill_count = min(days, total_rows - min_rows)
+    if backfill_count <= 0:
+        return []
+
+    history = []
+    for i in range(backfill_count, 0, -1):
+        end_idx = total_rows - i + 1
+        daily_df = daily_all.iloc[:end_idx].copy()
+        current_date = str(daily_df.iloc[-1].get("date", ""))
+
+        if not weekly_all.empty:
+            weekly_df = weekly_all[weekly_all["date"] <= current_date].copy()
+        else:
+            weekly_df = pd.DataFrame()
+
+        try:
+            dt = _safe_score(_score_asset_daily, daily_df, cfg, dimension_name="")
+            if not weekly_df.empty:
+                wt = _safe_score(_score_asset_weekly, weekly_df, cfg, dimension_name="")
+            else:
+                wt = {"score": NEUTRAL_SCORE, "breakdown": {}}
+            pp = _safe_score(_score_asset_price_position, daily_df, cfg, dimension_name="")
+
+            composite = (
+                dt["score"] * weights["daily_tech"]
+                + wt["score"] * weights["weekly_tech"]
+                + pp["score"] * weights["price_pos"]
+            )
+            history.append({"date": current_date, "composite_score": round(composite, 1)})
+        except Exception as exc:
+            logger.debug(f"compute_asset_temperature_history {asset_key} {current_date}: {exc}")
+
+    return history
+
+
 def backfill_market_temperature(days: int = 60) -> int:
     """
     回溯计算历史市场温度评分。

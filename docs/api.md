@@ -1,6 +1,6 @@
 # TraderAnalysis API 文档
 
-> 最后更新：2026-05-06
+> 最后更新：2026-06-18
 > 协议：HTTP/1.1，响应格式：`application/json`，编码：UTF-8
 
 ## 策略数据服务（futu_strategy/api_server.py）
@@ -132,8 +132,9 @@ export default api
 | GET | `/api/stock-filter/info` | 🔓 公开 | 单股信息查询 | 选股页 |
 | ~~GET~~ | ~~`/api/fundamental/latest`~~ | - | ~~单标的基本面数据+评分~~ | **已停用**（Yahoo Finance 中国不可用） |
 | ~~GET~~ | ~~`/api/fundamental/overview`~~ | - | ~~全标的基本面速览~~ | **已停用** |
-| GET | `/api/market-temperature` | 🔓 公开 | 市场温度评分（3 维度综合） | **MarketTemperature.vue** |
+| GET | `/api/market-temperature` | 🔓 公开 | 市场温度评分（3 维度综合），附 GLD/BTC 单资产温度 | **MarketTemperature.vue** |
 | GET | `/api/market-temperature/history` | 🔓 公开 | 近 N 天市场温度历史 | **MarketTemperature.vue（趋势图）** |
+| GET | `/api/asset-temperature/history` | 🔓 公开 | 单资产（GLD/BTC）历史温度评分序列（实时计算） | **MarketTemperature.vue（黄金/比特币趋势图）** |
 | GET | `/api/tp-sl` | 🔓 公开 | 止盈止损自动计算（ATR+支撑/阻力） | 前端待接入 |
 | GET | `/api/backtest/run` | 🔓 公开 | 信号回测（单股策略验证） | **Backtest.vue** |
 | GET | `/api/grid/status` | 🔓 公开 | 网格交易运行状态 | **GridTrading.vue** |
@@ -859,7 +860,87 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
 | `safe_haven_score` | null | 已废弃（v2.3 移除避险维度） |
 | `detail` | object | 各子指标评分明细（供调试和前端展示） |
 
+**v3.5 新增字段：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `gld_temp` | object\|null | 黄金（GLD）单资产温度评分，实时计算；数据不足时为 `null` |
+| `btc_temp` | object\|null | 比特币（IBIT）单资产温度评分，实时计算；数据不足时为 `null` |
+
+`gld_temp` / `btc_temp` 结构：
+
+```json
+{
+  "label": "黄金",
+  "code": "US.GLD",
+  "composite_score": 24.3,
+  "market_status": "偏悲观",
+  "action_suggestion": "积极加仓",
+  "price": 312.45,
+  "daily_rsi": 38.2,
+  "weekly_rsi": 42.1,
+  "ma200_dev": 0.0612,
+  "ath_drawdown": 0.0381,
+  "pos_52w": 0.712,
+  "daily_tech_score": 22.1,
+  "weekly_tech_score": 28.5,
+  "price_score": 18.6,
+  "note": null
+}
+```
+
+| 字段 | 说明 |
+|------|------|
+| `composite_score` | 综合温度 0~100 |
+| `daily_tech_score` | 日线技术面维度（50%） |
+| `weekly_tech_score` | 周线技术面维度（35%） |
+| `price_score` | 价格位置维度（15%） |
+| `ma200_dev` | MA200 偏离度（正=价格高于MA200） |
+| `ath_drawdown` | 距历史最高价回撤（0=在ATH） |
+| `pos_52w` | 52周位置（0=52w低，1=52w高） |
+| `note` | 资产特殊说明（BTC 会提示"IBIT 历史样本有限"） |
+
+> **阈值差异**：黄金 ATH 回撤零分线 25%（正常回调幅度大），MA200 偏离映射区间 ±20%；BTC 零分线 50%，映射区间 ±60%。
+
 **无数据时（HTTP 200）**：`{"data": null, "message": "暂无市场温度数据，请先运行 trader-analysis temperature 命令"}`
+
+---
+
+### GET `/api/asset-temperature/history`
+
+返回单资产（黄金 / 比特币）历史温度评分序列，用于趋势图。
+
+> **注意**：接口实时滑窗计算，每次请求需遍历 N 个交易日逐一评分，响应时间约 1~2 秒。
+
+**请求参数**
+
+| 参数 | 位置 | 类型 | 默认值 | 约束 | 说明 |
+|------|------|------|--------|------|------|
+| `asset` | query | `string` | **必填** | `GLD` \| `BTC` | 资产 key |
+| `days` | query | `integer` | `60` | 1 ≤ days ≤ 365 | 返回最近 N 个交易日 |
+
+**响应 200**
+
+```json
+{
+  "asset": "GLD",
+  "history": [
+    {"date": "2026-04-10", "composite_score": 31.2},
+    {"date": "2026-04-11", "composite_score": 28.4},
+    {"date": "2026-04-14", "composite_score": 22.7}
+  ]
+}
+```
+
+**数据不足时**：返回空数组 `{"asset": "GLD", "history": []}`
+
+**前端调用示例**
+
+```javascript
+// trader.js
+export const getAssetTemperatureHistory = (asset, days = 60) =>
+  client.get('/api/asset-temperature/history', { params: { asset, days } })
+```
 
 #### 前端渲染映射规则
 

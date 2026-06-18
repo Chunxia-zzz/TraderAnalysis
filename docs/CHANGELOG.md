@@ -4,6 +4,31 @@
 
 ---
 
+## [v3.5.0] — 2026-06-18
+
+### 新增
+
+- **黄金 / 比特币温度评分**（`market_scorer.py`）：新增 `compute_asset_temperature(asset_key)` 函数，对 GLD（黄金）和 BTC（IBIT 代理）独立计算三维度温度评分（日线技术面 50% + 周线技术面 35% + 价格位置 15%），阈值按资产波动特性独立校准（GLD 回撤零分线 25%/MA200 ±20%；BTC 50%/±60%）
+- **资产历史温度评分**（`market_scorer.py`）：新增 `compute_asset_temperature_history(asset_key, days)` 函数，对最近 N 个交易日逐日滑窗计算，返回评分序列
+- **新 API 端点**（`api_server.py`）：`GET /api/asset-temperature/history?asset=GLD&days=60`，返回单资产历史温度序列
+- **市场温度 API 扩展**（`api_server.py`）：`/api/market-temperature` 响应新增 `gld_temp` / `btc_temp` 字段，实时附加黄金和比特币温度
+- **新增标的 SOXX / SOXL**（`watchlist.json`）：iShares 半导体 ETF + Direxion 半导体三倍 ETF，分类 `semiconductor`，已拉取近一年 K 线并计算写入评分
+
+### 前端
+
+- **MarketTemperature.vue 三 Tab 视图**：顶部新增视图切换（美股大盘 / 黄金 / 比特币），黄金和比特币各有独立 Hero 卡片（综合评分 + 三维度进度条）、六指标网格（价格/日RSI/周RSI/MA200偏离/ATH回撤/52周位置）以及 60 天历史趋势折线图；Tab 颜色：黄金 `#946800`，比特币 `#f7931a`
+- **市场大盘快捷跳转**：Hero 卡片底部新增 SPY K线 / QQQ K线 链接，与 CNN 指数链接并排
+- **主升浪龙头导航修复**（`MomentumLeaders.vue`）：点击标的由跳转评分页改为跳转 K 线图页（与机会速览行为一致）
+- **图表切换 ECharts 复用修复**（`MarketTemperature.vue`）：视图切换时先 dispose 旧实例再重建，解决切回大盘视图历史趋势消失的问题
+
+### 图表增强（`IndicatorChart.vue`）
+
+- **指标数值悬浮层**：仿富途风格，每个子图（价格/成交量/MACD/RSI）顶部显示当前鼠标悬停 bar 的数值；不悬停时显示最新一根数据，使用 DM Mono 等宽字体
+- **EMA 多空带实体填充**：使用 Lightweight Charts `ISeriesPrimitive` 接口直接在 canvas 绘制 EMA5~EMA30 之间的色带，多头（EMA5 > EMA30）蓝色半透明，空头（EMA5 < EMA30）红色半透明，交叉点线性插值处理
+- **RSI 字段修复**：`rsi14` 改为 `rsi6`（数据库实际存储字段名）
+
+---
+
 ## [v3.4.0] — 2026-05-28
 
 ### 新增
