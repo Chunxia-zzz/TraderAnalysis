@@ -218,39 +218,44 @@ docker compose exec trader-api python -m trader_analysis temperature
 
 ---
 
-## 日常更新线上服务（scp 方案）
+## 日常更新线上服务
 
-> 服务器访问 GitHub 不稳定，采用 scp 手动上传的方式更新代码和数据。
+> 服务器访问 GitHub 不稳定，采用 **Git bare repo** 方案：服务器同时作为 git remote，
+> 本地一次 `git push` 同时推送 GitHub（备份）和服务器（自动部署）。
 > 以下命令均在**本地 Windows Git Bash** 中执行。
 > 服务器信息：`root@47.106.175.84`
 
-### 1. 更新后端代码
+### 原理
 
-将改动的文件逐一 scp 上传，然后重启服务：
-
-```bash 以下是windows开发机示例
-# 示例：上传某个改动的文件
-scp F:\TraderAnalysis\src\trader_analysis\futu_strategy\api_server.py root@47.106.175.84:/opt/trader-analysis/src/trader_analysis/futu_strategy/api_server.py
-
-# 上传完后重启后端服务
-ssh root@47.106.175.84 "systemctl restart trader-api && systemctl status trader-api"
+```
+git push origin main
+       │
+       ├──→  GitHub（备份/历史）
+       │
+       └──→  服务器裸仓库（/opt/git/trader-analysis.git）
+                  │
+                  └──→  post-receive hook 自动执行
+                              ├── git checkout → /opt/trader-analysis/
+                              └── systemctl restart trader-api
 ```
 
-### 2. 更新前端代码
+服务器不需要访问 GitHub，本地推送到服务器，hook 触发部署，全程自动。
 
-本地构建后，将 dist 目录整个传上去：
+### 1. 更新后端 / 前端代码
 
 ```bash
-# 本地构建
-cd /f/TraderAnalysisFrontend && npm run build
+# 后端
+cd /f/TraderAnalysis
+git add . && git commit -m "your message"
+git push origin main   # 同时推 GitHub + 服务器，服务器自动重启 trader-api
 
-# 上传 dist 到服务器
-scp -r /f/TraderAnalysisFrontend/dist/* root@47.106.175.84:/var/www/trader-frontend/
+# 前端
+cd /f/TraderAnalysisFrontend
+git add . && git commit -m "your message"
+git push origin main   # 同时推 GitHub + 服务器，服务器自动 npm build 并更新静态文件
 ```
 
-> 前端是静态文件，Nginx 直接读取，上传完毕即生效，无需重启。
-
-### 3. 同步行情数据库
+### 2. 同步行情数据库
 
 本地跑完 update / temperature / score 后，同步 db 到服务器：
 
