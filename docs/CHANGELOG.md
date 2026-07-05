@@ -4,6 +4,60 @@
 
 ---
 
+## [Unreleased] — 2026-07-05
+
+### 前端
+
+- **首页全面重设计**（`Home.vue`）：参考优质前端视觉效果，用纯 CSS + IntersectionObserver 重写，零新依赖
+  - 6 个全屏全宽 Section（Hero / 核心能力 / 市场温度展示 / 评分雷达 / 工作流 / CTA），通过 `width: 100vw; left: calc(-50vw + 50%)` 突破父容器 `max-width: 1400px` 限制
+  - 双主题（暗色/亮色）独立 CSS 变量体系，切换状态持久化到 `localStorage`，不影响全局主题
+  - 滚动动画：`IntersectionObserver` 驱动的 fade+slide 入场效果、SVG 仪表盘弧线填充、雷达多边形描边、时间线渐进显示
+  - 数字滚动特效：缓动函数驱动的计数动画（`easeOutCubic`）
+
+- **Dashboard 个股技术分析集成**（`Dashboard.vue`）：新增支撑/压力位和形态趋势两张卡片
+  - **支撑 & 压力位** 卡：支撑（绿色）/ 压力（红色）分组，显示价格、标签、与当前价的百分比距离、强度点（●●○ 样式）
+  - **技术形态 & 趋势** 卡：命中形态以 Tag 展示（多头绿/空头红，悬停显示详细描述）；趋势数据含主趋势、短期趋势、RSI12、MACD偏向、%B、成交量比、ATR14 及 ATR 波动率
+  - 修复 MACD & RSI 卡中 `rsi14` → `rsi12` 字段名
+
+- **API 模块扩展**（`trader.js`）：新增 `getAnalysis(code, ktype)` 函数，调用 `/api/analysis` 端点
+
+- **个股主升趋势页增强**（`MomentumLeaders.vue`）：
+  - 新增「多头飘带」Section：EMA5 > EMA30 的全部标的，按动量评分降序
+  - 新增「牛熊转换」Section：近5日内 EMA5/EMA30 发生金叉（空转多）或死叉（多转空）的标的，分别标注 ↑/↓
+  - 工具栏统计同步显示三类数量
+
+- **EMA 飘带判断逻辑优化**（`api_server.py`）：
+  - 旧逻辑：6条EMA全部严格排列才算 green/red，否则 mixed
+  - 新逻辑：`ema5 > ema30` → green，否则 red，去掉 mixed 分类
+  - 多头飘带标的从 7 只增加到 22 只（覆盖过渡期标的）
+
+- **飘带翻转检测**（`api_server.py`）：`/api/scores/overview` 每条记录新增 `ribbon_flip` 字段：`"to_bull"`（空转多）/ `"to_bear"`（多转空）/ `null`（无翻转），检测窗口为近5个交易日
+
+- **页面与分组重命名**：
+  - 导航：机会速览 → 个股超买超卖；主升浪龙头 → 个股主升趋势
+  - 分组 Tab：可执行 → 严重超卖且站上MA5；强烈买入 → 严重超卖；建议买入 → 超卖；观望 → 中性
+  - Section 标题同步更新
+
+### 新增
+
+- **技术分析辅助决策模块**（`futu_strategy/technical_analysis.py`，新建）：纯计算层，基于本地 DB 数据提供三类分析：
+  - `find_support_resistance(df)`：Swing Pivot 检测（左右各 n 根确认），ATR×0.6 距离聚类合并，近期命中点权重×2；叠加 MA20/MA60/MA250 动态均线位，过滤 ±25% 以外的无效位，各返回最多 5 个支撑/压力位（含价格、强度、标签、类型）
+  - `detect_patterns(df)`：检测 17 类技术信号，包括均线多/空头排列、MA5/MA20 金死叉、MA20/MA60 金死叉、EMA 飘带多/空、MACD 金区/死区/金叉/死叉、RSI 超买超卖、布林带突破、放量异动；仅返回命中信号
+  - `analyze_trend(df)`：返回主趋势（up/down/sideways）、短期趋势、RSI12、MACD 偏向、%B 布林带位置、成交量比、ATR14 及 ATR 波动率百分比
+
+- **新 API 端点**（`api_server.py`）：`GET /api/analysis?code=US.MU&ktype=1d`，聚合以上三个函数输出，返回格式：
+  ```json
+  {
+    "code": "US.MU", "ktype": "1d", "date": "...", "close": 975.56,
+    "supports": [...], "resistances": [...],
+    "patterns": [{"id", "label", "bullish", "desc"}, ...],
+    "trend": {"primary", "short_term", "rsi12", "macd_bias", "bb_pct_b", "vol_ratio", "atr14", "atr_pct"}
+  }
+  ```
+  无需 OpenD，纯读本地 SQLite
+
+---
+
 ## [v3.5.0] — 2026-06-18
 
 ### 新增

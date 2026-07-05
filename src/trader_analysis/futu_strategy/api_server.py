@@ -298,23 +298,29 @@ def get_scores_overview(
             r["above_ma5"] = close > ma5 if (close and ma5) else None
             r["momentum_score"] = _calc_momentum(kline_rows)
             # EMA 飘带状态
-            emas = [k[f"ema{p}"] for p in (5, 10, 15, 20, 25, 30)]
-            if all(emas):
-                e5, e10, e15, e20, e25, e30 = [float(e) for e in emas]
-                if e5 > e10 > e15 > e20 > e25 > e30:
-                    r["ema_ribbon"] = "green"
-                elif e5 < e10 < e15 < e20 < e25 < e30:
-                    r["ema_ribbon"] = "red"
-                else:
-                    r["ema_ribbon"] = "mixed"
+            e5_raw = k["ema5"]; e30_raw = k["ema30"]
+            if e5_raw and e30_raw:
+                r["ema_ribbon"] = "green" if float(e5_raw) > float(e30_raw) else "red"
             else:
                 r["ema_ribbon"] = None
+            # 飘带翻转检测（近5日内）
+            ribbon_flip = None
+            if r["ema_ribbon"] is not None and len(kline_rows) >= 2:
+                current_bull = r["ema_ribbon"] == "green"
+                for row in kline_rows[1:6]:
+                    e5 = row["ema5"]; e30 = row["ema30"]
+                    if e5 and e30:
+                        if (float(e5) > float(e30)) != current_bull:
+                            ribbon_flip = "to_bull" if current_bull else "to_bear"
+                            break
+            r["ribbon_flip"] = ribbon_flip
         else:
             r["above_ma5"] = None
             r["close"] = None
             r["ma5"] = None
             r["momentum_score"] = None
             r["ema_ribbon"] = None
+            r["ribbon_flip"] = None
     conn.close()
 
     strong_buy = [r for r in rows if r["signal"] == "STRONG_BUY"]
@@ -500,3 +506,42 @@ def get_grid_orders(
     state_manager.init_grid_tables()
     orders = state_manager.query_orders(config_id, limit)
     return {"total": len(orders), "orders": orders}
+
+
+# ── 技术分析辅助决策 ──────────────────────────────────────────────────────────
+
+
+@app.get("/api/analysis")
+def get_analysis(
+    code: str,
+    ktype: str = Query(default="1d", pattern="^(1d|1w)$"),
+):
+    """返回支撑/压力位、技术形态信号、趋势判断，辅助个股决策。
+
+    基于本地 DB 中的 OHLCV + 技术指标计算，无需 OpenD。
+    """
+    from trader_analysis.futu_strategy.technical_analysis import (
+        analyze_trend,
+        detect_patterns,
+        find_support_resistance,
+    )
+
+    df = storage.query_recent(code, ktype, limit=120)
+    if df.empty or len(df) < 20:
+        return {"data": None, "message": f"{code} 数据不足（需至少 20 根），请先更新行情"}
+
+    supports, resistances = find_support_resistance(df)
+    patterns = detect_patterns(df)
+    trend = analyze_trend(df)
+
+    last = df.iloc[-1]
+    return {
+        "code": code,
+        "ktype": ktype,
+        "date": last["date"],
+        "close": float(last["close"]),
+        "supports": supports,
+        "resistances": resistances,
+        "patterns": patterns,
+        "trend": trend,
+    }

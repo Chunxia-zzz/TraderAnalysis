@@ -1,6 +1,6 @@
 # TraderAnalysis API 文档
 
-> 最后更新：2026-06-18
+> 最后更新：2026-07-05
 > 协议：HTTP/1.1，响应格式：`application/json`，编码：UTF-8
 
 ## 策略数据服务（futu_strategy/api_server.py）
@@ -77,6 +77,7 @@ Swagger UI：`http://localhost:8000/docs`
 | GET | `/api/backtest/run` | 信号回测（单股策略验证） | **Backtest.vue** |
 | GET | `/api/grid/status` | 网格交易运行状态 | **GridTrading.vue** |
 | GET | `/api/grid/orders` | 网格交易记录 | **GridTrading.vue** |
+| GET | `/api/analysis` | 技术分析辅助决策（支撑/压力位 + 形态 + 趋势） | **Dashboard.vue** |
 
 ---
 
@@ -402,6 +403,8 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
 | `close` | float\|null | 最新收盘价 |
 | `ma5` | float\|null | MA5 值 |
 | `momentum_score` | int\|null | 动量/趋势强度评分 0-100 |
+| `ema_ribbon` | `"green"`\|`"red"`\|null | EMA飘带方向：`ema5 > ema30` → green，否则 red（v3.6 去掉 mixed） |
+| `ribbon_flip` | `"to_bull"`\|`"to_bear"`\|null | 近5日内飘带翻转：空转多 / 多转空 / 无翻转 |
 
 **前端展示建议：**
 
@@ -1122,6 +1125,95 @@ export const getAssetTemperatureHistory = (asset, days = 60) =>
     }
   ]
 }
+```
+
+---
+
+---
+
+## 技术分析辅助决策
+
+### GET `/api/analysis`
+
+基于本地 DB 中的 OHLCV + 技术指标，返回支撑/压力位、技术形态信号、趋势判断，无需 OpenD。
+
+**请求参数**
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `code` | string | 必填 | 标的代码，如 `US.MU` |
+| `ktype` | string | `"1d"` | `1d` \| `1w` |
+
+**响应 200**
+
+```json
+{
+  "code": "US.MU",
+  "ktype": "1d",
+  "date": "2026-07-03",
+  "close": 976.0,
+  "supports": [
+    {"price": 951.2, "strength": 3, "label": "近期低点×3", "type": "swing_low"},
+    {"price": 962.1, "strength": 1, "label": "MA250", "type": "ma"}
+  ],
+  "resistances": [
+    {"price": 1064.0, "strength": 2, "label": "近期高点×2", "type": "swing_high"},
+    {"price": 1033.0, "strength": 1, "label": "MA20", "type": "ma"}
+  ],
+  "patterns": [
+    {"id": "macd_bear", "label": "MACD死区", "bullish": false, "desc": "DIF<DEA，动量偏空"},
+    {"id": "vol_spike", "label": "放量(2.1x均量)", "bullish": null, "desc": "成交量显著放大，注意结合价格方向判断"}
+  ],
+  "trend": {
+    "primary": "up",
+    "short_term": "down",
+    "rsi12": 44.2,
+    "macd_bias": "bearish",
+    "bb_pct_b": 0.31,
+    "vol_ratio": 1.85,
+    "atr14": 38.5,
+    "atr_pct": 0.039
+  }
+}
+```
+
+**supports / resistances 字段说明**
+
+| 字段 | 说明 |
+|------|------|
+| `price` | 价位（四位小数） |
+| `strength` | 强度（命中次数 × 近期权重，越大越可靠） |
+| `label` | 描述，如"近期低点×3"、"MA20" |
+| `type` | `swing_low` / `swing_high` / `ma` |
+
+**patterns 字段说明**
+
+| 字段 | 说明 |
+|------|------|
+| `id` | 信号标识符 |
+| `label` | 显示文案 |
+| `bullish` | `true`=多头信号 / `false`=空头信号 / `null`=中性（需看方向） |
+| `desc` | 详细描述 |
+
+**支持的17类信号：** `ma_bull` / `ma_bear` / `ema_ribbon_bull` / `ema_ribbon_bear` / `golden_cross_fast` / `death_cross_fast` / `golden_cross_slow` / `death_cross_slow` / `macd_bull` / `macd_bear` / `macd_golden` / `macd_death` / `rsi_overbought` / `rsi_oversold` / `bb_upper_break` / `bb_lower_break` / `vol_spike`
+
+**trend 字段说明**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `primary` | string | 主趋势：`up`/`down`/`sideways`（基于 MA20/60/120 排列） |
+| `short_term` | string | 短期趋势：`up`/`down`/`sideways`（基于 close vs MA5/MA20） |
+| `rsi12` | float\|null | RSI12 原始值 |
+| `macd_bias` | string | MACD 偏向：`bullish`/`bearish`/`neutral` |
+| `bb_pct_b` | float\|null | 布林带 %B（0=下轨，1=上轨） |
+| `vol_ratio` | float\|null | 成交量比（volume / vol_ma20） |
+| `atr14` | float\|null | ATR14 绝对值 |
+| `atr_pct` | float\|null | ATR14 / close，波动率百分比 |
+
+**数据不足时（HTTP 200）**
+
+```json
+{"data": null, "message": "US.MU 数据不足（需至少 20 根），请先更新行情"}
 ```
 
 ---
