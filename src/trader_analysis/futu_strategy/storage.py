@@ -141,6 +141,31 @@ CREATE TABLE IF NOT EXISTS fundamental_data (
 
 CREATE INDEX IF NOT EXISTS idx_fundamental_code_date
     ON fundamental_data(code, date);
+
+CREATE TABLE IF NOT EXISTS position_state (
+    code             TEXT PRIMARY KEY,
+    stage            TEXT NOT NULL DEFAULT 'HOLD',
+    total_qty        INTEGER NOT NULL DEFAULT 0,
+    remaining_qty    INTEGER NOT NULL DEFAULT 0,
+    avg_cost         REAL DEFAULT 0,
+    entry_date       TEXT,
+    last_signal      TEXT,
+    last_signal_date TEXT,
+    updated_at       TEXT
+);
+
+CREATE TABLE IF NOT EXISTS top_signal_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    code        TEXT NOT NULL,
+    date        TEXT NOT NULL,
+    signal_type TEXT NOT NULL,
+    strength    REAL,
+    detail_json TEXT,
+    created_at  TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_top_signal_code_date
+    ON top_signal_log(code, date);
 """
 
 # K 线 + 指标列（写入顺序）
@@ -595,3 +620,154 @@ def query_trading_dates(code: str, start_date: str | None = None, end_date: str 
     rows = conn.execute(sql, params).fetchall()
     conn.close()
     return [r["date"] for r in rows]
+
+
+# ── 顶背离信号日志 ────────────────────────────────────────────────────────────
+
+
+def insert_top_signal(code: str, date: str, signal_type: str, strength: float, detail: dict) -> None:
+    """写入一条顶部信号记录。"""
+    conn = _get_conn()
+    conn.execute(
+        "INSERT INTO top_signal_log (code, date, signal_type, strength, detail_json) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (code, date, signal_type, strength, json.dumps(detail, ensure_ascii=False)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def query_top_signals(code: str, days: int = 30) -> list[dict]:
+    """查询某标的最近 N 天的顶部信号历史，日期降序。"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT id, code, date, signal_type, strength, detail_json, created_at "
+        "FROM top_signal_log WHERE code = ? ORDER BY date DESC, id DESC LIMIT ?",
+        (code, days * 5),  # 每天最多 5 个信号，多取一些
+    ).fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["detail"] = json.loads(d["detail_json"]) if d.get("detail_json") else {}
+        d.pop("detail_json", None)
+        result.append(d)
+    return result
+
+
+def query_top_signals_all(days: int = 7) -> list[dict]:
+    """查询所有标的最近 N 天内触发过的顶部信号，按日期降序。"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT id, code, date, signal_type, strength, detail_json, created_at "
+        "FROM top_signal_log WHERE date >= date('now', ?) "
+        "ORDER BY date DESC, strength DESC",
+        (f"-{days} days",),
+    ).fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["detail"] = json.loads(d["detail_json"]) if d.get("detail_json") else {}
+        d.pop("detail_json", None)
+        result.append(d)
+    return result
+
+
+# ── 持仓状态管理 ──────────────────────────────────────────────────────────────
+
+
+def get_position_state(code: str) -> dict:
+    """查询单只标的的持仓状态。无记录时返回默认 HOLD 状态。"""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT * FROM position_state WHERE code = ?", (code,)
+    ).fetchone()
+    conn.close()
+    if row:
+        return dict(row)
+    return {
+        "code": code,
+        "stage": "HOLD",
+        "total_qty": 0,
+        "remaining_qty": 0,
+        "avg_cost": 0.0,
+        "entry_date": None,
+        "last_signal": None,
+        "last_signal_date": None,
+        "updated_at": None,
+    }
+
+
+def upsert_position_state(
+    code: str,
+    stage: str,
+    remaining_qty: int,
+    total_qty: int | None = None,
+    avg_cost: float | None = None,
+    entry_date: str | None = None,
+    last_signal: str | None = None,
+    last_signal_date: str | None = None,
+) -> None:
+    """写入/更新持仓阶段。total_qty/avg_cost/entry_date 若为 None 则保留原值。"""
+    conn = _get_conn()
+    existing = conn.execute(
+        "SELECT * FROM position_state WHERE code = ?", (code,)
+    ).fetchone()
+
+    now = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    if existing:
+        ex = dict(existing)
+        conn.execute(
+            "UPDATE position_state SET stage=?, remaining_qty=?, total_qty=?, avg_cost=?, "
+            "entry_date=?, last_signal=?, last_signal_date=?, updated_at=? WHERE code=?",
+            (
+                stage,
+                remaining_qty,
+                total_qty if total_qty is not None else ex["total_qty"],
+                avg_cost if avg_cost is not None else ex["avg_cost"],
+                entry_date if entry_date is not None else ex["entry_date"],
+                last_signal if last_signal is not None else ex["last_signal"],
+                last_signal_date if last_signal_date is not None else ex["last_signal_date"],
+                now,
+                code,
+            ),
+        )
+    else:
+        conn.execute(
+            "INSERT INTO position_state "
+            "(code, stage, total_qty, remaining_qty, avg_cost, entry_date, last_signal, last_signal_date, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                code, stage,
+                total_qty or 0,
+                remaining_qty,
+                avg_cost or 0.0,
+                entry_date, last_signal, last_signal_date, now,
+            ),
+        )
+    conn.commit()
+    conn.close()
+
+
+def list_active_positions() -> list[dict]:
+    """列出所有非 EMPTY 的持仓。"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT * FROM position_state WHERE stage != 'EMPTY' ORDER BY code"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def reset_position_state(code: str) -> None:
+    """清除持仓状态（手动重置用），设为 EMPTY。"""
+    conn = _get_conn()
+    now = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn.execute(
+        "UPDATE position_state SET stage='EMPTY', remaining_qty=0, updated_at=? WHERE code=?",
+        (now, code),
+    )
+    conn.commit()
+    conn.close()

@@ -20,11 +20,15 @@ import argparse
 import logging
 from datetime import date
 
-from trader_analysis.futu_strategy import config
+from trader_analysis.futu_strategy import config, storage
 from trader_analysis.futu_strategy.daily_update import run_update
 from trader_analysis.futu_strategy.logger import log_score
+from trader_analysis.futu_strategy.position_state import get_state, update_state
 from trader_analysis.futu_strategy.scorer import calculate_score
-from trader_analysis.futu_strategy.storage import init_db, query_recent, upsert_score
+from trader_analysis.futu_strategy.sell_advisor import evaluate as evaluate_sell
+from trader_analysis.futu_strategy.sell_executor import execute_sell
+from trader_analysis.futu_strategy.storage import init_db, insert_top_signal, query_recent, upsert_score
+from trader_analysis.futu_strategy.top_detector import detect_all
 from trader_analysis.futu_strategy.trade_executor import execute_trade
 
 logger = logging.getLogger(__name__)
@@ -95,6 +99,35 @@ def run_strategy(codes: list[str]) -> None:
 
                 if result["signal"] in ("BUY", "STRONG_BUY"):
                     execute_trade(result, acc_id, trd_ctx, quote_ctx)
+
+                # ── 卖出侧：顶背离检测 + 减仓决策 ────────────────────────────
+                state = get_state(code)
+                if state["stage"] != "EMPTY" and state["remaining_qty"] > 0:
+                    signals = detect_all(daily_df)
+                    if signals:
+                        # 记录信号到数据库
+                        for sig in signals:
+                            try:
+                                insert_top_signal(code, today, sig.signal_type, sig.strength, sig.detail)
+                            except Exception:
+                                pass
+                        logger.info(
+                            f"{code} 顶部信号: {[s.signal_type for s in signals]}"
+                        )
+                        # 决策
+                        action = evaluate_sell(
+                            code=code,
+                            signals=signals,
+                            current_stage=state["stage"],
+                            remaining_qty=state["remaining_qty"],
+                            total_qty=state["total_qty"],
+                        )
+                        if action.action == "SELL":
+                            execute_sell(action, acc_id, trd_ctx, quote_ctx)
+                            logger.info(
+                                f"[SELL] {code} stage={action.new_stage} "
+                                f"qty={action.sell_qty} reason={action.reason}"
+                            )
 
             except Exception as exc:
                 logger.warning(f"{code} 处理异常，跳过：{exc}")

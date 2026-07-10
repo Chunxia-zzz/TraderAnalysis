@@ -146,6 +146,32 @@ def detect_macd_divergence(
     return bool(price_new_low and macd_no_new_low)
 
 
+def detect_rsi_top_divergence(
+    df: pd.DataFrame, period: int = 6, lookback: int = 60, distance: int = 5
+) -> bool:
+    """检测最近 lookback 根 K 线内是否存在 RSI 顶背离。
+
+    顶背离：价格创新高（high[idx2] >= high[idx1]）但 RSI 未创新高（rsi[idx2] < rsi[idx1]）。
+    前提：df 已经过 calc_indicators 计算，含 f'rsi{period}' 和 'high' 列。
+    """
+    rsi_col = f"rsi{period}"
+    recent = df.tail(lookback).copy().reset_index(drop=True)
+
+    if rsi_col not in recent.columns or recent[rsi_col].isna().all():
+        return False
+
+    peaks, _ = find_peaks(recent["high"].values, distance=distance)
+
+    if len(peaks) < 2:
+        return False
+
+    idx1, idx2 = peaks[-2], peaks[-1]
+    price_new_high = recent["high"].iloc[idx2] >= recent["high"].iloc[idx1]
+    rsi_no_new_high = recent[rsi_col].iloc[idx2] < recent[rsi_col].iloc[idx1]
+
+    return bool(price_new_high and rsi_no_new_high)
+
+
 def detect_panic_volume(
     df: pd.DataFrame, lookback: int = 20, panic_multiplier: float = 2.0
 ) -> bool:

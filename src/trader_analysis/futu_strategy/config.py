@@ -182,3 +182,55 @@ FUNDAMENTAL_SIGNAL_OVERVALUED: int = 40
 
 FUNDAMENTAL_SKIP_TICKERS: list[str] = ["QQQ", "SPY", "GLD", "IBIT", "07709", "VIXY", "VIX", "DRAM"]
 
+# ── 顶背离检测配置 ────────────────────────────────────────────────────────────
+TOP_DETECTION_CONFIG: dict = {
+    # RSI 顶背离参数
+    "rsi_divergence_lookback": 60,      # 回看 K 线根数
+    "rsi_divergence_period": 6,         # 使用 RSI6
+    "rsi_divergence_min_distance": 5,   # 两个峰之间最小间隔
+
+    # 天量滞涨参数
+    "volume_stall_multiplier": 2.0,     # 成交量超过 vol_ma20 的倍数
+    "volume_stall_max_change": 0.02,    # 价格变动幅度阈值（2%以内视为滞涨）
+
+    # MACD 顶背离参数
+    "macd_divergence_lookback": 60,
+    "macd_divergence_min_distance": 5,
+
+    # 长上影线参数
+    "upper_shadow_ratio": 0.6,          # 上影线占实体+上影线比例阈值
+    "upper_shadow_consecutive": 2,      # 连续出现次数
+
+    # 布林带收口参数
+    "boll_squeeze_lookback": 10,        # 带宽变化率回看
+    "boll_squeeze_threshold": -0.2,     # 带宽缩小 20% 视为收口
+
+    # 加速赶顶参数
+    "acceleration_short_window": 5,     # 短期斜率窗口
+    "acceleration_long_window": 20,     # 长期斜率窗口
+    "acceleration_ratio": 2.5,          # 短期斜率/长期斜率 > 此值视为加速
+
+    # 前高距离参数
+    "near_high_lookback": 120,          # 回看根数（约半年）
+    "near_high_threshold": 0.05,        # 距前高 5% 以内
+}
+
+# ── 减仓执行配置 ─────────────────────────────────────────────────────────────
+SELL_CONFIG: dict = {
+    # 减仓比例
+    "sell_1_ratio": 1 / 3,     # 第一刀：减总仓位的 1/3
+    "sell_2_ratio": 2 / 3,     # 第二刀：减剩余仓位的 2/3
+    "sell_3_ratio": 1.0,       # 第三刀：清仓（留 keep_min_qty 股观察）
+    "keep_min_qty": 1,          # 最少保留股数（底仓观察）
+
+    # 紧急止损参数
+    "emergency_drop_pct": 0.07,     # 单日跌幅 > 7% 立即清仓
+    "emergency_ma_period": 20,      # 跌破 MA20 立即清仓
+
+    # 第二刀确认参数
+    "ma5_break_confirm_days": 1,    # 跌破 MA5 确认天数（收盘价低于 MA5）
+
+    # 第三刀确认参数
+    "ma5_recovery_days": 2,         # 连续 N 日未站回 MA5 → 触发第三刀
+}
+

@@ -508,6 +508,175 @@ def get_grid_orders(
     return {"total": len(orders), "orders": orders}
 
 
+# ── 顶背离信号接口 ────────────────────────────────────────────────────────────
+
+
+@app.get("/api/trade-signals")
+def get_trade_signals(code: str = Query(..., description="标的代码")):
+    """实时运行顶/底背离检测，返回完整信号清单（含触发状态和操作建议）。
+
+    每个信号包含：signal_type / category / triggered / strength / description / label / action / action_type
+    前端据此渲染左右分栏"交易信号"板块。
+    """
+    from trader_analysis.futu_strategy.bottom_detector import detect_all_bottom
+    from trader_analysis.futu_strategy.top_detector import detect_all
+
+    daily_df = storage.query_recent(code, "1d", limit=300)
+    if daily_df.empty or len(daily_df) < 30:
+        return {"data": None, "message": f"{code} 数据不足，请先更新行情"}
+
+    date = str(daily_df.iloc[-1]["date"]) if "date" in daily_df.columns else ""
+
+    # ── 顶部信号检测 ──────────────────────────────────────────────────────────
+    _TOP_META = {
+        "NEAR_HIGH":        {"label": "接近前高",     "action": "注意减仓",     "action_type": "sell_warn"},
+        "RSI_TOP_DIV":      {"label": "RSI顶背离",    "action": "建议减仓1/3",  "action_type": "sell_1"},
+        "MACD_TOP_DIV":     {"label": "MACD顶背离",   "action": "建议减仓1/3",  "action_type": "sell_1"},
+        "VOLUME_STALL":     {"label": "天量滞涨",     "action": "注意减仓",     "action_type": "sell_warn"},
+        "UPPER_SHADOW":     {"label": "连续长上影线",  "action": "注意减仓",     "action_type": "sell_warn"},
+        "BOLL_SQUEEZE":     {"label": "布林高位收口",  "action": "注意减仓",     "action_type": "sell_warn"},
+        "ACCELERATION":     {"label": "加速赶顶",     "action": "注意减仓",     "action_type": "sell_warn"},
+        "BREAK_MA5":        {"label": "跌破MA5",      "action": "减仓2/3",      "action_type": "sell_2"},
+        "MA5_DEATH_CROSS":  {"label": "MA5死叉MA10",  "action": "建议清仓",     "action_type": "sell_3"},
+        "MA5_NO_RECOVERY":  {"label": "连续未站回MA5", "action": "建议清仓",     "action_type": "sell_3"},
+        "EMERGENCY_STOP":   {"label": "紧急止损",     "action": "立即清仓",     "action_type": "sell_emergency"},
+    }
+
+    _BOTTOM_META = {
+        "NEAR_LOW":          {"label": "接近近期低点",  "action": "关注买入机会", "action_type": "buy_watch"},
+        "RSI_BOTTOM_DIV":    {"label": "RSI底背离",    "action": "关注买入机会", "action_type": "buy_watch"},
+        "MACD_BOTTOM_DIV":   {"label": "MACD底背离",   "action": "关注买入机会", "action_type": "buy_watch"},
+        "PANIC_VOLUME":      {"label": "恐慌放量缩量",  "action": "关注买入机会", "action_type": "buy_watch"},
+    }
+
+    triggered_top = {s.signal_type: s for s in detect_all(daily_df)}
+    triggered_bottom = {s.signal_type: s for s in detect_all_bottom(daily_df)}
+
+    top_signals = []
+    for sig_type, meta in _TOP_META.items():
+        if sig_type in triggered_top:
+            s = triggered_top[sig_type]
+            top_signals.append({
+                "signal_type": sig_type,
+                "category": "top",
+                "triggered": True,
+                "strength": s.strength,
+                "description": s.description,
+                **meta,
+            })
+        else:
+            top_signals.append({
+                "signal_type": sig_type,
+                "category": "top",
+                "triggered": False,
+                "strength": 0.0,
+                "description": "未检测到",
+                **meta,
+            })
+
+    bottom_signals = []
+    for sig_type, meta in _BOTTOM_META.items():
+        if sig_type in triggered_bottom:
+            s = triggered_bottom[sig_type]
+            bottom_signals.append({
+                "signal_type": sig_type,
+                "category": "bottom",
+                "triggered": True,
+                "strength": s.strength,
+                "description": s.description,
+                **meta,
+            })
+        else:
+            bottom_signals.append({
+                "signal_type": sig_type,
+                "category": "bottom",
+                "triggered": False,
+                "strength": 0.0,
+                "description": "未检测到",
+                **meta,
+            })
+
+    return {
+        "code": code,
+        "date": date,
+        "top_signals": top_signals,
+        "bottom_signals": bottom_signals,
+        "top_triggered_count": sum(1 for s in top_signals if s["triggered"]),
+        "bottom_triggered_count": sum(1 for s in bottom_signals if s["triggered"]),
+    }
+
+
+@app.get("/api/top-signals")
+def get_top_signals(
+    code: str | None = Query(default=None, description="标的代码，不传则返回所有标的近期信号"),
+    days: int = Query(default=7, ge=1, le=90),
+):
+    """返回顶部信号历史。可按单只标的或全部标的查询。"""
+    if code:
+        data = storage.query_top_signals(code, days)
+        return {"code": code, "days": days, "count": len(data), "signals": data}
+    else:
+        data = storage.query_top_signals_all(days)
+        return {"days": days, "count": len(data), "signals": data}
+
+
+@app.get("/api/position-states")
+def get_position_states(
+    code: str | None = Query(default=None, description="标的代码，不传则返回所有非 EMPTY 持仓"),
+):
+    """返回持仓状态。"""
+    if code:
+        state = storage.get_position_state(code)
+        return state
+    else:
+        states = storage.list_active_positions()
+        return {"total": len(states), "positions": states}
+
+
+@app.get("/api/sell-log")
+def get_sell_log(
+    code: str | None = Query(default=None, description="标的代码，不传则返回全部"),
+    days: int = Query(default=30, ge=1, le=365),
+):
+    """返回卖出日志（从 trade_log.jsonl 读取 SELL 类型记录）。"""
+    import json as _json
+    import os
+    from trader_analysis.futu_strategy import config as _cfg
+
+    log_file = _cfg.TRADE_LOG_FILE
+    if not os.path.exists(log_file):
+        return {"total": 0, "records": []}
+
+    from datetime import date, timedelta
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+
+    records = []
+    try:
+        with open(log_file, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = _json.loads(line)
+                except Exception:
+                    continue
+                # 只返回 SELL 类记录
+                if not rec.get("signal", "").startswith("SELL_"):
+                    continue
+                ts = rec.get("timestamp", "")
+                if ts[:10] < cutoff:
+                    continue
+                if code and rec.get("code") != code:
+                    continue
+                records.append(rec)
+    except Exception:
+        pass
+
+    records.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+    return {"total": len(records), "records": records}
+
+
 # ── 技术分析辅助决策 ──────────────────────────────────────────────────────────
 
 

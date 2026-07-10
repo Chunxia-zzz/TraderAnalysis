@@ -502,6 +502,62 @@ def grid_stop(
     typer.echo(f"Grid #{config_id} stop signal sent. Engine will exit on next cycle.")
 
 
+@app.command("scan-top")
+def scan_top(
+    codes: Optional[list[str]] = typer.Option(None, help="标的代码列表（默认全部 watchlist）"),
+    min_strength: float = typer.Option(0.3, "--min-strength", help="信号强度过滤阈值 0~1"),
+) -> None:
+    """扫描顶背离预警信号：对所有标的执行顶部信号检测，打印摘要并写入 DB。不依赖 OpenD。"""
+    from datetime import date
+
+    from trader_analysis.futu_strategy import config
+    from trader_analysis.futu_strategy.storage import init_db, insert_top_signal, query_recent
+    from trader_analysis.futu_strategy.top_detector import detect_all
+
+    init_db()
+    code_list = codes if codes else config.WATCHLIST
+    today = date.today().isoformat()
+
+    typer.echo(f"扫描顶背离信号中... ({len(code_list)} 只标的，日期={today})")
+    typer.echo("")
+
+    triggered: list[tuple[str, list]] = []
+
+    for code in code_list:
+        daily_df = query_recent(code, "1d", limit=300)
+        if daily_df.empty or len(daily_df) < 30:
+            continue
+
+        signals = detect_all(daily_df)
+        if not signals:
+            continue
+
+        strong_signals = [s for s in signals if s.strength >= min_strength]
+        if not strong_signals:
+            continue
+
+        triggered.append((code, strong_signals))
+
+        # 写入 DB
+        for sig in strong_signals:
+            try:
+                insert_top_signal(code, today, sig.signal_type, sig.strength, sig.detail)
+            except Exception:
+                pass
+
+    if not triggered:
+        typer.echo("无顶背离信号触发。")
+        return
+
+    typer.echo(f"── 顶背离预警 ({len(triggered)} 只标的) ──")
+    for code, signals in triggered:
+        sig_summary = ", ".join(f"{s.signal_type}({s.strength:.2f})" for s in signals)
+        typer.echo(f"  {code:14s}  {sig_summary}")
+
+    typer.echo("")
+    typer.echo(f"信号已写入 DB（top_signal_log 表），可通过 /api/top-signals 查询。")
+
+
 @app.command("grid-status")
 def grid_status(
     config_id: Optional[int] = typer.Argument(None, help="配置 ID（不传则显示全部）"),
