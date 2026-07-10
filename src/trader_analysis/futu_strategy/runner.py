@@ -27,7 +27,8 @@ from trader_analysis.futu_strategy.position_state import get_state, update_state
 from trader_analysis.futu_strategy.scorer import calculate_score
 from trader_analysis.futu_strategy.sell_advisor import evaluate as evaluate_sell
 from trader_analysis.futu_strategy.sell_executor import execute_sell
-from trader_analysis.futu_strategy.storage import init_db, insert_top_signal, query_recent, upsert_score
+from trader_analysis.futu_strategy.storage import init_db, insert_bottom_signal, insert_top_signal, query_recent, upsert_score
+from trader_analysis.futu_strategy.bottom_detector import detect_all as detect_all_bottom
 from trader_analysis.futu_strategy.top_detector import detect_all
 from trader_analysis.futu_strategy.trade_executor import execute_trade
 
@@ -128,6 +129,18 @@ def run_strategy(codes: list[str]) -> None:
                                 f"[SELL] {code} stage={action.new_stage} "
                                 f"qty={action.sell_qty} reason={action.reason}"
                             )
+
+                # ── 买入侧：底部信号检测 ──────────────────────────────────────
+                bottom_signals = detect_all_bottom(daily_df)
+                if bottom_signals:
+                    for sig in bottom_signals:
+                        try:
+                            insert_bottom_signal(code, today, sig.signal_type, sig.strength, sig.detail)
+                        except Exception:
+                            pass
+                    logger.info(
+                        f"{code} 底部信号: {[s.signal_type for s in bottom_signals]}"
+                    )
 
             except Exception as exc:
                 logger.warning(f"{code} 处理异常，跳过：{exc}")

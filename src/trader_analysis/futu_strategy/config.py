@@ -234,3 +234,32 @@ SELL_CONFIG: dict = {
     "ma5_recovery_days": 2,         # 连续 N 日未站回 MA5 → 触发第三刀
 }
 
+# ── 底部信号检测配置 ────────────────────────────────────────────────────────────
+BOTTOM_DETECTION_CONFIG: dict = {
+    # 支撑位检测参数
+    "support_ma_periods": [20, 30, 50, 60],     # 检测这些均线作为支撑
+    "near_support_threshold": 0.02,              # 距均线 2% 以内视为"附近"
+
+    # 深V检测参数（日内跌破支撑后收回）
+    "deep_v_shadow_dominant": True,              # 下影线 > 上影线
+
+    # 缩量参数
+    "volume_shrink_ratio": 0.7,                  # 成交量 < vol_ma20 * 此值 视为缩量
+    "volume_shrink_days": 3,                     # 连续 N 日缩量
+
+    # RSI 底背离参数
+    "rsi_divergence_lookback": 60,
+    "rsi_divergence_period": 6,
+    "rsi_divergence_min_distance": 5,
+
+    # W底形态参数
+    "w_bottom_lookback": 30,                     # W底回看窗口
+    "w_bottom_price_tolerance": 0.03,            # 两个低点价差容忍度（3%以内视为平行底）
+
+    # 支撑确认参数
+    "support_confirm_next_day_up": True,         # 背离后次日收盘高于前日
+
+    # 站上MA5参数
+    "reclaim_ma5_confirm_days": 1,               # 收盘站上MA5确认天数
+}
+

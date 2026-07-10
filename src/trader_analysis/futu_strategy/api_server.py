@@ -512,22 +512,17 @@ def get_grid_orders(
 
 
 @app.get("/api/trade-signals")
-def get_trade_signals(code: str = Query(..., description="标的代码")):
-    """实时运行顶/底背离检测，返回完整信号清单（含触发状态和操作建议）。
+def get_trade_signals(
+    code: str = Query(..., description="标的代码"),
+    date: str | None = Query(default=None, description="日期(YYYY-MM-DD)，不传则实时计算最新"),
+):
+    """交易信号检测。
+
+    - 不传 date：实时运行顶/底信号检测（基于最新数据）
+    - 传 date：从 DB 读取该日期已存储的信号（需先 scan-signals --backfill）
 
     每个信号包含：signal_type / category / triggered / strength / description / label / action / action_type
-    前端据此渲染左右分栏"交易信号"板块。
     """
-    from trader_analysis.futu_strategy.bottom_detector import detect_all_bottom
-    from trader_analysis.futu_strategy.top_detector import detect_all
-
-    daily_df = storage.query_recent(code, "1d", limit=300)
-    if daily_df.empty or len(daily_df) < 30:
-        return {"data": None, "message": f"{code} 数据不足，请先更新行情"}
-
-    date = str(daily_df.iloc[-1]["date"]) if "date" in daily_df.columns else ""
-
-    # ── 顶部信号检测 ──────────────────────────────────────────────────────────
     _TOP_META = {
         "NEAR_HIGH":        {"label": "接近前高",     "action": "注意减仓",     "action_type": "sell_warn"},
         "RSI_TOP_DIV":      {"label": "RSI顶背离",    "action": "建议减仓1/3",  "action_type": "sell_1"},
@@ -538,16 +533,109 @@ def get_trade_signals(code: str = Query(..., description="标的代码")):
         "ACCELERATION":     {"label": "加速赶顶",     "action": "注意减仓",     "action_type": "sell_warn"},
         "BREAK_MA5":        {"label": "跌破MA5",      "action": "减仓2/3",      "action_type": "sell_2"},
         "MA5_DEATH_CROSS":  {"label": "MA5死叉MA10",  "action": "建议清仓",     "action_type": "sell_3"},
-        "MA5_NO_RECOVERY":  {"label": "连续未站回MA5", "action": "建议清仓",     "action_type": "sell_3"},
+        "MA5_NO_RECOVERY":  {"label": "持续调整",       "action": "观望",         "action_type": "sell_warn"},
         "EMERGENCY_STOP":   {"label": "紧急止损",     "action": "立即清仓",     "action_type": "sell_emergency"},
     }
 
     _BOTTOM_META = {
-        "NEAR_LOW":          {"label": "接近近期低点",  "action": "关注买入机会", "action_type": "buy_watch"},
-        "RSI_BOTTOM_DIV":    {"label": "RSI底背离",    "action": "关注买入机会", "action_type": "buy_watch"},
-        "MACD_BOTTOM_DIV":   {"label": "MACD底背离",   "action": "关注买入机会", "action_type": "buy_watch"},
-        "PANIC_VOLUME":      {"label": "恐慌放量缩量",  "action": "关注买入机会", "action_type": "buy_watch"},
+        "NEAR_SUPPORT":     {"label": "均线支撑",   "action": "关注",       "action_type": "buy_watch"},
+        "DEEP_V":           {"label": "深V确认",    "action": "试探建仓",   "action_type": "buy_1"},
+        "VOLUME_SHRINK":    {"label": "缩量企稳",   "action": "关注",       "action_type": "buy_watch"},
+        "RSI_BOTTOM_DIV":   {"label": "RSI底背离",  "action": "加仓确认",   "action_type": "buy_2"},
+        "W_BOTTOM":         {"label": "W底形态",    "action": "加仓确认",   "action_type": "buy_2"},
+        "SUPPORT_CONFIRM":  {"label": "支撑确认",   "action": "关注",       "action_type": "buy_watch"},
+        "RECLAIM_MA5":      {"label": "站上MA5",    "action": "建仓完成",   "action_type": "buy_3"},
     }
+
+    if date:
+        # ── 从 DB 读取已存储的信号 ─────────────────────────────────────────────
+        import sqlite3, json as _json
+        from trader_analysis.futu_strategy import config as _cfg
+        conn = sqlite3.connect(_cfg.DB_PATH)
+        conn.row_factory = sqlite3.Row
+
+        top_rows = conn.execute(
+            "SELECT signal_type, strength, detail_json FROM top_signal_log "
+            "WHERE code = ? AND date = ?", (code, date)
+        ).fetchall()
+        bottom_rows = conn.execute(
+            "SELECT signal_type, strength, detail_json FROM bottom_signal_log "
+            "WHERE code = ? AND date = ?", (code, date)
+        ).fetchall()
+        conn.close()
+
+        triggered_top = {r["signal_type"]: r for r in top_rows}
+        triggered_bottom = {r["signal_type"]: r for r in bottom_rows}
+
+        def _build_desc(sig_type: str, detail: dict, meta: dict) -> str:
+            """从 detail 数据生成可读描述。"""
+            label = meta["label"]
+            if "close" in detail and "ma5" in detail:
+                return f"{label}: close={detail['close']}, ma5={detail['ma5']}"
+            if "distance_pct" in detail:
+                return f"{label}: 距离{detail['distance_pct']*100:.1f}%"
+            if "rsi1" in detail and "rsi2" in detail:
+                return f"{label}: RSI从{detail['rsi1']}至{detail['rsi2']}"
+            if "macd1" in detail and "macd2" in detail:
+                return f"{label}: MACD从{detail['macd1']}至{detail['macd2']}"
+            if "vol_ratio" in detail:
+                return f"{label}: 量比={detail['vol_ratio']}x"
+            if "shadow_ratio" in detail:
+                return f"{label}: 下影线占比{detail['shadow_ratio']*100:.0f}%"
+            if "ratio" in detail:
+                return f"{label}: 比率={detail['ratio']}"
+            if "gain_pct" in detail:
+                return f"{label}: 涨幅{detail['gain_pct']*100:.1f}%"
+            return f"{label}触发 (强度{detail.get('strength', '')})"
+
+        top_signals = []
+        for sig_type, meta in _TOP_META.items():
+            if sig_type in triggered_top:
+                r = triggered_top[sig_type]
+                detail = _json.loads(r["detail_json"]) if r["detail_json"] else {}
+                top_signals.append({
+                    "signal_type": sig_type, "category": "top", "triggered": True,
+                    "strength": r["strength"],
+                    "description": _build_desc(sig_type, detail, meta), **meta,
+                })
+            else:
+                top_signals.append({
+                    "signal_type": sig_type, "category": "top", "triggered": False,
+                    "strength": 0.0, "description": "未检测到", **meta,
+                })
+
+        bottom_signals = []
+        for sig_type, meta in _BOTTOM_META.items():
+            if sig_type in triggered_bottom:
+                r = triggered_bottom[sig_type]
+                detail = _json.loads(r["detail_json"]) if r["detail_json"] else {}
+                bottom_signals.append({
+                    "signal_type": sig_type, "category": "bottom", "triggered": True,
+                    "strength": r["strength"],
+                    "description": _build_desc(sig_type, detail, meta), **meta,
+                })
+            else:
+                bottom_signals.append({
+                    "signal_type": sig_type, "category": "bottom", "triggered": False,
+                    "strength": 0.0, "description": "未检测到", **meta,
+                })
+
+        return {
+            "code": code, "date": date,
+            "top_signals": top_signals, "bottom_signals": bottom_signals,
+            "top_triggered_count": sum(1 for s in top_signals if s["triggered"]),
+            "bottom_triggered_count": sum(1 for s in bottom_signals if s["triggered"]),
+        }
+
+    # ── 实时计算（无 date 参数）────────────────────────────────────────────────
+    from trader_analysis.futu_strategy.bottom_detector import detect_all as detect_all_bottom
+    from trader_analysis.futu_strategy.top_detector import detect_all
+
+    daily_df = storage.query_recent(code, "1d", limit=300)
+    if daily_df.empty or len(daily_df) < 30:
+        return {"data": None, "message": f"{code} 数据不足，请先更新行情"}
+
+    resp_date = str(daily_df.iloc[-1]["date"]) if "date" in daily_df.columns else ""
 
     triggered_top = {s.signal_type: s for s in detect_all(daily_df)}
     triggered_bottom = {s.signal_type: s for s in detect_all_bottom(daily_df)}
@@ -557,21 +645,13 @@ def get_trade_signals(code: str = Query(..., description="标的代码")):
         if sig_type in triggered_top:
             s = triggered_top[sig_type]
             top_signals.append({
-                "signal_type": sig_type,
-                "category": "top",
-                "triggered": True,
-                "strength": s.strength,
-                "description": s.description,
-                **meta,
+                "signal_type": sig_type, "category": "top", "triggered": True,
+                "strength": s.strength, "description": s.description, **meta,
             })
         else:
             top_signals.append({
-                "signal_type": sig_type,
-                "category": "top",
-                "triggered": False,
-                "strength": 0.0,
-                "description": "未检测到",
-                **meta,
+                "signal_type": sig_type, "category": "top", "triggered": False,
+                "strength": 0.0, "description": "未检测到", **meta,
             })
 
     bottom_signals = []
@@ -579,28 +659,18 @@ def get_trade_signals(code: str = Query(..., description="标的代码")):
         if sig_type in triggered_bottom:
             s = triggered_bottom[sig_type]
             bottom_signals.append({
-                "signal_type": sig_type,
-                "category": "bottom",
-                "triggered": True,
-                "strength": s.strength,
-                "description": s.description,
-                **meta,
+                "signal_type": sig_type, "category": "bottom", "triggered": True,
+                "strength": s.strength, "description": s.description, **meta,
             })
         else:
             bottom_signals.append({
-                "signal_type": sig_type,
-                "category": "bottom",
-                "triggered": False,
-                "strength": 0.0,
-                "description": "未检测到",
-                **meta,
+                "signal_type": sig_type, "category": "bottom", "triggered": False,
+                "strength": 0.0, "description": "未检测到", **meta,
             })
 
     return {
-        "code": code,
-        "date": date,
-        "top_signals": top_signals,
-        "bottom_signals": bottom_signals,
+        "code": code, "date": resp_date,
+        "top_signals": top_signals, "bottom_signals": bottom_signals,
         "top_triggered_count": sum(1 for s in top_signals if s["triggered"]),
         "bottom_triggered_count": sum(1 for s in bottom_signals if s["triggered"]),
     }
@@ -617,6 +687,20 @@ def get_top_signals(
         return {"code": code, "days": days, "count": len(data), "signals": data}
     else:
         data = storage.query_top_signals_all(days)
+        return {"days": days, "count": len(data), "signals": data}
+
+
+@app.get("/api/bottom-signals")
+def get_bottom_signals(
+    code: str | None = Query(default=None, description="标的代码，不传则返回所有标的近期信号"),
+    days: int = Query(default=7, ge=1, le=90),
+):
+    """返回底部信号历史。可按单只标的或全部标的查询。"""
+    if code:
+        data = storage.query_bottom_signals(code, days)
+        return {"code": code, "days": days, "count": len(data), "signals": data}
+    else:
+        data = storage.query_bottom_signals_all(days)
         return {"days": days, "count": len(data), "signals": data}
 
 

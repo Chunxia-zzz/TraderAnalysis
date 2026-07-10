@@ -166,6 +166,19 @@ CREATE TABLE IF NOT EXISTS top_signal_log (
 
 CREATE INDEX IF NOT EXISTS idx_top_signal_code_date
     ON top_signal_log(code, date);
+
+CREATE TABLE IF NOT EXISTS bottom_signal_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    code        TEXT NOT NULL,
+    date        TEXT NOT NULL,
+    signal_type TEXT NOT NULL,
+    strength    REAL,
+    detail_json TEXT,
+    created_at  TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_bottom_signal_code_date
+    ON bottom_signal_log(code, date);
 """
 
 # K 线 + 指标列（写入顺序）
@@ -661,6 +674,58 @@ def query_top_signals_all(days: int = 7) -> list[dict]:
     rows = conn.execute(
         "SELECT id, code, date, signal_type, strength, detail_json, created_at "
         "FROM top_signal_log WHERE date >= date('now', ?) "
+        "ORDER BY date DESC, strength DESC",
+        (f"-{days} days",),
+    ).fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["detail"] = json.loads(d["detail_json"]) if d.get("detail_json") else {}
+        d.pop("detail_json", None)
+        result.append(d)
+    return result
+
+
+# ── 底部信号日志 ────────────────────────────────────────────────────────────────
+
+
+def insert_bottom_signal(code: str, date: str, signal_type: str, strength: float, detail: dict) -> None:
+    """写入一条底部信号记录。"""
+    conn = _get_conn()
+    conn.execute(
+        "INSERT INTO bottom_signal_log (code, date, signal_type, strength, detail_json) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (code, date, signal_type, strength, json.dumps(detail, ensure_ascii=False)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def query_bottom_signals(code: str, days: int = 30) -> list[dict]:
+    """查询某标的最近 N 天的底部信号历史，日期降序。"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT id, code, date, signal_type, strength, detail_json, created_at "
+        "FROM bottom_signal_log WHERE code = ? ORDER BY date DESC, id DESC LIMIT ?",
+        (code, days * 7),  # 每天最多 7 个信号，多取一些
+    ).fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["detail"] = json.loads(d["detail_json"]) if d.get("detail_json") else {}
+        d.pop("detail_json", None)
+        result.append(d)
+    return result
+
+
+def query_bottom_signals_all(days: int = 7) -> list[dict]:
+    """查询所有标的最近 N 天内触发过的底部信号，按日期降序。"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT id, code, date, signal_type, strength, detail_json, created_at "
+        "FROM bottom_signal_log WHERE date >= date('now', ?) "
         "ORDER BY date DESC, strength DESC",
         (f"-{days} days",),
     ).fetchall()

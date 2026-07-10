@@ -22,7 +22,7 @@ def serve(
     port: int = typer.Option(8000, help="监听端口"),
 ) -> None:
     """启动 FastAPI 服务，供前端消费指标和评分数据。"""
-    uvicorn.run("trader_analysis.futu_strategy.api_server:app", host=host, port=port, reload=False)
+    uvicorn.run("trader_analysis.futu_strategy.api_server:app", host=host, port=port, reload=True)
 
 
 @app.command()
@@ -556,6 +556,91 @@ def scan_top(
 
     typer.echo("")
     typer.echo(f"信号已写入 DB（top_signal_log 表），可通过 /api/top-signals 查询。")
+
+
+@app.command("scan-signals")
+def scan_signals(
+    codes: Optional[list[str]] = typer.Option(None, help="标的代码列表（默认全部 watchlist）"),
+    backfill: int = typer.Option(0, help="回溯天数（从已有K线数据回溯计算历史信号，0=仅计算最新）"),
+) -> None:
+    """扫描交易信号（顶部+底部），写入 DB。支持 --backfill 回溯历史。不依赖 OpenD。"""
+    from datetime import date
+
+    from trader_analysis.futu_strategy import config
+    from trader_analysis.futu_strategy.bottom_detector import detect_all as detect_all_bottom
+    from trader_analysis.futu_strategy.storage import (
+        init_db, insert_bottom_signal, insert_top_signal, query_recent,
+    )
+    from trader_analysis.futu_strategy.top_detector import detect_all as detect_all_top
+
+    init_db()
+    code_list = codes if codes else config.WATCHLIST
+
+    if backfill > 0:
+        typer.echo(f"回溯 {backfill} 天，{len(code_list)} 个标的...")
+        total_top = 0
+        total_bottom = 0
+
+        for code in code_list:
+            daily_all = query_recent(code, "1d", limit=backfill + 300)
+            if daily_all.empty or len(daily_all) < 60:
+                continue
+
+            total_rows = len(daily_all)
+            fill_count = min(backfill, total_rows - 30)
+
+            for i in range(fill_count, 0, -1):
+                end_idx = total_rows - i + 1
+                daily_slice = daily_all.iloc[:end_idx]
+                signal_date = str(daily_slice.iloc[-1].get("date", ""))
+
+                top_sigs = detect_all_top(daily_slice)
+                for sig in top_sigs:
+                    try:
+                        insert_top_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
+                        total_top += 1
+                    except Exception:
+                        pass
+
+                bottom_sigs = detect_all_bottom(daily_slice)
+                for sig in bottom_sigs:
+                    try:
+                        insert_bottom_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
+                        total_bottom += 1
+                    except Exception:
+                        pass
+
+        typer.echo(f"回溯完成，写入 {total_top} 条顶部信号，{total_bottom} 条底部信号。")
+        return
+
+    # 仅计算最新一天
+    today = date.today().isoformat()
+    typer.echo(f"扫描交易信号中... ({len(code_list)} 只标的，日期={today})")
+
+    top_count = 0
+    bottom_count = 0
+    for code in code_list:
+        daily_df = query_recent(code, "1d", limit=300)
+        if daily_df.empty or len(daily_df) < 30:
+            continue
+
+        top_sigs = detect_all_top(daily_df)
+        for sig in top_sigs:
+            try:
+                insert_top_signal(code, today, sig.signal_type, sig.strength, sig.detail)
+                top_count += 1
+            except Exception:
+                pass
+
+        bottom_sigs = detect_all_bottom(daily_df)
+        for sig in bottom_sigs:
+            try:
+                insert_bottom_signal(code, today, sig.signal_type, sig.strength, sig.detail)
+                bottom_count += 1
+            except Exception:
+                pass
+
+    typer.echo(f"完成，写入 {top_count} 条顶部信号，{bottom_count} 条底部信号。")
 
 
 @app.command("grid-status")
