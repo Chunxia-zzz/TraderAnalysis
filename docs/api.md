@@ -1404,3 +1404,133 @@ function renderDimensions(data) {
   return DIMENSIONS.filter(dim => data[dim.key] !== null)
 }
 ```
+
+---
+
+### GET `/api/trade-signals`
+
+实时运行或查询历史交易信号（顶部预警 + 底部买入），供 Dashboard 交易信号面板使用。
+
+**请求参数**
+
+| 参数 | 位置 | 类型 | 说明 |
+|------|------|------|------|
+| `code` | query | `string` | 必填，标的代码 |
+| `date` | query | `string` | 可选，`YYYY-MM-DD`。传入则从 DB 读取该日已存储的信号；不传则实时计算最新 |
+
+**示例调用**
+
+```
+GET /api/trade-signals?code=US.AAPL           → 实时计算最新信号
+GET /api/trade-signals?code=US.AAPL&date=2026-07-08  → 查询历史信号
+```
+
+**响应 200**
+
+```json
+{
+  "code": "US.AAPL",
+  "date": "2026-07-08",
+  "top_signals": [
+    {
+      "signal_type": "NEAR_HIGH",
+      "category": "top",
+      "triggered": true,
+      "strength": 0.955,
+      "description": "价格接近120日内前高: 距前高0.2%",
+      "label": "接近前高",
+      "action": "注意减仓",
+      "action_type": "sell_warn"
+    }
+  ],
+  "bottom_signals": [
+    {
+      "signal_type": "DEEP_V",
+      "category": "bottom",
+      "triggered": true,
+      "strength": 0.862,
+      "description": "深V确认: 跌破ma60(1520.13)后收回，下影线占比86%",
+      "label": "深V确认",
+      "action": "试探建仓",
+      "action_type": "buy_1"
+    }
+  ],
+  "top_triggered_count": 1,
+  "bottom_triggered_count": 1
+}
+```
+
+**顶部信号类型（11 个）**
+
+| signal_type | label | action | action_type |
+|-------------|-------|--------|-------------|
+| NEAR_HIGH | 接近前高 | 注意减仓 | sell_warn |
+| RSI_TOP_DIV | RSI顶背离 | 建议减仓1/3 | sell_1 |
+| MACD_TOP_DIV | MACD顶背离 | 建议减仓1/3 | sell_1 |
+| VOLUME_STALL | 天量滞涨 | 注意减仓 | sell_warn |
+| UPPER_SHADOW | 连续长上影线 | 注意减仓 | sell_warn |
+| BOLL_SQUEEZE | 布林高位收口 | 注意减仓 | sell_warn |
+| ACCELERATION | 加速赶顶 | 注意减仓 | sell_warn |
+| BREAK_MA5 | 跌破MA5 | 减仓2/3 | sell_2 |
+| MA5_DEATH_CROSS | MA5死叉MA10 | 建议清仓 | sell_3 |
+| MA5_NO_RECOVERY | 持续调整 | 观望 | sell_warn |
+| EMERGENCY_STOP | 紧急止损 | 立即清仓 | sell_emergency |
+
+**底部信号类型（7 个）**
+
+| signal_type | label | action | action_type |
+|-------------|-------|--------|-------------|
+| NEAR_SUPPORT | 均线支撑 | 关注 | buy_watch |
+| DEEP_V | 深V确认 | 试探建仓 | buy_1 |
+| VOLUME_SHRINK | 缩量企稳 | 关注 | buy_watch |
+| RSI_BOTTOM_DIV | RSI底背离 | 加仓确认 | buy_2 |
+| W_BOTTOM | W底形态 | 加仓确认 | buy_2 |
+| SUPPORT_CONFIRM | 支撑确认 | 关注 | buy_watch |
+| RECLAIM_MA5 | 站上MA5 | 建仓完成 | buy_3 |
+
+---
+
+### GET `/api/top-signals`
+
+查询顶部信号历史记录（从 `top_signal_log` 表）。
+
+**请求参数**
+
+| 参数 | 位置 | 类型 | 说明 |
+|------|------|------|------|
+| `code` | query | `string` | 可选，标的代码。不传则返回所有标的 |
+| `days` | query | `int` | 可选，回看天数，默认 7，范围 1-90 |
+
+**响应 200**
+
+```json
+{
+  "code": "US.AAPL",
+  "days": 7,
+  "count": 5,
+  "signals": [
+    {
+      "id": 1,
+      "code": "US.AAPL",
+      "date": "2026-07-10",
+      "signal_type": "NEAR_HIGH",
+      "strength": 0.955,
+      "detail": {"all_time_high": 316.94, "close": 316.22, "distance_pct": 0.0023},
+      "created_at": "2026-07-10 09:07:34"
+    }
+  ]
+}
+```
+
+---
+
+### GET `/api/bottom-signals`
+
+查询底部信号历史记录（从 `bottom_signal_log` 表）。参数和响应格式同 `/api/top-signals`。
+
+**请求参数**
+
+| 参数 | 位置 | 类型 | 说明 |
+|------|------|------|------|
+| `code` | query | `string` | 可选，标的代码。不传则返回所有标的 |
+| `days` | query | `int` | 可选，回看天数，默认 7，范围 1-90 |

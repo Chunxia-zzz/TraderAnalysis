@@ -4,7 +4,32 @@
 
 ---
 
-## [Unreleased] — 2026-07-05
+## [Unreleased] — 2026-07-10
+
+### 后端
+
+- **底部信号系统重写**（`bottom_detector.py`）：按技术方案实现 7 个底部信号
+  - NEAR_SUPPORT（均线支撑）、DEEP_V（深V确认）、VOLUME_SHRINK（缩量企稳）、RSI_BOTTOM_DIV（RSI底背离）、W_BOTTOM（W底形态）、SUPPORT_CONFIRM（支撑确认）、RECLAIM_MA5（站上MA5）
+  - DEEP_V 不依赖距离门槛，适配高波动动量资产（low < MA < close 即可）
+- **新增 `BOTTOM_DETECTION_CONFIG`**（`config.py`）：7 个信号的独立配置参数
+- **新增 `bottom_signal_log` 表**（`storage.py`）：底部信号持久化存储 + 查询函数
+- **新增 `scan-signals` CLI 命令**（`cli.py`）：支持 `--backfill N` 回溯历史顶部+底部信号
+- **`/api/trade-signals` 支持 date 参数**：传入日期查历史已存信号，不传则实时计算
+- **新增 `/api/bottom-signals` 端点**：底部信号历史查询（镜像 `/api/top-signals`）
+- **`runner.py` 集成底部信号检测**：每日循环中自动检测并存储底部信号
+- **`serve` 命令启用热重载**：`reload=True`，开发时改代码自动生效
+- **"持续调整"标签调整**：MA5_NO_RECOVERY 从"建议清仓"改为"观望"
+
+### 前端
+
+- **交易信号按日期筛选**（`Dashboard.vue`）：切换日期时信号面板同步更新
+- **底部信号从 4 个升级到 7 个**：适配后端新信号系统
+- **信号加载合并到 loadData**：移除独立 loadSignals，信号与评分/分析统一加载
+- **新增 `getBottomSignals` API 函数**（`trader.js`）
+
+---
+
+## [Previous] — 2026-07-05
 
 ### 前端
 
