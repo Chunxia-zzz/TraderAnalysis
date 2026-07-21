@@ -128,6 +128,17 @@ WEEKLY_INDICATOR_CONFIG: dict = {
     "boll": {"length": 20, "std": 2},
 }
 
+# 4小时线指标配置（用于 EMA 飘带空转多/多转空信号）
+FOUR_HOUR_INDICATOR_CONFIG: dict = {
+    "ema": [5, 10, 15, 20, 25, 30],
+    "rsi": [6, 12, 24],
+    "macd": {"fast": 12, "slow": 26, "signal": 9},
+    "atr": [14],
+}
+
+# 4H K 线初始拉取数量（3个月，每天约2根美股4H = ~130根）
+INIT_4H_KLINE_COUNT: int = 150
+
 # ── 持久化存储 ─────────────────────────────────────────────────────────────────
 _PROJECT_ROOT = os.path.normpath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..")

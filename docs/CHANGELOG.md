@@ -4,7 +4,29 @@
 
 ---
 
-## [Unreleased] — 2026-07-10
+## [Unreleased] — 2026-07-21
+
+### 后端
+
+- **标的池扩充至 203 只**：新增标普/纳斯达克 $50B+ 市值龙头股（金融/医疗/消费/工业/能源/国际），11 只 S&P 行业 ETF，商品对冲 ETF
+- **4H K 线支持**：新增 `FOUR_HOUR_INDICATOR_CONFIG`，`daily_update.py` 增量更新支持 4H（KLType.K_240M），ktype="4h" 存入 `kline_indicators` 表
+- **EMA 交叉信号引擎**（`ema_cross_detector.py`）：检测 EMA5/EMA30 金叉死叉，支持日线+4H 双维度
+  - 信号类型：`EMA_CROSS_BULL_1D` / `EMA_CROSS_BULL_4H`（空转多）、`EMA_CROSS_BEAR_1D` / `EMA_CROSS_BEAR_4H`（多转空）
+  - 集成到 `scan-signals` 命令（含 `--backfill` 回溯）
+- **新增 `GET /api/ema-cross-signals` 端点**：按日期查询 EMA 交叉信号，支持 `?date=YYYY-MM-DD`
+- **基本面目标价批量拉取脚本**（`scripts/fetch_fundamental_targets.py`）：拉取分析师平均目标价 + 晨星公允价值，写入 watchlist 表
+- **`/api/scores/overview` 性能优化**：从逐标的查询改为批量查询，响应时间 4s → 0.2s
+- **新增一次性脚本** `scripts/backfill_klines.py`：补全新标的日线/周线/4H 数据
+
+### 前端
+
+- **"个股主升趋势"页面新增 EMA 交叉信号 section**：4H/日线 tab 切换，显示空转多/多转空信号
+- **日期筛选改为按钮触发**：选择日期后点"查询"按钮执行，EMA 信号跟随日期联动
+- **标的池管理页面分页**：默认 20 条/页，可切换 50/100
+
+---
+
+## [v0.9] — 2026-07-10
 
 ### 后端
 

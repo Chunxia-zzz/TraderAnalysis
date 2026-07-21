@@ -1534,3 +1534,36 @@ GET /api/trade-signals?code=US.AAPL&date=2026-07-08  → 查询历史信号
 |------|------|------|------|
 | `code` | query | `string` | 可选，标的代码。不传则返回所有标的 |
 | `days` | query | `int` | 可选，回看天数，默认 7，范围 1-90 |
+
+---
+
+### GET `/api/ema-cross-signals`
+
+查询 EMA5/EMA30 交叉信号（日线+4H 双维度）。
+
+**请求参数**
+
+| 参数 | 位置 | 类型 | 说明 |
+|------|------|------|------|
+| `date` | query | `string` | 可选，指定日期 YYYY-MM-DD。不传则返回最近一次 scan 的信号 |
+
+**响应示例**
+
+```json
+{
+  "bull_1d": [{"code": "US.GEV", "date": "2026-07-21", "signal_type": "EMA_CROSS_BULL_1D", "strength": 0.54, "detail": {"close": 1079.18, "ema5": 1064.24, "ema30": 1059.65, "spread_pct": 0.433}}],
+  "bull_4h": [],
+  "bear_1d": [{"code": "US.ASML", "date": "2026-07-21", "signal_type": "EMA_CROSS_BEAR_1D", "strength": 0.51, "detail": {"close": 1739.02, "ema5": 1768.27, "ema30": 1769.61}}],
+  "bear_4h": [{"code": "US.CEG", "date": "2026-07-21", "signal_type": "EMA_CROSS_BEAR_4H", "strength": 0.50, "detail": {"close": 253.5, "ema5": 253.57, "ema30": 253.57}}],
+  "total": 12
+}
+```
+
+**信号类型说明**
+
+| signal_type | 含义 | 存入表 |
+|-------------|------|--------|
+| `EMA_CROSS_BULL_1D` | 日线 EMA5 上穿 EMA30（空转多） | bottom_signal_log |
+| `EMA_CROSS_BULL_4H` | 4H EMA5 上穿 EMA30（空转多） | bottom_signal_log |
+| `EMA_CROSS_BEAR_1D` | 日线 EMA5 下穿 EMA30（多转空） | top_signal_log |
+| `EMA_CROSS_BEAR_4H` | 4H EMA5 下穿 EMA30（多转空） | top_signal_log |

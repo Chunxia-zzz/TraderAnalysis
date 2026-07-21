@@ -577,14 +577,20 @@ def scan_signals(
     code_list = codes if codes else config.WATCHLIST
 
     if backfill > 0:
+        from trader_analysis.futu_strategy.ema_cross_detector import detect_ema_cross
+
         typer.echo(f"回溯 {backfill} 天，{len(code_list)} 个标的...")
         total_top = 0
         total_bottom = 0
+        total_ema = 0
 
         for code in code_list:
             daily_all = query_recent(code, "1d", limit=backfill + 300)
             if daily_all.empty or len(daily_all) < 60:
                 continue
+
+            # 4H 数据（用于 EMA 交叉回溯）
+            four_h_all = query_recent(code, "4h", limit=backfill * 2 + 100)
 
             total_rows = len(daily_all)
             fill_count = min(backfill, total_rows - 30)
@@ -610,15 +616,47 @@ def scan_signals(
                     except Exception:
                         pass
 
-        typer.echo(f"回溯完成，写入 {total_top} 条顶部信号，{total_bottom} 条底部信号。")
+                # EMA 交叉 — 日线
+                ema_sigs_1d = detect_ema_cross(daily_slice, timeframe="1d")
+                for sig in ema_sigs_1d:
+                    try:
+                        if "BULL" in sig.signal_type:
+                            insert_bottom_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
+                        else:
+                            insert_top_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
+                        total_ema += 1
+                    except Exception:
+                        pass
+
+                # EMA 交叉 — 4H（找到该日期对应的最后一根 4H K 线位置）
+                if not four_h_all.empty and len(four_h_all) >= 2:
+                    # 4H date 格式为 "YYYY-MM-DD HH:MM:SS"，截取日期部分匹配
+                    mask = four_h_all["date"].str[:10] <= signal_date
+                    four_h_slice = four_h_all[mask]
+                    if len(four_h_slice) >= 2:
+                        ema_sigs_4h = detect_ema_cross(four_h_slice, timeframe="4h")
+                        for sig in ema_sigs_4h:
+                            try:
+                                if "BULL" in sig.signal_type:
+                                    insert_bottom_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
+                                else:
+                                    insert_top_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
+                                total_ema += 1
+                            except Exception:
+                                pass
+
+        typer.echo(f"回溯完成，写入 {total_top} 条顶部信号，{total_bottom} 条底部信号，{total_ema} 条EMA交叉信号。")
         return
 
     # 仅计算最新一天
     today = date.today().isoformat()
     typer.echo(f"扫描交易信号中... ({len(code_list)} 只标的，日期={today})")
 
+    from trader_analysis.futu_strategy.ema_cross_detector import detect_ema_cross
+
     top_count = 0
     bottom_count = 0
+    ema_count = 0
     for code in code_list:
         daily_df = query_recent(code, "1d", limit=300)
         if daily_df.empty or len(daily_df) < 30:
@@ -640,7 +678,33 @@ def scan_signals(
             except Exception:
                 pass
 
-    typer.echo(f"完成，写入 {top_count} 条顶部信号，{bottom_count} 条底部信号。")
+        # EMA 交叉信号 — 日线维度
+        ema_sigs_1d = detect_ema_cross(daily_df, timeframe="1d")
+        for sig in ema_sigs_1d:
+            try:
+                if "BULL" in sig.signal_type:
+                    insert_bottom_signal(code, today, sig.signal_type, sig.strength, sig.detail)
+                else:
+                    insert_top_signal(code, today, sig.signal_type, sig.strength, sig.detail)
+                ema_count += 1
+            except Exception:
+                pass
+
+        # EMA 交叉信号 — 4H 维度
+        four_h_df = query_recent(code, "4h", limit=100)
+        if not four_h_df.empty and len(four_h_df) >= 2:
+            ema_sigs_4h = detect_ema_cross(four_h_df, timeframe="4h")
+            for sig in ema_sigs_4h:
+                try:
+                    if "BULL" in sig.signal_type:
+                        insert_bottom_signal(code, today, sig.signal_type, sig.strength, sig.detail)
+                    else:
+                        insert_top_signal(code, today, sig.signal_type, sig.strength, sig.detail)
+                    ema_count += 1
+                except Exception:
+                    pass
+
+    typer.echo(f"完成，写入 {top_count} 条顶部信号，{bottom_count} 条底部信号，{ema_count} 条EMA交叉信号。")
 
 
 @app.command("grid-status")

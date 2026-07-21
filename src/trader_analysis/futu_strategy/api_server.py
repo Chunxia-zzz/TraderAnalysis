@@ -282,15 +282,35 @@ def get_scores_overview(
 
     conn = sqlite3.connect(app_config.DB_PATH)
     conn.row_factory = sqlite3.Row
+
+    # 批量查询：一次拉取所有标的最近20根日线
+    # 先找出截止日期（只取最近 30 天数据减少扫描量）
+    codes = [r["code"] for r in rows]
+    placeholders = ",".join(["?"] * len(codes))
+    from datetime import datetime, timedelta
+    cutoff_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    all_kline_rows = conn.execute(
+        f"""SELECT code, close, ma5, ma10, ma20, ma60, rsi6, macd, dif, dea, volume, vol_ma20,
+            ema5, ema10, ema15, ema20, ema25, ema30, date
+        FROM kline_indicators
+        WHERE code IN ({placeholders}) AND ktype = '1d' AND date >= ?
+        ORDER BY code, date DESC""",
+        codes + [cutoff_date],
+    ).fetchall()
+
+    # 按 code 分组（只保留最近 20 根）
+    kline_by_code: dict[str, list] = {}
+    for row in all_kline_rows:
+        code = row["code"]
+        if code not in kline_by_code:
+            kline_by_code[code] = []
+        if len(kline_by_code[code]) < 20:
+            kline_by_code[code].append(row)
+
     for r in rows:
-        kline_rows = conn.execute(
-            "SELECT close, ma5, ma10, ma20, ma60, rsi6, macd, dif, dea, volume, vol_ma20,"
-            " ema5, ema10, ema15, ema20, ema25, ema30 "
-            "FROM kline_indicators WHERE code = ? AND ktype = '1d' ORDER BY date DESC LIMIT 20",
-            (r["code"],),
-        ).fetchall()
+        kline_rows = kline_by_code.get(r["code"], [])
         if kline_rows:
-            k = kline_rows[0]
+            k = kline_rows[0]  # 最新一根（rn=1）
             close = float(k["close"]) if k["close"] else None
             ma5 = float(k["ma5"]) if k["ma5"] else None
             r["close"] = round(close, 2) if close else None
@@ -506,6 +526,74 @@ def get_grid_orders(
     state_manager.init_grid_tables()
     orders = state_manager.query_orders(config_id, limit)
     return {"total": len(orders), "orders": orders}
+
+
+# ── EMA 交叉信号接口 ──────────────────────────────────────────────────────────
+
+
+@app.get("/api/ema-cross-signals")
+def get_ema_cross_signals(
+    date: str | None = Query(default=None, description="指定日期(YYYY-MM-DD)，查该日期的信号"),
+):
+    """查询指定日期的 EMA 交叉信号（日线+4H两个维度）。不传 date 则取最新。"""
+    import json as _json
+
+    conn = storage._get_conn()
+
+    if date:
+        # 精确匹配该日期写入的信号
+        date_filter = "AND date = ?"
+        params = (date,)
+    else:
+        # 取最近一次 scan 的日期
+        row = conn.execute(
+            "SELECT MAX(date) as d FROM bottom_signal_log WHERE signal_type LIKE 'EMA_CROSS%'"
+        ).fetchone()
+        latest = row["d"] if row else None
+        if not latest:
+            conn.close()
+            return {"bull_1d": [], "bull_4h": [], "bear_1d": [], "bear_4h": [], "total": 0}
+        date_filter = "AND date = ?"
+        params = (latest,)
+
+    # 从底部信号表取 BULL（空转多）
+    bull_rows = conn.execute(
+        "SELECT code, date, signal_type, strength, detail_json, created_at "
+        "FROM bottom_signal_log WHERE signal_type LIKE 'EMA_CROSS_BULL%' "
+        f"{date_filter} ORDER BY strength DESC",
+        params,
+    ).fetchall()
+
+    # 从顶部信号表取 BEAR（多转空）
+    bear_rows = conn.execute(
+        "SELECT code, date, signal_type, strength, detail_json, created_at "
+        "FROM top_signal_log WHERE signal_type LIKE 'EMA_CROSS_BEAR%' "
+        f"{date_filter} ORDER BY strength DESC",
+        params,
+    ).fetchall()
+    conn.close()
+
+    def _parse(rows):
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["detail"] = _json.loads(d.pop("detail_json", "{}") or "{}")
+            # 补充 name
+            d["name"] = d["detail"].get("name", "")
+            result.append(d)
+        return result
+
+    bull_signals = _parse(bull_rows)
+    bear_signals = _parse(bear_rows)
+
+    # 按维度分组
+    return {
+        "bull_1d": [s for s in bull_signals if s["signal_type"] == "EMA_CROSS_BULL_1D"],
+        "bull_4h": [s for s in bull_signals if s["signal_type"] == "EMA_CROSS_BULL_4H"],
+        "bear_1d": [s for s in bear_signals if s["signal_type"] == "EMA_CROSS_BEAR_1D"],
+        "bear_4h": [s for s in bear_signals if s["signal_type"] == "EMA_CROSS_BEAR_4H"],
+        "total": len(bull_signals) + len(bear_signals),
+    }
 
 
 # ── 顶背离信号接口 ────────────────────────────────────────────────────────────
