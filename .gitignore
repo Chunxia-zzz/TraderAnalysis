@@ -1,6 +1,9 @@
 # Claude Code local files
 .claude/
 
+# WorkBuddy local files
+.workbuddy/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
