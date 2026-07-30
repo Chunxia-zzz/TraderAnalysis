@@ -49,26 +49,35 @@ def health_check():
 @app.get("/api/indicators")
 def get_indicators(
     code: str,
-    ktype: str = Query(default="1d", pattern="^(1d|1w)$"),
+    ktype: str = Query(default="1d", pattern="^(1d|4h|1w)$"),
     days: int = Query(default=60, ge=1, le=500),
 ):
     """返回某标的某周期最近 N 根 K 线 + 全部指标（日期升序，供图表使用）。"""
     rows = storage.query_range(code, ktype, days)
     if not rows:
-        ktype_label = {"1d": "日线", "1w": "周线"}.get(ktype, ktype)
+        ktype_label = {"1d": "日线", "4h": "4小时线", "1w": "周线"}.get(ktype, ktype)
         return {
             "code": code,
             "ktype": ktype,
             "data": [],
             "message": f"{code} 暂无{ktype_label}数据，请等待历史数据导入完成",
         }
+    # 4H 数据将日期转为 Unix 时间戳（秒），供轻量级图表正确显示
+    if ktype == "4h":
+        from datetime import datetime as dt
+        for r in rows:
+            if r.get("date"):
+                try:
+                    r["date"] = int(dt.strptime(r["date"], "%Y-%m-%d %H:%M:%S").timestamp())
+                except (ValueError, TypeError):
+                    pass
     return {"code": code, "ktype": ktype, "data": rows}
 
 
 @app.get("/api/indicators/latest")
 def get_latest(
     code: str,
-    ktype: str = Query(default="1d", pattern="^(1d|1w)$"),
+    ktype: str = Query(default="1d", pattern="^(1d|4h|1w)$"),
 ):
     """返回最新一根的所有指标值。"""
     result = storage.query_latest(code, ktype)
