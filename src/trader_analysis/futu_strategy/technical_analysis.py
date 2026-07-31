@@ -355,3 +355,275 @@ def analyze_trend(df: pd.DataFrame) -> dict[str, Any]:
         "atr14":      round(atr14, 4) if atr14 else None,
         "atr_pct":    atr_pct,
     }
+
+
+# ── 道氏理论三层趋势 ────────────────────────────────────────────────────────────
+
+
+def analyze_dow_trend(
+    daily_df: pd.DataFrame,
+    weekly_df: pd.DataFrame,
+    morningstar_value: float | None = None,
+    close_price: float | None = None,
+) -> dict:
+    """道氏理论三层趋势分析 + 基本面估值综合策略。
+
+    潮汐（周线）：周线 MA20 vs MA60 → 大级别方向
+    波浪（日线）：日线 MA20 vs MA60 → 中期波段
+    涟漪（日线）：RSI + BB位置 → 短期入场时机
+    估值：收盘价 vs 晨星公允价值 → 安全边际
+
+    综合策略基于潮汐×估值×波浪 8 种核心场景。
+    """
+    if daily_df.empty:
+        return {"tide": "neutral", "wave": "neutral", "ripple": {}, "signal": "无数据", "signal_desc": "", "trade_hint": ""}
+    def _ma(df, col):
+        val = df.iloc[-1].get(col)
+        return float(val) if val is not None and not math.isnan(val) else None
+
+    def _get(df, col):
+        val = df.iloc[-1].get(col)
+        return float(val) if val is not None and not math.isnan(val) else None
+
+    # ── 潮汐：周线 MA20 vs MA60 ──
+    tide = "neutral"
+    tide_ma20 = tide_ma60 = None
+    if not weekly_df.empty:
+        # 优先用 DB 中的指标值，None 时回退到 on-the-fly 计算
+        w_last = weekly_df.iloc[-1]
+        tide_ma20 = _ma(weekly_df, "ma20")
+        tide_ma60 = _ma(weekly_df, "ma60")
+
+        if tide_ma20 is None and len(weekly_df) >= 20:
+            tide_ma20 = float(weekly_df["close"].tail(20).mean())
+        if tide_ma60 is None and len(weekly_df) >= 60:
+            tide_ma60 = float(weekly_df["close"].tail(60).mean())
+
+        if tide_ma20 and tide_ma60:
+            if tide_ma20 > tide_ma60:
+                tide = "up"
+            elif tide_ma20 < tide_ma60:
+                tide = "down"
+
+    # ── 波浪：日线 MA20 vs MA60 ──
+    wave = "neutral"
+    wave_ma20 = wave_ma60 = None
+    if not daily_df.empty:
+        wave_ma20 = _ma(daily_df, "ma20")
+        wave_ma60 = _ma(daily_df, "ma60")
+        if wave_ma20 and wave_ma60:
+            if wave_ma20 > wave_ma60:
+                wave = "up"
+            elif wave_ma20 < wave_ma60:
+                wave = "down"
+
+    # ── 估值（需要提前，给涟漪的量能判断用）──
+    valuation = "fair"
+    discount_pct = None
+    if morningstar_value and morningstar_value > 0 and close_price and close_price > 0:
+        discount_pct = round((morningstar_value - close_price) / close_price * 100, 1)
+        if discount_pct > 15:
+            valuation = "undervalued"
+        elif discount_pct < -10:
+            valuation = "overvalued"
+
+    # ── 涟漪 ──
+    ripple = {"rsi12": None, "bb_pct_b": None, "near_support": False}
+    vol_ratio = None
+    vol_context = ""
+    if not daily_df.empty:
+        last = daily_df.iloc[-1]
+        rsi12 = _get(daily_df, "rsi12")
+        ripple["rsi12"] = round(rsi12, 1) if rsi12 else None
+
+        close = _get(daily_df, "close") or 0
+        boll_upper = _get(daily_df, "boll_upper")
+        boll_lower = _get(daily_df, "boll_lower")
+        if boll_upper and boll_lower and (boll_upper - boll_lower) > 0:
+            ripple["bb_pct_b"] = round((close - boll_lower) / (boll_upper - boll_lower), 3)
+
+        # 量能
+        vol = _get(daily_df, "volume")
+        vma20 = _get(daily_df, "vol_ma20")
+        if vol and vma20 and vma20 > 0:
+            vol_ratio = round(vol / vma20, 2)
+            if vol_ratio >= 2.0:
+                if valuation == "undervalued" and tide in ("up", "neutral"):
+                    vol_context = "低位放量，可能为吸筹（低估区间 + 放量）"
+                elif valuation == "overvalued":
+                    vol_context = "高位放量，警惕派发（高估区间 + 放量）"
+                elif tide == "up" and wave == "down":
+                    vol_context = "涨潮回调放量，抛压较重，等缩量企稳"
+                elif tide == "down" and wave == "up":
+                    vol_context = "退潮反弹放量，可能短期底部确认"
+                else:
+                    vol_context = f"放量 {vol_ratio:.1f}x，关注后续方向"
+            elif vol_ratio >= 1.5:
+                if tide == "up" and wave == "down":
+                    vol_context = "涨潮回调温和放量，关注是否缩量"
+                elif tide == "down" and wave == "down":
+                    vol_context = "退潮下跌带量，空方力量强"
+                else:
+                    vol_context = f"温和放量 {vol_ratio:.1f}x"
+            elif vol_ratio <= 0.6:
+                if tide == "up" and wave == "down":
+                    vol_context = "涨潮回调缩量，健康调整"
+                elif tide == "down" and wave == "up":
+                    vol_context = "退潮反弹缩量，多方无力"
+                else:
+                    vol_context = "缩量，市场观望"
+
+        # 是否接近日线支撑（MA60 或布林下轨 2%内）
+        ma60 = _get(daily_df, "ma60")
+        near_support = False
+        if ma60 and close:
+            near_support = close <= ma60 * 1.02 and close >= ma60 * 0.98
+        if boll_lower and close and not near_support:
+            near_support = close <= boll_lower * 1.02 and close >= boll_lower * 0.98
+        ripple["near_support"] = near_support
+
+    # ── 综合策略（潮汐 × 估值 × 波浪）──
+    signal = "观望"
+    signal_desc = ""
+    trade_hint = ""
+    strategy_cls = "neutral"  # css class for frontend
+
+    # ── 涨潮 + 低估 ──
+    if tide == "up" and valuation == "undervalued":
+        if wave == "up":
+            signal = "顺势做多"
+            signal_desc = "低位+涨潮+上升浪三重共振，最佳做多窗口"
+            trade_hint = "积极持仓，止损设在日线MA60下方"
+            strategy_cls = "strong"
+        elif wave == "down":
+            signal = "回调加仓"
+            signal_desc = "涨潮中的低估回调，加仓良机"
+            trade_hint = "日线回调至支撑位可加仓"
+            if ripple.get("near_support"):
+                trade_hint += "（已靠近支撑）"
+            if ripple.get("rsi12") and ripple["rsi12"] < 40:
+                trade_hint += "（RSI进入超卖区）"
+            strategy_cls = "buy"
+        else:
+            signal = "等突破做多"
+            signal_desc = "涨潮低估但波浪不明，等日线确认"
+            trade_hint = "等待日线MA20上穿MA60后入场"
+            strategy_cls = "neutral"
+
+    # ── 涨潮 + 高估 ──
+    elif tide == "up" and valuation == "overvalued":
+        if wave == "up":
+            signal = "等回踩做多"
+            signal_desc = "高位顺大势但估值偏贵，不宜追高"
+            trade_hint = "等待日线回踩MA60支撑再入场"
+            strategy_cls = "caution"
+        elif wave == "down":
+            signal = "观望等跌"
+            signal_desc = "高位回调中，等估值回归+支撑确认"
+            trade_hint = "耐心等跌到支撑位或折扣率>15%"
+            strategy_cls = "neutral"
+        else:
+            signal = "轻仓观望"
+            signal_desc = "高位+方向不明，多看少动"
+            trade_hint = "控制仓位，不追高"
+            strategy_cls = "neutral"
+
+    # ── 退潮 + 低估 ──
+    elif tide == "down" and valuation == "undervalued":
+        if wave == "up":
+            signal = "短线反弹"
+            signal_desc = "退潮中的低估反弹，仅限短线博弈"
+            trade_hint = "小仓位试多，严格止损（日线MA60下方5%）；建议等潮汐转涨潮再重仓"
+            strategy_cls = "caution"
+        elif wave == "down":
+            signal = "空仓等待"
+            signal_desc = "便宜但趋势向下，不要接飞刀"
+            trade_hint = "耐心等周线MA20上穿MA60后再关注"
+            strategy_cls = "sell"
+        else:
+            signal = "持续观望"
+            signal_desc = "退潮低估+方向不明"
+            trade_hint = "加入关注列表，等趋势反转信号"
+            strategy_cls = "neutral"
+
+    # ── 退潮 + 高估 ──
+    elif tide == "down" and valuation == "overvalued":
+        if wave == "up":
+            signal = "反弹做空"
+            signal_desc = "退潮+高估+反弹=最佳做空窗口"
+            trade_hint = "日线反弹至压力位可做空，或买入反向ETF对冲"
+            strategy_cls = "sell"
+        elif wave == "down":
+            signal = "回避/做空"
+            signal_desc = "退潮+高估+下跌，最差做多环境"
+            trade_hint = "空仓等待或做空/对冲；等待估值回归到低估区间"
+            strategy_cls = "sell"
+        else:
+            signal = "不宜做多"
+            signal_desc = "退潮高估+方向不明"
+            trade_hint = "回避多头仓位"
+            strategy_cls = "sell"
+
+    # ── 估值中性（fair）的各种情况 ──
+    elif valuation == "fair":
+        if tide == "up" and wave == "up":
+            signal = "谨慎做多"
+            signal_desc = "涨潮+上升浪但估值无折价"
+            trade_hint = "可持仓但不宜加仓；等回调到低估区间再加"
+            strategy_cls = "caution"
+        elif tide == "up" and wave == "down":
+            signal = "等回调做多"
+            signal_desc = "涨潮回调，估值合理可接"
+            trade_hint = "日线回调到位可轻仓介入"
+            strategy_cls = "buy"
+        elif tide == "down" and wave == "up":
+            signal = "反弹减仓"
+            signal_desc = "退潮反弹，适时减仓"
+            trade_hint = "若持仓可借反弹减仓"
+            strategy_cls = "caution"
+        elif tide == "down" and wave == "down":
+            signal = "空仓观望"
+            signal_desc = "退潮下跌，估值不低"
+            trade_hint = "等待更好的时机"
+            strategy_cls = "sell"
+        else:
+            signal = "观望"
+            signal_desc = "方向不明，等待信号"
+            trade_hint = "多看少动"
+            strategy_cls = "neutral"
+
+    # ── 潮汐不明 ──
+    elif tide == "neutral":
+        if wave == "up":
+            signal = "轻仓试多"
+            signal_desc = "潮汐不明但日线偏多"
+            trade_hint = "轻仓参与，注意周线方向变化"
+            strategy_cls = "caution"
+        elif wave == "down":
+            signal = "观望"
+            signal_desc = "潮汐不明+日线偏空"
+            trade_hint = "不参与，等周线给出方向"
+            strategy_cls = "neutral"
+        else:
+            signal = "观望"
+            signal_desc = "多周期均无明确方向"
+            trade_hint = "等待方向明确"
+            strategy_cls = "neutral"
+
+    return {
+        "tide": tide,
+        "tide_ma20": round(tide_ma20, 2) if tide_ma20 else None,
+        "tide_ma60": round(tide_ma60, 2) if tide_ma60 else None,
+        "wave": wave,
+        "wave_ma20": round(wave_ma20, 2) if wave_ma20 else None,
+        "wave_ma60": round(wave_ma60, 2) if wave_ma60 else None,
+        "ripple": ripple,
+        "vol_ratio": vol_ratio,
+        "vol_context": vol_context,
+        "valuation": valuation,
+        "discount_pct": discount_pct,
+        "signal": signal,
+        "signal_desc": signal_desc,
+        "trade_hint": trade_hint,
+        "strategy_cls": strategy_cls,
+    }

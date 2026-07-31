@@ -116,8 +116,35 @@ def get_watchlist(
     """返回标的池（支持筛选）。"""
     items = watchlist_storage.list_watchlist(category, status, market, search)
     codes_in_db = set(storage.list_codes())
+
+    # 批量查询最新日线收盘价、标签
+    conn = storage._get_conn()
+    placeholders = ",".join("?" * len(items))
+    kline_rows = conn.execute(
+        f"""SELECT code, close FROM (
+            SELECT code, close, ROW_NUMBER() OVER (PARTITION BY code ORDER BY date DESC) as rn
+            FROM kline_indicators WHERE ktype='1d' AND code IN ({placeholders})
+        ) WHERE rn=1""",
+        [item["code"] for item in items],
+    ).fetchall()
+    close_map = {r["code"]: float(r["close"]) for r in kline_rows if r["close"]}
+    conn.close()
+
     for item in items:
-        item["has_data"] = item["code"] in codes_in_db
+        code = item["code"]
+        item["has_data"] = code in codes_in_db
+        # 加最新收盘价和晨星折价
+        latest_close = close_map.get(code)
+        item["latest_close"] = round(latest_close, 2) if latest_close else None
+        ms_value = item.get("morningstar_fair_value")
+        category_tag = item.get("category", "")
+        is_etf = "etf" in category_tag.lower() or "sector_etf" in category_tag.lower()
+        if latest_close and ms_value and not is_etf:
+            discount = round((float(ms_value) - latest_close) / latest_close * 100, 1)
+            item["ms_discount_pct"] = discount
+        else:
+            item["ms_discount_pct"] = None
+
     return {
         "total": len(items),
         "categories": config.WATCHLIST_CATEGORIES,
@@ -861,16 +888,147 @@ def get_sell_log(
 # ── 技术分析辅助决策 ──────────────────────────────────────────────────────────
 
 
+def _score_pattern_confidence(
+    patterns: list[dict],
+    dow: dict,
+    valuation: str,
+) -> list[dict]:
+    """根据道氏趋势和估值给每个形态信号标注置信度。"""
+    tide = dow.get("tide", "neutral")
+    wave = dow.get("wave", "neutral")
+
+    def _conf(is_bullish: bool | None) -> dict:
+        """判断信号与趋势的共振程度"""
+        if is_bullish is None:
+            return {"level": "medium", "label": "中性", "note": ""}
+        if is_bullish and tide == "up":
+            note = "与涨潮共振，置信度高"
+            if valuation == "undervalued":
+                note = "涨潮+低估共振，置信度很高"
+            return {"level": "high", "label": "高", "note": note}
+        elif not is_bullish and tide == "down":
+            return {"level": "high", "label": "高", "note": "与退潮共振，置信度高"}
+        elif is_bullish and tide == "down":
+            return {"level": "low", "label": "低", "note": "逆退潮做多，置信度低"}
+        elif not is_bullish and tide == "up":
+            return {"level": "low", "label": "低", "note": "逆涨潮看空，置信度低"}
+        return {"level": "medium", "label": "中", "note": "潮汐不明，置信度一般"}
+
+    for p in patterns:
+        pid = p["id"]
+        conf = _conf(p.get("bullish"))
+
+        # 特殊情况增强
+        if "rsioos" in pid and tide == "up":
+            if wave == "down":
+                conf["note"] = "涨潮回调中的超卖，加仓良机"
+                conf["level"] = "high"
+            if valuation == "undervalued":
+                conf["note"] = "低估+涨潮超卖，最佳做多信号"
+                conf["level"] = "high"
+        elif "macd_golden" in pid and tide == "up":
+            conf["note"] = "顺势金叉，可信度高"
+            conf["level"] = "high"
+        elif "ma_bull" in pid and tide == "up" and valuation == "undervalued":
+            conf["note"] = "涨潮+低估+多头排列，强做多信号"
+        elif "ena_ribbon_bull" in pid and tide == "up":
+            conf["note"] = "涨潮中EMA飘带多头，动能确认"
+
+        p["confidence"] = conf
+
+    # 按置信度排序：高 → 中 → 低，同级 bullish 优先
+    order = {"high": 0, "medium": 1, "low": 2}
+    patterns.sort(key=lambda p: (order.get(p.get("confidence", {}).get("level", "medium"), 1),
+                                   p.get("bullish") is not True))
+    return patterns
+
+
+def _enhance_levels(
+    supports: list[dict],
+    resistances: list[dict],
+    close: float,
+    dow: dict,
+) -> dict:
+    """增强支撑/压力位：加道氏上下文、MA60 标记、做多做空盈亏比。"""
+    tide_label = {"up": "涨潮", "down": "退潮", "neutral": "无潮汐"}.get(dow.get("tide", ""), "")
+
+    def _add_context(levels: list[dict], is_support: bool) -> list[dict]:
+        """给每个 level 加道氏上下文描述"""
+        for lv in levels:
+            pct = round(abs(lv["price"] - close) / close * 100, 1)
+            lv["pct"] = pct
+
+            # MA60 特殊标记
+            is_ma60 = lv.get("label", "").startswith("MA60")
+            lv["is_key"] = is_ma60
+
+            # 道氏上下文
+            if is_ma60 and tide_label:
+                if is_support and dow.get("tide") == "up":
+                    cntx = f"{tide_label}中MA60支撑有效性高"
+                elif not is_support and dow.get("tide") == "down":
+                    cntx = f"{tide_label}中MA60压力有效性高"
+                else:
+                    cntx = f"MA60{'支撑' if is_support else '压力'} · {tide_label}"
+            elif dow.get("tide") == "up" and is_support:
+                cntx = f"{tide_label}中支撑有效性较高"
+            elif dow.get("tide") == "down" and not is_support:
+                cntx = f"{tide_label}中压力有效性较高"
+            else:
+                cntx = ""
+            if cntx:
+                lv["dow_context"] = cntx
+        return levels
+
+    supports = _add_context(supports, is_support=True)
+    resistances = _add_context(resistances, is_support=False)
+
+    # ── 盈亏比 ──
+    # 做多: 止损=最近支撑(或-5%), 止盈=最近压力(��+10%)
+    # 做空: 止损=最近压力(或+5%), 止盈=最近支撑(或-10%)
+    nearest_support = max((s["price"] for s in supports), default=None) if supports else None
+    nearest_resistance = min((r["price"] for r in resistances), default=None) if resistances else None
+
+    rr = {}
+    # 做多
+    long_stop = nearest_support if nearest_support else close * 0.95
+    long_target = nearest_resistance if nearest_resistance else close * 1.10
+    long_risk = close - long_stop
+    long_reward = long_target - close
+    if long_risk > 0:
+        rr["long_rr"] = round(long_reward / long_risk, 1)
+        rr["long_stop"] = round(long_stop, 2)
+        rr["long_target"] = round(long_target, 2)
+    else:
+        rr["long_rr"] = rr["long_stop"] = rr["long_target"] = None
+
+    # 做空
+    short_stop = nearest_resistance if nearest_resistance else close * 1.05
+    short_target = nearest_support if nearest_support else close * 0.90
+    short_risk = short_stop - close
+    short_reward = close - short_target
+    if short_risk > 0:
+        rr["short_rr"] = round(short_reward / short_risk, 1)
+        rr["short_stop"] = round(short_stop, 2)
+        rr["short_target"] = round(short_target, 2)
+    else:
+        rr["short_rr"] = rr["short_stop"] = rr["short_target"] = None
+
+    return {"supports": supports, "resistances": resistances, "risk_reward": rr}
+
+
 @app.get("/api/analysis")
 def get_analysis(
     code: str,
     ktype: str = Query(default="1d", pattern="^(1d|1w)$"),
+    date: str | None = Query(default=None, description="指定日期 YYYY-MM-DD，不传取最新"),
 ):
     """返回支撑/压力位、技术形态信号、趋势判断，辅助个股决策。
 
     基于本地 DB 中的 OHLCV + 技术指标计算，无需 OpenD。
     """
     from trader_analysis.futu_strategy.technical_analysis import (
+        analyze_dow_trend,
         analyze_trend,
         detect_patterns,
         find_support_resistance,
@@ -879,10 +1037,38 @@ def get_analysis(
     df = storage.query_recent(code, ktype, limit=120)
     if df.empty or len(df) < 20:
         return {"data": None, "message": f"{code} 数据不足（需至少 20 根），请先更新行情"}
+    if date:
+        df = df[df["date"] <= str(date)]
+        if df.empty or len(df) < 20:
+            return {"data": None, "message": f"{code} 在 {date} 之前数据不足（需至少 20 根）"}
 
     supports, resistances = find_support_resistance(df)
-    patterns = detect_patterns(df)
     trend = analyze_trend(df)
+
+    # 道氏三层趋势（需要周线数据 + 晨星估值）
+    weekly_df = storage.query_recent(code, "1w", limit=60)
+    morningstar = None
+    try:
+        tmp_conn = storage._get_conn()
+        ms_row = tmp_conn.execute(
+            "SELECT morningstar_fair_value FROM watchlist WHERE code=?", (code,)
+        ).fetchone()
+        if ms_row and ms_row["morningstar_fair_value"]:
+            morningstar = float(ms_row["morningstar_fair_value"])
+        tmp_conn.close()
+    except Exception:
+        pass
+    close_price = float(df.iloc[-1]["close"]) if not df.empty else None
+    dow_theory = analyze_dow_trend(df, weekly_df, morningstar, close_price)
+
+    # 形态检测（在道氏之后再算，可以加置信度）
+    patterns = detect_patterns(df)
+    patterns = _score_pattern_confidence(patterns, dow_theory, dow_theory.get("valuation", "fair"))
+
+    # ── 增强关键位置：加道氏上下文 + 盈亏比 ──
+    enhanced_levels = _enhance_levels(supports, resistances, close_price, dow_theory)
+    supports = enhanced_levels["supports"]
+    resistances = enhanced_levels["resistances"]
 
     last = df.iloc[-1]
     return {
@@ -894,4 +1080,168 @@ def get_analysis(
         "resistances": resistances,
         "patterns": patterns,
         "trend": trend,
+        "dow_theory": dow_theory,
+        "risk_reward": enhanced_levels["risk_reward"],
     }
+
+
+# ── 基本面估值 ──────────────────────────────────────────────────────────────
+
+
+@app.get("/api/daily-picks")
+def get_daily_picks(
+    date: str | None = Query(default=None, description="指定日期 YYYY-MM-DD"),
+):
+    """返回今日最佳做多标的：基本面低估 + 周线涨潮 + 日线回调 + 评分≥90。
+
+    巴菲特原则：不懂不做，不做空，不借钱。
+    筛选逻辑：好公司（低估）+ 好位置（周线上涨+日线回调）+ 好价格（评分≥90）。
+    """
+    conn = storage._get_conn()
+    picks = []
+
+    # 1. 找出评分 ≥ 70 的标的（超卖+技术面严重偏离均值）
+    if date:
+        score_rows = conn.execute(
+            "SELECT code, total_score FROM score_results WHERE date = ? AND total_score >= 70 ORDER BY total_score DESC",
+            (date,),
+        ).fetchall()
+    else:
+        # 取最近一个有 ≥10 个评分的日期
+        latest_full = conn.execute(
+            "SELECT date, COUNT(*) as n FROM score_results GROUP BY date HAVING n >= 10 ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+        if not latest_full:
+            conn.close()
+            return {"data": [], "message": "暂无足够评分数据"}
+        date = str(latest_full["date"])
+        score_rows = conn.execute(
+            "SELECT code, total_score FROM score_results WHERE date = ? AND total_score >= 70 ORDER BY total_score DESC",
+            (date,),
+        ).fetchall()
+
+    if not score_rows:
+        conn.close()
+        return {"data": [], "message": f"{date} 无评分≥90的标的"}
+
+    # 批量查晨星公允价值
+    codes = [r["code"] for r in score_rows]
+    ph = ",".join("?" * len(codes))
+    ms_rows = conn.execute(
+        f"SELECT code, morningstar_fair_value FROM watchlist WHERE code IN ({ph})",
+        codes,
+    ).fetchall()
+    ms_map = {r["code"]: float(r["morningstar_fair_value"]) for r in ms_rows if r["morningstar_fair_value"]}
+    conn.close()
+
+    # 2. 逐个跑道氏分析
+    from trader_analysis.futu_strategy.technical_analysis import analyze_dow_trend
+
+    for sr in score_rows:
+        code = sr["code"]
+        score = sr["total_score"]
+        ms_value = ms_map.get(code)
+        if not ms_value:
+            continue
+
+        daily_df = storage.query_recent(code, "1d", limit=120)
+        weekly_df = storage.query_recent(code, "1w", limit=60)
+        if daily_df.empty or len(daily_df) < 20:
+            continue
+
+        close = float(daily_df.iloc[-1]["close"])
+        if close <= 0:
+            continue
+
+        # 筛选：必须低估（收盘价 < 晨星价值）
+        discount = round((ms_value - close) / close * 100, 1)
+        if discount <= 0:
+            continue
+
+        dow = analyze_dow_trend(daily_df, weekly_df, ms_value, close)
+
+        # 筛选：周线涨潮 + 日线回调或超卖
+        if dow["tide"] != "up":
+            continue
+        ripple_rsi = dow["ripple"].get("rsi12")
+        wave = dow["wave"]
+        if wave not in ("down", "neutral") and (ripple_rsi is None or ripple_rsi >= 40):
+            continue  # 波浪不回调且涟漪也不超卖，跳过
+
+        picks.append({
+            "code": code,
+            "score": score,
+            "close": round(close, 2),
+            "morningstar": round(ms_value, 2),
+            "discount_pct": discount,
+            "tide": dow["tide"],
+            "wave": dow["wave"],
+            "ripple_rsi": dow["ripple"].get("rsi12"),
+            "signal": dow["signal"],
+            "trade_hint": dow["trade_hint"],
+        })
+
+    # 按折扣率降序（最便宜的排前面）
+    picks.sort(key=lambda x: -x["discount_pct"])
+
+    return {
+        "date": date,
+        "total": len(picks),
+        "picks": picks,
+    }
+
+
+@app.get("/api/fundamental")
+def get_fundamental(
+    code: str,
+    date: str | None = Query(default=None, description="指定日期 YYYY-MM-DD，不传取最新"),
+):
+    """返回分析师目标价、晨星公允价值等基本面估值数据（V2 — 支持日期筛选）。"""
+    conn = storage._get_conn()
+    try:
+        row = conn.execute(
+            "SELECT analyst_target_mean, morningstar_fair_value, current_price, "
+            "forward_pe, peg_ratio, roe, market_cap "
+            "FROM watchlist WHERE code = ?",
+            (code,),
+        ).fetchone()
+        if not row:
+            conn.close()
+            return {"data": None, "message": f"{code} 暂无基本面数据"}
+
+        # 按日期取收盘价，不传日期取最新
+        if date:
+            kline = conn.execute(
+                "SELECT close FROM kline_indicators WHERE code=? AND ktype='1d' AND date<=? "
+                "ORDER BY date DESC LIMIT 1",
+                (code, date),
+            ).fetchone()
+        else:
+            kline = conn.execute(
+                "SELECT close FROM kline_indicators WHERE code=? AND ktype='1d' ORDER BY date DESC LIMIT 1",
+                (code,),
+            ).fetchone()
+
+        current = float(kline["close"]) if kline and kline["close"] else None
+        if current is None and row["current_price"]:
+            current = float(row["current_price"])
+        if current is None:
+            conn.close()
+            return {"data": None, "message": f"{code} 暂无价格数据"}
+        analyst = float(row["analyst_target_mean"]) if row["analyst_target_mean"] else None
+        morningstar = float(row["morningstar_fair_value"]) if row["morningstar_fair_value"] else None
+
+        return {
+            "code": code,
+            "current_price": round(current, 2),
+            "analyst_target": round(analyst, 2) if analyst else None,
+            "analyst_upside_pct": round((analyst - current) / current * 100, 1) if analyst else None,
+            "morningstar_value": round(morningstar, 2) if morningstar else None,
+            "morningstar_discount_pct": round((morningstar - current) / current * 100, 1) if morningstar else None,
+            "forward_pe": round(row["forward_pe"], 1) if row["forward_pe"] else None,
+            "peg_ratio": round(row["peg_ratio"], 2) if row["peg_ratio"] else None,
+            "roe": round(row["roe"], 1) if row["roe"] else None,
+            "market_cap": round(row["market_cap"], 0) if row["market_cap"] else None,
+        }
+    finally:
+        conn.close()
