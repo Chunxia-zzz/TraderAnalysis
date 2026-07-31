@@ -1,6 +1,6 @@
 # TraderAnalysis API 文档
 
-> 最后更新：2026-07-05
+> 最后更新：2026-07-31
 > 协议：HTTP/1.1，响应格式：`application/json`，编码：UTF-8
 
 ## 策略数据服务（futu_strategy/api_server.py）
@@ -1567,3 +1567,90 @@ GET /api/trade-signals?code=US.AAPL&date=2026-07-08  → 查询历史信号
 | `EMA_CROSS_BULL_4H` | 4H EMA5 上穿 EMA30（空转多） | bottom_signal_log |
 | `EMA_CROSS_BEAR_1D` | 日线 EMA5 下穿 EMA30（多转空） | top_signal_log |
 | `EMA_CROSS_BEAR_4H` | 4H EMA5 下穿 EMA30（多转空） | top_signal_log |
+
+---
+
+## v3 新增 API（2026-07-31）
+
+### GET `/api/fundamental`
+
+返回分析师目标价、晨星公允价值等基本面估值数据。
+
+**请求参数**
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `code` | string | 标的代码 |
+| `date` | string | 可选，指定日期 YYYY-MM-DD。不传取最新收盘价 |
+
+**响应 200**
+
+```json
+{
+  "code": "US.TSLA",
+  "current_price": 308.85,
+  "analyst_target": 436.33,
+  "analyst_upside_pct": 41.3,
+  "morningstar_value": 450.0,
+  "morningstar_discount_pct": 45.7,
+  "forward_pe": null,
+  "peg_ratio": null,
+  "roe": null,
+  "market_cap": null
+}
+```
+
+无数据时返回 `{"data": null, "message": "..."}`。
+
+---
+
+### GET `/api/daily-picks`
+
+高置信度低估做多机会——巴菲特原则筛选。
+
+**筛选逻辑**：晨星公允价值 > 当前价（低估）+ 周线涨潮 + 日线回调 + 6因子评分 >= 70
+
+**请求参数**
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `date` | string | 可选，指定评分日期。不传自动取最近完整评分日（>=10只） |
+
+**响应 200**
+
+```json
+{
+  "date": "2026-07-30",
+  "total": 5,
+  "picks": [
+    {
+      "code": "US.TSM",
+      "score": 73.4,
+      "close": 403.31,
+      "morningstar": 534.0,
+      "discount_pct": 32.4,
+      "tide": "up",
+      "wave": "down",
+      "ripple_rsi": 45.8,
+      "signal": "回调加仓",
+      "trade_hint": "日线回调至支撑位可加仓"
+    }
+  ]
+}
+```
+
+---
+
+### GET `/api/watchlist`（v2 增强）
+
+标的管理列表新增 `latest_close`（最新日线收盘价）和 `ms_discount_pct`（晨星折价率，ETF 为 null）。
+
+### GET `/api/indicators`（v2 增强）
+
+ktype 正则扩展为 `^(1d|4h|1w)$`。4H 数据 date 字段自动转为 Unix 时间戳（秒），供图表正确显示时间轴。
+
+### GET `/api/analysis`（v3 更新）
+
+新增 `date` 参数、`dow_theory` 道氏三层趋势、`risk_reward` 盈亏比、patterns 中的 `confidence` 置信度、supports/resistances 中的 `is_key`/`pct`/`dow_context`。详见接口详情。|
+
+

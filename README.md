@@ -1,6 +1,6 @@
 # TraderAnalysis
 
-Futu 量化评分与模拟盘交易系统。基于 40 只核心观察标的，通过多指标连续映射评分（0~100 分）自动识别买入机会。
+Futu 量化评分与模拟盘交易系统。基于 203 只核心观察标的，通过 6 因子连续映射评分、道氏理论三层趋势分析、晨星公允价值估值，自动识别高置信度做多机会。
 
 🌐 [体验地址](http://47.106.175.84/)
 
@@ -94,17 +94,18 @@ trader-analysis run
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/watchlist` | 标的池（含分类、标签、数据状态） |
-| GET | `/api/indicators?code=US.AAPL&ktype=1d&days=60` | K 线 + 技术指标 |
+| GET | `/api/watchlist` | 标的池（含晨星折价、最新收盘价、分类标签） |
+| GET | `/api/indicators?code=US.AAPL&ktype=1d&days=60` | K 线 + 技术指标（支持 1d/4h/1w） |
 | GET | `/api/indicators/latest?code=US.AAPL` | 最新一根指标值 |
-| GET | `/api/scores/latest?code=US.AAPL` | 个股评分（支持 `&date=YYYY-MM-DD`） |
+| GET | `/api/scores/latest?code=US.AAPL` | 个股 6 因子评分（支持日期筛选） |
 | GET | `/api/scores/overview` | 全标的评分速览（含动量分+MA5确认） |
+| GET | `/api/analysis?code=US.AAPL` | 道氏三层趋势 + 支撑压力 + 形态置信度 + 盈亏比 |
+| GET | `/api/fundamental?code=US.AAPL` | 基本面估值（分析师目标价 + 晨星公允价值） |
+| GET | `/api/daily-picks` | 高置信度低估做多机会（巴菲特原则筛选） |
+| GET | `/api/ema-cross-signals` | EMA5/30 交叉信号（空转多/多转空） |
 | GET | `/api/market-temperature` | 市场温度评分（3 维度综合） |
 | GET | `/api/market-temperature/history?days=30` | 市场温度历史趋势 |
 | GET | `/api/backtest/run?code=US.SNDK&mode=trend` | 信号回测（3种策略模式） |
-| GET | `/api/tp-sl?code=US.NVDA` | 止盈止损自动计算（ATR + 支撑/阻力） |
-| GET | `/api/grid/status?config_id=1` | 网格交易运行状态 |
-| GET | `/api/grid/orders?config_id=1` | 网格交易记录 |
 
 所有接口无数据时返回 HTTP 200 + `{data: null, message: "提示文案"}`。
 
@@ -112,7 +113,7 @@ trader-analysis run
 
 ## 标的池
 
-通过 `data/watchlist.json` 管理，当前包含 40 只标的，覆盖 10 个板块：
+通过 `data/watchlist.json` 管理，当前包含 203 只标的，覆盖 26 个板块：
 
 大盘/黄金/BTC、存储、光通信、MAG7、加密、半导体、太空、云、中概、防守消费
 
