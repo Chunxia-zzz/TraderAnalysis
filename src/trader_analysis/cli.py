@@ -73,7 +73,12 @@ def score(
 
     from trader_analysis.futu_strategy import config
     from trader_analysis.futu_strategy.scorer import calculate_score
-    from trader_analysis.futu_strategy.storage import init_db, query_recent, upsert_score
+    from trader_analysis.futu_strategy.storage import (
+        init_db,
+        query_latest_score,
+        query_recent,
+        upsert_score,
+    )
 
     init_db()
     code_list = codes if codes else config.WATCHLIST
@@ -112,22 +117,45 @@ def score(
                     pass
         typer.echo(f"回溯完成，写入 {total_written} 条评分")
     else:
-        today = date.today().isoformat()
+        # 自动增量补算：补算「上次评分之后」缺失的交易日评分，而非只算最新一天
+        # 场景：上次 update 是 8/12，今天 8/20 才跑，则补算 8/13~8/19 所有交易日的评分
         scored, skipped = 0, 0
         for code in code_list:
-            daily_df = query_recent(code, "1d", limit=300)
-            weekly_df = query_recent(code, "1w", limit=60)
-            if daily_df.empty or weekly_df.empty:
+            daily_all = query_recent(code, "1d", limit=300)
+            weekly_all = query_recent(code, "1w", limit=60)
+            if daily_all.empty or weekly_all.empty:
                 skipped += 1
                 continue
-            score_date = str(daily_df.iloc[-1].get("date", today))
-            mc = market_temps.get(score_date)
-            result = calculate_score(code, daily_df, weekly_df, market_composite=mc)
-            upsert_score(code, score_date, result)
-            scored += 1
-            if result["signal"] != "NO_ACTION":
-                typer.echo(f"  {code}: {result['total_score']}分 → {result['signal']}")
-        typer.echo(f"评分完成：{scored} 个标的，跳过 {skipped} 个（无数据）")
+
+            kline_latest = str(daily_all.iloc[-1].get("date", ""))
+            latest = query_latest_score(code)
+            latest_score_date = latest.get("date") if latest else None
+
+            if latest_score_date is None:
+                # 从未评分过，只算最新一天
+                pending_dates = [kline_latest]
+            elif kline_latest > latest_score_date:
+                # 有缺口：补算 (latest_score_date, kline_latest] 之间所有交易日
+                pending_dates = [str(d) for d in daily_all["date"] if str(d) > latest_score_date]
+            else:
+                # 已是最新，重算最新一天（幂等）
+                pending_dates = [kline_latest]
+
+            for score_date in pending_dates:
+                daily_slice = daily_all[daily_all["date"] <= score_date]
+                weekly_slice = weekly_all[weekly_all["date"] <= score_date]
+                if weekly_slice.empty:
+                    continue
+                try:
+                    mc = market_temps.get(score_date)
+                    result = calculate_score(code, daily_slice, weekly_slice, market_composite=mc)
+                    upsert_score(code, score_date, result)
+                    scored += 1
+                    if result["signal"] != "NO_ACTION":
+                        typer.echo(f"  {code}: {result['total_score']}分 → {result['signal']} ({score_date})")
+                except Exception:
+                    pass
+        typer.echo(f"评分完成：写入 {scored} 条评分，跳过 {skipped} 个标的（无数据）")
 
 
 @app.command()
