@@ -1340,7 +1340,9 @@ def get_review(
     picks_data = get_daily_picks(date=date)
     picks = picks_data.get("picks", []) if isinstance(picks_data, dict) else []
 
-    return generate_review(ktype=ktype, picks=picks)
+    result = generate_review(ktype=ktype, picks=picks)
+    result["picks"] = picks
+    return result
 
 
 @app.get("/api/fundamental")
