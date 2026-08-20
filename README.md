@@ -113,11 +113,15 @@ trader-analysis run
 
 ## 标的池
 
-通过 `data/watchlist.json` 管理，当前包含 203 只标的，覆盖 26 个板块：
+通过 SQLite `watchlist` 表 + RESTful API 管理，当前包含 196 只标的（美股 193 + 港股 3），覆盖 26 个板块：
 
-大盘/黄金/BTC、存储、光通信、MAG7、加密、半导体、太空、云、中概、防守消费
+大盘/黄金/BTC、存储、光通信、MAG7、加密、半导体、太空、云、中概、防守消费、AI 基建、金融、医疗、能源、工业等。
 
-新增或删除标的只需编辑 JSON 文件，下次运行 `init` 或 `update` 时自动生效。
+**加入规则**（详见 [`docs/futu_strategy_docs/futu_strategy_docs/part_e_watchlist_management.md`](docs/futu_strategy_docs/futu_strategy_docs/part_e_watchlist_management.md)）：
+- 纳入：大市值龙头（≥ $50B）、覆盖主要行业、可估值（有晨星/分析师目标价）
+- 排除：杠杆/反向 ETF、重复的行业 ETF、无法估值的股票
+
+**管理方式**：通过 API 增删改查（标的管理页或 `POST/PATCH/DELETE /api/watchlist`），新增后跑 `init` 拉历史数据，`score`/`scan-signals` 纳入评分与信号。`config.WATCHLIST` 动态从 DB 读取，无需重启。
 
 ## 开发
 
