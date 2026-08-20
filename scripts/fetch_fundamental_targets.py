@@ -45,7 +45,7 @@ def fetch_analyst_target(code):
     script = os.path.join(SKILL_SCRIPTS, 'get_research_analyst_consensus.py')
     try:
         result = subprocess.run(
-            ['python', script, code, '--json'],
+            [sys.executable, script, code, '--json'],
             capture_output=True, text=True, timeout=30, encoding='utf-8', errors='replace'
         )
         if result.returncode != 0:
@@ -86,7 +86,7 @@ def fetch_morningstar_fair_value(code):
     script = os.path.join(SKILL_SCRIPTS, 'get_research_morningstar_report.py')
     try:
         result = subprocess.run(
-            ['python', script, code, '--json'],
+            [sys.executable, script, code, '--json'],
             capture_output=True, text=True, timeout=30, encoding='utf-8', errors='replace'
         )
         if result.returncode != 0:

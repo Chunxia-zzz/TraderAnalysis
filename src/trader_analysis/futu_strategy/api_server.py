@@ -571,8 +571,66 @@ def get_grid_orders(
 def get_ema_cross_signals(
     date: str | None = Query(default=None, description="指定日期(YYYY-MM-DD)，查该日期的信号"),
 ):
-    """查询指定日期的 EMA 交叉信号（日线+4H两个维度）。不传 date 则取最新。"""
+    """查询 EMA 交叉信号（日线+4H两个维度）。
+
+    - 不传 date：实时计算最新信号（遍历全部标的，基于最新 K 线）
+    - 传 date：从 DB 读取该日期已存储的信号（需先 scan-signals --backfill）
+    """
     import json as _json
+
+    if not date:
+        # ── 实时计算模式：遍历全部标的，基于最新 K 线检测 EMA5/30 交叉 ──
+        from trader_analysis.futu_strategy import config as _cfg
+        from trader_analysis.futu_strategy.ema_cross_detector import detect_ema_cross
+
+        conn = storage._get_conn()
+        name_map = {
+            r["code"]: (r["name"] or "")
+            for r in conn.execute("SELECT code, name FROM watchlist").fetchall()
+        }
+        conn.close()
+
+        bull_1d, bull_4h, bear_1d, bear_4h = [], [], [], []
+
+        def _to_item(code, sig):
+            return {
+                "code": code,
+                "date": sig.detail.get("date", ""),
+                "signal_type": sig.signal_type,
+                "strength": round(sig.strength, 3),
+                "detail": sig.detail,
+                "name": name_map.get(code, ""),
+            }
+
+        for code in list(_cfg.WATCHLIST):
+            daily_df = storage.query_recent(code, "1d", limit=60)
+            if len(daily_df) >= 2:
+                for sig in detect_ema_cross(daily_df, timeframe="1d"):
+                    item = _to_item(code, sig)
+                    if sig.signal_type == "EMA_CROSS_BULL_1D":
+                        bull_1d.append(item)
+                    else:
+                        bear_1d.append(item)
+
+            four_h_df = storage.query_recent(code, "4h", limit=120)
+            if len(four_h_df) >= 2:
+                for sig in detect_ema_cross(four_h_df, timeframe="4h"):
+                    item = _to_item(code, sig)
+                    if sig.signal_type == "EMA_CROSS_BULL_4H":
+                        bull_4h.append(item)
+                    else:
+                        bear_4h.append(item)
+
+        for lst in (bull_1d, bull_4h, bear_1d, bear_4h):
+            lst.sort(key=lambda x: -x["strength"])
+
+        return {
+            "bull_1d": bull_1d,
+            "bull_4h": bull_4h,
+            "bear_1d": bear_1d,
+            "bear_4h": bear_4h,
+            "total": len(bull_1d) + len(bull_4h) + len(bear_1d) + len(bear_4h),
+        }
 
     conn = storage._get_conn()
 
