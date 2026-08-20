@@ -1218,6 +1218,73 @@ export const getAssetTemperatureHistory = (asset, days = 60) =>
 
 ---
 
+## 内容生成（自媒体文案 + 复盘）
+
+### GET `/api/content-generator`
+
+生成单标的的自媒体发布文案（小红书/知乎/公众号），基于道氏趋势 + 估值信号。
+
+**参数**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `code` | str | 是 | 标的代码，如 `US.AVGO` |
+| `platform` | str | 否 | `xiaohongshu`/`zhihu`/`gongzhonghao`，不传返回全部 |
+| `date` | str | 否 | 评分日期 `YYYY-MM-DD`，不传取最新 |
+
+**响应 200**
+
+```json
+{
+  "code": "US.AVGO",
+  "date": "2026-08-19",
+  "content": {
+    "xiaohongshu": {"title": "...", "body": "...", "hashtags": ["量化交易", "..."]},
+    "zhihu": {"title": "...", "body": "...", "hashtags": []},
+    "gongzhonghao": {"title": "...", "body": "...", "hashtags": []}
+  }
+}
+```
+
+### GET `/api/review`
+
+生成市场复盘报告（日复盘/周复盘），覆盖大盘（标普/纳指/黄金/比特币）+ 七姐妹 + 交易机会。
+
+**参数**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `type` | str | 否 | `daily`（日复盘）/ `weekly`（周复盘），默认 `daily` |
+| `date` | str | 否 | 日期，不传取最新 |
+
+**响应 200**
+
+```json
+{
+  "type": "weekly",
+  "date": "2026-08-17",
+  "title": "市场周复盘（2026-08-17）",
+  "body": "# 市场周复盘...（Markdown 格式）",
+  "macro": [{"code": "US.SPY", "label": "标普500", "close": 769.06, "change_pct": -0.19, "trend": "多头", "rsi": 72.3}],
+  "mag7": [{"code": "US.AAPL", "label": "苹果", "close": 316.83, ...}],
+  "picks": [{"code": "US.AVGO", "score": 87.4, "discount_pct": 79.3, "signal": "顺势做多"}]
+}
+```
+
+### 内容模板管理
+
+文案与复盘的模板存储在 SQLite `content_templates` 表，使用 `{占位符}` 语法渲染，支持在线编辑。
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/content-templates` | GET | 列出所有模板 |
+| `/api/content-templates/{key}` | PUT | 更新模板（body: `{title, body, hashtags}`） |
+| `/api/content-templates/{key}` | DELETE | 删除自定义模板，回退默认 |
+
+模板 key：`pick_xiaohongshu` / `pick_zhihu` / `pick_gongzhonghao` / `review_asset_line` / `review_skeleton`。
+
+---
+
 ## 响应状态码
 
 | HTTP 状态码 | 含义 |

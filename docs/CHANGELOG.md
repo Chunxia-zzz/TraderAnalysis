@@ -4,6 +4,43 @@
 
 ---
 
+## [2026-08-20]
+
+### 新功能 — 自媒体内容生成
+
+- **自媒体文案生成器**（`content_generator.py` + `GET /api/content-generator`）：基于交易信号（道氏趋势 + 估值）生成小红书/知乎/公众号三套发布文案，纯模板渲染零成本
+- **市场复盘报告**（`review_generator.py` + `GET /api/review`）：日复盘/周复盘，固定覆盖大盘（标普/纳指/黄金/比特币）+ 七姐妹 + 交易机会（放最后）
+- **内容模板可编辑**（`template_store.py` + `content_templates` 表）：文案与复盘模板从代码抽离到 DB，`{占位符}` 渲染，支持页面在线编辑 + 恢复默认（`GET/PUT/DELETE /api/content-templates`）
+- **标的中文名映射**（`stock_names.py`）：196 只标的 ticker→中文名（如 AVGO→博通），文案优先用中文名
+
+### 后端增强
+
+- **评分/信号自动补算**：`score` 和 `scan-signals` 自动检测「上次结果日期 vs K 线最新日期」，补算中间缺失的交易日的评分/信号（几天没跑也不留缺口）
+- **新增 5 个交易信号**：底部 RSI上穿50中轴 / 布林收口放量突破 / 向上跳空缺口；顶部 向下跳空缺口 / 突破52周新高
+- **增量更新优化**：`update` 只拉最近 30 根而非全量 250 根，节省富途行情额度
+- **清理**：market_scorer 移除未使用的 gld/vix 参数；detect_all 静默异常改为记日志；daily-picks 阈值统一为 `config.DAILY_PICKS_MIN_SCORE`
+
+### Bug 修复
+
+- RSI 除零：纯上涨时 RSI 返回 NaN → 修复为 100
+- `runner` 评分缺 `market_composite` → 与 `score` 命令结果一致
+- `sell_advisor` SELL_3 阶段不可达 → 状态机精简为 HOLD→SELL_1→SELL_2→EMPTY
+- `detect_ma5_no_recovery` 空序列 `all()` 恒 True → 修复误报
+- `_score_drawdown` high 全 NaN 边界 → 修复
+- `scan-signals` 信号日期用 `date.today()` → 改为 K 线最新日期（修复美股时差下日期错位一天）
+
+### 前端
+
+- **市场复盘页**（`Review.vue`）：日/周复盘切换、大盘/七姐妹结构化卡片、交易机会可展开生成荐股文案、模板编辑弹窗
+- 文案生成合并进市场复盘页，删除独立文案生成页
+
+### 标的池
+
+- 剔除 7 只杠杆/重复 ETF（YINN/SOXL/KORU/HK.07709/GDXU/EUV/FOTO），203 → 196 只
+- 标的池加入规则写入 `part_e_watchlist_management.md`（纳入标准 + 排除项）
+
+---
+
 ## [Unreleased] — 2026-07-31
 
 ### 后端
