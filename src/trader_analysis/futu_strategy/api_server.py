@@ -1250,6 +1250,78 @@ def get_daily_picks(
     }
 
 
+@app.get("/api/content-generator")
+def get_content_generator(
+    code: str = Query(..., description="标的代码，如 US.AVGO"),
+    platform: str | None = Query(default=None, description="平台：xiaohongshu/zhihu/gongzhonghao，不传返回全部"),
+    date: str | None = Query(default=None, description="评分日期 YYYY-MM-DD，不传取最新"),
+):
+    """生成自媒体发布文案（小红书/知乎/公众号），基于该标的的道氏趋势 + 估值信号。"""
+    from trader_analysis.futu_strategy.content_generator import generate, generate_single
+    from trader_analysis.futu_strategy.technical_analysis import analyze_dow_trend
+
+    conn = storage._get_conn()
+
+    w = conn.execute(
+        "SELECT name, morningstar_fair_value, analyst_target_mean FROM watchlist WHERE code = ?",
+        (code,),
+    ).fetchone()
+    if not w:
+        conn.close()
+        return {"data": None, "message": f"标的 {code} 不在标的池"}
+
+    name = w["name"] or ""
+    ms_value = float(w["morningstar_fair_value"]) if w["morningstar_fair_value"] else None
+    analyst_target = float(w["analyst_target_mean"]) if w["analyst_target_mean"] else None
+
+    if date:
+        s = conn.execute(
+            "SELECT total_score FROM score_results WHERE code = ? AND date = ?", (code, date)
+        ).fetchone()
+    else:
+        s = conn.execute(
+            "SELECT total_score, date FROM score_results WHERE code = ? ORDER BY date DESC LIMIT 1", (code,)
+        ).fetchone()
+    conn.close()
+
+    if not s:
+        return {"data": None, "message": f"{code} 暂无评分数据"}
+
+    score = s["total_score"]
+    score_date = date or str(s["date"])
+
+    daily_df = storage.query_recent(code, "1d", limit=120)
+    weekly_df = storage.query_recent(code, "1w", limit=60)
+    if daily_df.empty or len(daily_df) < 20:
+        return {"data": None, "message": f"{code} 数据不足"}
+
+    close = float(daily_df.iloc[-1]["close"])
+    if close <= 0:
+        return {"data": None, "message": f"{code} 收盘价异常"}
+
+    dow = analyze_dow_trend(daily_df, weekly_df, ms_value, close)
+
+    discount = round((ms_value - close) / close * 100, 1) if ms_value and close else None
+    pick = {
+        "code": code,
+        "date": score_date,
+        "score": score,
+        "close": round(close, 2),
+        "morningstar": round(ms_value, 2) if ms_value else None,
+        "discount_pct": discount,
+        "tide": dow["tide"],
+        "wave": dow["wave"],
+        "ripple_rsi": dow["ripple"].get("rsi12"),
+        "signal": dow["signal"],
+        "trade_hint": dow["trade_hint"],
+    }
+
+    if platform:
+        content = generate_single(pick, platform, name, analyst_target)
+        return {"code": code, "date": score_date, "content": content}
+    return {"code": code, "date": score_date, "content": generate(pick, name, analyst_target)}
+
+
 @app.get("/api/fundamental")
 def get_fundamental(
     code: str,
