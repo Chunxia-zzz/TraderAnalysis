@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from trader_analysis.futu_strategy import storage
+from trader_analysis.futu_strategy import storage, template_store
 
 
 # ── 复盘标的 ──────────────────────────────────────────────────────────────────
@@ -114,59 +114,50 @@ def _rsi_desc(rsi) -> str:
 
 
 def _asset_line(a: dict, period_label: str) -> str:
-    """单标的一行点评。"""
+    """单标的一行点评（从模板渲染）。"""
     trend_icon = "↑" if a["trend"] == "多头" else ("↓" if a["trend"] == "空头" else "→")
-    line = (
-        f"{a['label']}（{a['code'].split('.')[-1]}）：{period_label}{_change_desc(a['change_pct'])}，"
-        f"收 {a['close']}，{a['trend']}排列 {trend_icon}{_rsi_desc(a['rsi'])}"
-    )
-    if a["drawdown_pct"] >= 5:
-        line += f"，距高点回撤 {a['drawdown_pct']}%"
-    return line
+    data = {
+        "label": a["label"],
+        "ticker": a["code"].split(".")[-1],
+        "period_label": period_label,
+        "change_desc": _change_desc(a["change_pct"]),
+        "close": a["close"],
+        "trend": a["trend"],
+        "trend_icon": trend_icon,
+        "rsi_desc": _rsi_desc(a["rsi"]),
+        "drawdown_desc": f"，距高点回撤 {a['drawdown_pct']}%" if a["drawdown_pct"] >= 5 else "",
+    }
+    tpl = template_store.get_template("review_asset_line")
+    return template_store.render(tpl["body"], data)
+
+
+def _pick_line(p: dict) -> str:
+    """交易机会一行。"""
+    ticker = p["code"].split(".")[-1]
+    return f"- **{ticker}**：评分 {p['score']}，折价 {p['discount_pct']}%，{p['signal']}。{p.get('trade_hint', '')}"
 
 
 # ── 报告组装 ──────────────────────────────────────────────────────────────────
 
 
 def _build_markdown(ktype: str, date: str, macro: list[dict], mag7: list[dict], picks: list[dict]) -> str:
-    """组装 Markdown 复盘正文。"""
+    """组装 Markdown 复盘正文（从模板渲染）。"""
     period_word = "周" if ktype == "1w" else "日"
     period_label = "本周" if ktype == "1w" else "当日"
 
-    lines = [f"# 市场{period_word}复盘（{date}）", ""]
+    macro_section = "\n".join(_asset_line(a, period_label) for a in macro)
+    mag7_section = "\n".join(_asset_line(a, period_label) for a in mag7)
+    picks_section = "\n".join(_pick_line(p) for p in picks) if picks else "今日无符合条件的低估做多机会。"
 
-    # 大盘概览
-    lines.append("## 一、大盘概览")
-    lines.append("")
-    for a in macro:
-        lines.append(_asset_line(a, period_label))
-    lines.append("")
-
-    # 七姐妹
-    lines.append("## 二、七姐妹")
-    lines.append("")
-    for a in mag7:
-        lines.append(_asset_line(a, period_label))
-    lines.append("")
-
-    # 交易机会
-    lines.append("## 三、交易机会")
-    lines.append("")
-    if picks:
-        for p in picks:
-            ticker = p["code"].split(".")[-1]
-            lines.append(
-                f"- **{ticker}**：评分 {p['score']}，折价 {p['discount_pct']}%，"
-                f"{p['signal']}。{p.get('trade_hint', '')}"
-            )
-    else:
-        lines.append("今日无符合条件的低估做多机会。")
-    lines.append("")
-
-    lines.append("---")
-    lines.append("（以上为量化系统自动生成的复盘，不构成投资建议）")
-
-    return "\n".join(lines)
+    data = {
+        "period_word": period_word,
+        "date": date,
+        "macro_section": macro_section,
+        "mag7_section": mag7_section,
+        "picks_section": picks_section,
+    }
+    tpl = template_store.get_template("review_skeleton")
+    return template_store.render(tpl["body"], data)
 
 
 def generate_review(ktype: str = "1d", picks: list[dict] | None = None) -> dict:

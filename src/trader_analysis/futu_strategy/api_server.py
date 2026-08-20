@@ -32,6 +32,9 @@ app.add_middleware(
 def _ensure_db() -> None:
     storage.init_db()
     watchlist_storage.init_watchlist_table()
+    from trader_analysis.futu_strategy.template_store import init_templates_table
+
+    init_templates_table()
 
 
 # ── 公开端点 ──────────────────────────────────────────────────────────────────
@@ -1343,6 +1346,31 @@ def get_review(
     result = generate_review(ktype=ktype, picks=picks)
     result["picks"] = picks
     return result
+
+
+# ── 内容模板管理 ──────────────────────────────────────────────────────────────
+
+
+@app.get("/api/content-templates")
+def list_content_templates():
+    """列出所有内容模板（文案生成 + 市场复盘）。"""
+    from trader_analysis.futu_strategy.template_store import list_templates
+
+    return {"templates": list_templates()}
+
+
+@app.put("/api/content-templates/{key}")
+def save_content_template(key: str, body: dict):
+    """更新内容模板。body: {title, body, hashtags}"""
+    from trader_analysis.futu_strategy.template_store import save_template
+
+    saved = save_template(
+        key,
+        title=body.get("title", ""),
+        body=body.get("body", ""),
+        hashtags=body.get("hashtags"),
+    )
+    return {"message": f"模板 {key} 已保存", "template": saved}
 
 
 @app.get("/api/fundamental")
