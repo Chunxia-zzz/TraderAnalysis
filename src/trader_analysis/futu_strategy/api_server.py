@@ -1322,6 +1322,27 @@ def get_content_generator(
     return {"code": code, "date": score_date, "content": generate(pick, name, analyst_target)}
 
 
+@app.get("/api/review")
+def get_review(
+    type: str = Query(default="daily", description="复盘类型：daily 日复盘 / weekly 周复盘"),
+    date: str | None = Query(default=None, description="日期 YYYY-MM-DD，不传取最新"),
+):
+    """生成市场复盘报告：大盘（标普/纳指/黄金/比特币）+ 七姐妹 + 交易机会。
+
+    - daily：日复盘（日线维度）
+    - weekly：周复盘（周线维度）
+    """
+    from trader_analysis.futu_strategy.review_generator import generate_review
+
+    ktype = "1w" if type == "weekly" else "1d"
+
+    # 交易机会：复用 daily-picks 的筛选逻辑
+    picks_data = get_daily_picks(date=date)
+    picks = picks_data.get("picks", []) if isinstance(picks_data, dict) else []
+
+    return generate_review(ktype=ktype, picks=picks)
+
+
 @app.get("/api/fundamental")
 def get_fundamental(
     code: str,
