@@ -220,6 +220,15 @@ def save_template(key: str, title: str = "", body: str = "", hashtags: list[str]
     return get_template(key)
 
 
+def delete_template(key: str) -> dict:
+    """删除自定义模板，回退到默认模板。"""
+    conn = _get_conn()
+    conn.execute("DELETE FROM content_templates WHERE template_key = ?", (key,))
+    conn.commit()
+    conn.close()
+    return get_template(key)
+
+
 def render(template_text: str, data: dict) -> str:
     """渲染模板，占位符 {key} 用 data[key] 填充，缺失占位符原样保留。"""
     return template_text.format_map(SafeDict(data))

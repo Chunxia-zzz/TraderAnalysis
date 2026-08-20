@@ -1373,6 +1373,15 @@ def save_content_template(key: str, body: dict):
     return {"message": f"模板 {key} 已保存", "template": saved}
 
 
+@app.delete("/api/content-templates/{key}")
+def delete_content_template(key: str):
+    """删除自定义模板，回退到默认模板。"""
+    from trader_analysis.futu_strategy.template_store import delete_template
+
+    tpl = delete_template(key)
+    return {"message": f"模板 {key} 已恢复默认", "template": tpl}
+
+
 @app.get("/api/fundamental")
 def get_fundamental(
     code: str,

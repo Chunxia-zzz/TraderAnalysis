@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 from trader_analysis.futu_strategy import template_store
+from trader_analysis.futu_strategy.stock_names import get_cn_name
 
 
 # ── 中文映射 ──────────────────────────────────────────────────────────────────
@@ -52,7 +53,7 @@ def build_summary(pick: dict, name: str = "", analyst_target=None) -> dict:
 
     return {
         "ticker": ticker,
-        "name": name or ticker,
+        "name": get_cn_name(ticker) or name or ticker,
         "code": code,
         "date": str(pick.get("date", "")),
         "score": pick.get("score"),
