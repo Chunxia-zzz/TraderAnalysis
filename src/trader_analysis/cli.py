@@ -654,8 +654,8 @@ def scan_signals(
         return
 
     # 仅计算最新一天
-    today = date.today().isoformat()
-    typer.echo(f"扫描交易信号中... ({len(code_list)} 只标的，日期={today})")
+    # 用 K 线最新日期而非 date.today()，与 score 命令保持一致（美股时差下 K 线是前一日收盘）
+    typer.echo(f"扫描交易信号中... ({len(code_list)} 只标的)")
 
     from trader_analysis.futu_strategy.ema_cross_detector import detect_ema_cross
 
@@ -666,11 +666,12 @@ def scan_signals(
         daily_df = query_recent(code, "1d", limit=300)
         if daily_df.empty or len(daily_df) < 30:
             continue
+        signal_date = str(daily_df.iloc[-1].get("date", date.today().isoformat()))
 
         top_sigs = detect_all_top(daily_df)
         for sig in top_sigs:
             try:
-                insert_top_signal(code, today, sig.signal_type, sig.strength, sig.detail)
+                insert_top_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
                 top_count += 1
             except Exception:
                 pass
@@ -678,7 +679,7 @@ def scan_signals(
         bottom_sigs = detect_all_bottom(daily_df)
         for sig in bottom_sigs:
             try:
-                insert_bottom_signal(code, today, sig.signal_type, sig.strength, sig.detail)
+                insert_bottom_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
                 bottom_count += 1
             except Exception:
                 pass
@@ -688,9 +689,9 @@ def scan_signals(
         for sig in ema_sigs_1d:
             try:
                 if "BULL" in sig.signal_type:
-                    insert_bottom_signal(code, today, sig.signal_type, sig.strength, sig.detail)
+                    insert_bottom_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
                 else:
-                    insert_top_signal(code, today, sig.signal_type, sig.strength, sig.detail)
+                    insert_top_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
                 ema_count += 1
             except Exception:
                 pass
@@ -702,9 +703,9 @@ def scan_signals(
             for sig in ema_sigs_4h:
                 try:
                     if "BULL" in sig.signal_type:
-                        insert_bottom_signal(code, today, sig.signal_type, sig.strength, sig.detail)
+                        insert_bottom_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
                     else:
-                        insert_top_signal(code, today, sig.signal_type, sig.strength, sig.detail)
+                        insert_top_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
                     ema_count += 1
                 except Exception:
                     pass
