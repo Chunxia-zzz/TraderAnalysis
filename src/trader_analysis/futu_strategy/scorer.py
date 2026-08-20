@@ -7,11 +7,12 @@
 
 6 维度 + 权重（合计 100）：
   C1  周线 RSI6          20  —— (80 - rsi) / 60
-  C2  日线 MACD 百分位    20  —— 1 - percentile_rank(252)
+  C2  日线 MACD 百分位    15  —— 1 - percentile_rank(252)
   C3  布林带 %B          15  —— 1 - %B
   C4  日线 RSI6          20  —— (80 - rsi) / 60
-  C5  周线 MACD 百分位    10  —— 1 - percentile_rank(52)
+  C5  周线 MACD 百分位     5  —— 1 - percentile_rank(52)
   C6  60日回撤           15  —— (drawdown - 0.05) / 0.20
+  C7  缩量企稳           10  —— 卖压衰竭 + 价格企稳（成交量维度）
 
 大盘温度加成：composite < 40 时最多 +15 分。
 """
@@ -27,11 +28,12 @@ import pandas as pd
 
 WEIGHTS: dict[str, int] = {
     "weekly_rsi": 20,
-    "daily_macd_pct": 20,
+    "daily_macd_pct": 15,
     "boll_position": 15,
     "daily_rsi": 20,
-    "weekly_macd_pct": 10,
+    "weekly_macd_pct": 5,
     "drawdown": 15,
+    "volume_shrink": 10,
 }
 
 
@@ -123,7 +125,10 @@ def _score_drawdown(daily_df: pd.DataFrame) -> dict:
     if pd.isna(close_val):
         return {"score": 0.0, "raw": None, "ratio": 0.0}
     close = float(close_val)
-    high_60d = float(daily_df.tail(60)["high"].max())
+    high_vals = daily_df.tail(60)["high"].dropna()
+    if high_vals.empty:
+        return {"score": 0.0, "raw": 0.0, "ratio": 0.0}
+    high_60d = float(high_vals.max())
     if high_60d <= 0:
         return {"score": 0.0, "raw": 0.0, "ratio": 0.0}
     drawdown = (high_60d - close) / high_60d
@@ -131,6 +136,41 @@ def _score_drawdown(daily_df: pd.DataFrame) -> dict:
     ratio = _clamp((drawdown - 0.05) / 0.20)
     score = ratio * WEIGHTS["drawdown"]
     return {"score": round(score, 1), "raw": round(drawdown, 4), "ratio": round(ratio, 3)}
+
+
+def _score_volume_shrink(daily_df: pd.DataFrame) -> dict:
+    """C7: 缩量企稳因子（成交量维度）。卖压衰竭 + 价格未破位。
+
+    缩量（近5日均量 < vol_ma20）叠加价格企稳（未创近20日新低），
+    反映抛压衰竭、反弹概率提升。这是评分中唯一的成交量维度，与动量类因子互补。
+    """
+    if len(daily_df) < 20:
+        return {"score": 0.0, "raw": None, "ratio": 0.0}
+
+    last = daily_df.iloc[-1]
+    vol_ma = last.get("vol_ma20")
+    if pd.isna(vol_ma) or float(vol_ma) <= 0:
+        return {"score": 0.0, "raw": None, "ratio": 0.0}
+
+    recent_vol = daily_df.tail(5)["volume"].dropna()
+    if len(recent_vol) < 5:
+        return {"score": 0.0, "raw": None, "ratio": 0.0}
+
+    vol_ratio = float(recent_vol.mean()) / float(vol_ma)
+
+    # 缩量程度：vol_ratio 越低越缩量，1.5 倍量 → 0 分，0.5 倍量 → 1 分
+    shrink = _clamp(1.5 - vol_ratio)
+
+    # 价格企稳：未创近 20 日新低才给满，破位则大幅降分
+    close = float(last.get("close") or 0)
+    low_20d = float(daily_df.tail(20)["low"].min())
+    if low_20d <= 0:
+        return {"score": 0.0, "raw": None, "ratio": 0.0}
+    stable = 1.0 if close >= low_20d * 1.01 else 0.3
+
+    ratio = _clamp(shrink * stable)
+    score = ratio * WEIGHTS["volume_shrink"]
+    return {"score": round(score, 1), "raw": round(vol_ratio, 3), "ratio": round(ratio, 3)}
 
 
 # ── 汇总评分 ──────────────────────────────────────────────────────────────────
@@ -171,6 +211,7 @@ def calculate_score(
         "daily_rsi": _score_daily_rsi(daily_df),
         "weekly_macd_pct": _score_weekly_macd_pct(weekly_df),
         "drawdown": _score_drawdown(daily_df),
+        "volume_shrink": _score_volume_shrink(daily_df),
     }
 
     base_score = round(sum(v["score"] for v in breakdown.values()), 1)

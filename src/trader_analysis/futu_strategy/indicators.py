@@ -28,8 +28,12 @@ def _rsi(close: pd.Series, period: int) -> pd.Series:
     loss = (-delta).where(delta < 0, 0.0)
     avg_gain = gain.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
     avg_loss = loss.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
-    rs = avg_gain / avg_loss.replace(0.0, np.nan)
-    return 100.0 - (100.0 / (1.0 + rs))
+    # 避免除零：avg_loss=0（纯上涨）时 rs=inf → RSI=100；两者都为 0 时 RSI=50
+    with np.errstate(divide="ignore", invalid="ignore"):
+        rs = avg_gain / avg_loss
+        rsi = 100.0 - (100.0 / (1.0 + rs))
+    rsi = rsi.where(rs.notna(), 50.0)  # 0/0（无波动）设为中性 50
+    return rsi
 
 
 def _macd(

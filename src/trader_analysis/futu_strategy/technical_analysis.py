@@ -377,9 +377,6 @@ def analyze_dow_trend(
     """
     if daily_df.empty:
         return {"tide": "neutral", "wave": "neutral", "ripple": {}, "signal": "无数据", "signal_desc": "", "trade_hint": ""}
-    def _ma(df, col):
-        val = df.iloc[-1].get(col)
-        return float(val) if val is not None and not math.isnan(val) else None
 
     def _get(df, col):
         val = df.iloc[-1].get(col)
@@ -391,8 +388,8 @@ def analyze_dow_trend(
     if not weekly_df.empty:
         # 优先用 DB 中的指标值，None 时回退到 on-the-fly 计算
         w_last = weekly_df.iloc[-1]
-        tide_ma20 = _ma(weekly_df, "ma20")
-        tide_ma60 = _ma(weekly_df, "ma60")
+        tide_ma20 = _get(weekly_df, "ma20")
+        tide_ma60 = _get(weekly_df, "ma60")
 
         if tide_ma20 is None and len(weekly_df) >= 20:
             tide_ma20 = float(weekly_df["close"].tail(20).mean())
@@ -409,8 +406,8 @@ def analyze_dow_trend(
     wave = "neutral"
     wave_ma20 = wave_ma60 = None
     if not daily_df.empty:
-        wave_ma20 = _ma(daily_df, "ma20")
-        wave_ma60 = _ma(daily_df, "ma60")
+        wave_ma20 = _get(daily_df, "ma20")
+        wave_ma60 = _get(daily_df, "ma60")
         if wave_ma20 and wave_ma60:
             if wave_ma20 > wave_ma60:
                 wave = "up"

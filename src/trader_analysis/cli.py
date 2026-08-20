@@ -193,7 +193,12 @@ def refresh_snapshot(
 def fundamental(
     codes: Optional[list[str]] = typer.Option(None, help="标的代码列表（默认全部 watchlist）"),
 ) -> None:
-    """拉取基本面数据并评分（数据源：yfinance，不依赖 OpenD）。"""
+    """拉取基本面数据并评分（数据源：yfinance，不依赖 OpenD）。
+
+    注意：yfinance 数据源在中国大陆可能无法访问，导致 forward_pe 等字段大量缺失。
+    估值折价建议改用晨星公允价值 + 分析师目标价（通过 scripts/fetch_fundamental_targets.py 更新，
+    已写入 watchlist 表的 morningstar_fair_value / analyst_target_mean 字段）。
+    """
     from datetime import date
 
     from trader_analysis.futu_strategy import config

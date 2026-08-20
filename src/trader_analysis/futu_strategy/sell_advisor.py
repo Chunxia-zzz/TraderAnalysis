@@ -6,7 +6,7 @@
 状态流转：
   HOLD ──(NEAR_HIGH + 背离信号)──► SELL_1 ──(BREAK_MA5)──► SELL_2
        ──(EMERGENCY_STOP)──────────────────────────────────► STOPPED_OUT
-  SELL_2 ──(MA5_DEATH_CROSS / MA5_NO_RECOVERY)─────────────► SELL_3 / EMPTY
+  SELL_2 ──(MA5_DEATH_CROSS / MA5_NO_RECOVERY)─────────────► EMPTY
 """
 
 from __future__ import annotations
@@ -113,11 +113,10 @@ def evaluate(
             trigger = "MA5死叉" if "MA5_DEATH_CROSS" in signal_types else "连续未站回MA5"
             if sell_qty <= 0:
                 return no_action
-            new_stage = "EMPTY" if sell_qty >= remaining_qty - keep_min else "SELL_3"
             return SellAction(
                 code=code, action="SELL", sell_qty=sell_qty,
                 reason=f"{trigger}，清仓",
-                new_stage=new_stage,
+                new_stage="EMPTY",
                 signals=list(signal_types),
             )
 

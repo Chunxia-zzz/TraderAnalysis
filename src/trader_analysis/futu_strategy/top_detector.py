@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -13,6 +14,8 @@ import pandas as pd
 from scipy.signal import find_peaks
 
 from trader_analysis.futu_strategy import config
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -54,6 +57,8 @@ def detect_all(daily_df: pd.DataFrame, cfg: dict | None = None) -> list[TopSigna
         detect_ma5_death_cross,
         detect_ma5_no_recovery,
         detect_emergency_stop,
+        detect_gap_down,
+        detect_new_52w_high,
     ]
 
     signals = []
@@ -62,8 +67,8 @@ def detect_all(daily_df: pd.DataFrame, cfg: dict | None = None) -> list[TopSigna
             sig = fn(daily_df, cfg)
             if sig is not None:
                 signals.append(sig)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("顶部检测器 %s 异常: %s", getattr(fn, "__name__", fn), exc)
 
     return signals
 
@@ -405,12 +410,16 @@ def detect_ma5_no_recovery(daily_df: pd.DataFrame, cfg: dict) -> TopSignal | Non
         return None
 
     recent = daily_df.tail(recovery_days)
-    all_below = all(
-        float(row.get("close") or 0) < float(row.get("ma5") or float("inf"))
+    # 只取 MA5 有效的行，避免空序列 all() 恒 True 导致误报
+    valid_pairs = [
+        (float(row.get("close") or 0), float(row.get("ma5") or 0))
         for _, row in recent.iterrows()
         if float(row.get("ma5") or 0) > 0
-    )
+    ]
+    if len(valid_pairs) < recovery_days:
+        return None
 
+    all_below = all(close < ma5 for close, ma5 in valid_pairs)
     if not all_below:
         return None
 
@@ -464,3 +473,55 @@ def detect_emergency_stop(daily_df: pd.DataFrame, cfg: dict) -> TopSignal | None
             )
 
     return None
+
+
+def detect_gap_down(daily_df: pd.DataFrame, cfg: dict) -> TopSignal | None:
+    """信号12：向下跳空缺口，今日开盘价 < 昨日最低价。"""
+    gap_threshold = cfg.get("gap_threshold", 0.01)
+
+    if len(daily_df) < 2:
+        return None
+
+    today_open = float(daily_df.iloc[-1].get("open") or 0)
+    prev_low = float(daily_df.iloc[-2].get("low") or 0)
+    if today_open <= 0 or prev_low <= 0:
+        return None
+
+    gap = (prev_low - today_open) / prev_low
+    if gap < gap_threshold:
+        return None
+
+    strength = min(gap / 0.05, 1.0)  # 1%→0.2，5%→1
+    return TopSignal(
+        signal_type="GAP_DOWN",
+        strength=round(strength, 3),
+        description=f"向下跳空缺口: 开盘{today_open:.2f} < 昨低{prev_low:.2f} (缺口{gap*100:.1f}%)",
+        detail={"gap_pct": round(gap, 4)},
+    )
+
+
+def detect_new_52w_high(daily_df: pd.DataFrame, cfg: dict) -> TopSignal | None:
+    """信号13：突破 52 周新高（252 日高点），追高风险提示。"""
+    lookback = cfg.get("new_high_lookback", 252)
+
+    if len(daily_df) < 20:
+        return None
+
+    close = float(daily_df.iloc[-1].get("close") or 0)
+    # 排除今日，看历史最高点（不含今日，才能真正判断"突破"）
+    recent = daily_df.tail(lookback)
+    prev_high = float(recent.iloc[:-1]["high"].max())
+    if close <= 0 or prev_high <= 0:
+        return None
+
+    if close <= prev_high:
+        return None
+
+    breakout = (close - prev_high) / prev_high
+    strength = min(breakout / 0.03, 1.0)  # 突破 3% 满分
+    return TopSignal(
+        signal_type="NEW_52W_HIGH",
+        strength=round(max(strength, 0.1), 3),
+        description=f"突破52周新高: close={close:.2f} > 前高{prev_high:.2f}",
+        detail={"prev_high": round(prev_high, 2), "breakout_pct": round(breakout, 4)},
+    )

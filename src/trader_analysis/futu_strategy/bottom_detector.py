@@ -15,12 +15,15 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 import pandas as pd
 from scipy.signal import find_peaks
 
 from trader_analysis.futu_strategy import config
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -58,6 +61,9 @@ def detect_all(daily_df: pd.DataFrame, cfg: dict | None = None) -> list[BottomSi
         detect_w_bottom,
         detect_support_confirm,
         detect_reclaim_ma5,
+        detect_rsi_cross_50,
+        detect_boll_squeeze_break,
+        detect_gap_up,
     ]
 
     signals = []
@@ -66,8 +72,8 @@ def detect_all(daily_df: pd.DataFrame, cfg: dict | None = None) -> list[BottomSi
             sig = fn(daily_df, cfg)
             if sig is not None:
                 signals.append(sig)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("底部检测器 %s 异常: %s", getattr(fn, "__name__", fn), exc)
 
     return signals
 
@@ -407,4 +413,109 @@ def detect_reclaim_ma5(daily_df: pd.DataFrame, cfg: dict) -> BottomSignal | None
         strength=round(min(strength * 10, 1.0), 3),
         description=f"重新站上MA5: close={close_now:.2f} > ma5={ma5_now:.2f}",
         detail={"close": round(close_now, 2), "ma5": round(ma5_now, 2)},
+    )
+
+
+def detect_rsi_cross_50(daily_df: pd.DataFrame, cfg: dict) -> BottomSignal | None:
+    """信号8：RSI6 从 50 下方上穿 50 中轴，动量由弱转强。"""
+    period = cfg.get("rsi_divergence_period", 6)
+    rsi_col = f"rsi{period}"
+
+    if rsi_col not in daily_df.columns or len(daily_df) < 2:
+        return None
+
+    prev_rsi = float(daily_df.iloc[-2].get(rsi_col) or 0)
+    last_rsi = float(daily_df.iloc[-1].get(rsi_col) or 0)
+
+    if prev_rsi <= 0 or last_rsi <= 0:
+        return None
+
+    # 刚上穿 50 中轴
+    if not (prev_rsi < 50 <= last_rsi):
+        return None
+
+    strength = min((last_rsi - 50) / 20, 1.0)  # 50→0，70→1
+    return BottomSignal(
+        signal_type="RSI_CROSS_50",
+        strength=round(strength, 3),
+        description=f"RSI{period}上穿50中轴: {prev_rsi:.1f}→{last_rsi:.1f}",
+        detail={"prev_rsi": round(prev_rsi, 1), "last_rsi": round(last_rsi, 1)},
+    )
+
+
+def detect_boll_squeeze_break(daily_df: pd.DataFrame, cfg: dict) -> BottomSignal | None:
+    """信号9：布林带收窄后放量突破中轨，见底启动。
+
+    条件：
+    1. 当前布林带宽处于近 lookback 日低位（< 30% 分位）
+    2. 收盘价站上中轨
+    3. 成交量放大（> vol_ma20 × 1.5）
+    """
+    lookback = cfg.get("boll_squeeze_break_lookback", 60)
+
+    if len(daily_df) < 20:
+        return None
+    for col in ("boll_upper", "boll_lower", "boll_mid"):
+        if col not in daily_df.columns:
+            return None
+
+    recent = daily_df.tail(lookback)
+    last = daily_df.iloc[-1]
+    upper = float(last.get("boll_upper") or 0)
+    lower = float(last.get("boll_lower") or 0)
+    mid = float(last.get("boll_mid") or 0)
+    if upper <= lower or mid <= 0:
+        return None
+
+    bw_now = (upper - lower) / mid
+    bw_series = (recent["boll_upper"] - recent["boll_lower"]) / recent["boll_mid"]
+    bw_series = bw_series.dropna()
+    if len(bw_series) < 20:
+        return None
+
+    # 当前带宽处于历史低位（< 30% 分位 = 收窄）
+    pct = float((bw_series < bw_now).sum()) / len(bw_series)
+    if pct > 0.3:
+        return None
+
+    # 放量突破中轨
+    close = float(last.get("close") or 0)
+    vol = float(last.get("volume") or 0)
+    vol_ma = float(last.get("vol_ma20") or 0)
+    if close <= mid or vol_ma <= 0:
+        return None
+    if vol < vol_ma * 1.5:
+        return None
+
+    strength = min(1.0 - pct * 3, 1.0)  # 收得越窄越强
+    return BottomSignal(
+        signal_type="BOLL_SQUEEZE_BREAK",
+        strength=round(strength, 3),
+        description=f"布林收口突破: 带宽分位{pct*100:.0f}%, 放量突破中轨",
+        detail={"bw_pct": round(pct, 3), "vol_ratio": round(vol / vol_ma, 2)},
+    )
+
+
+def detect_gap_up(daily_df: pd.DataFrame, cfg: dict) -> BottomSignal | None:
+    """信号10：向上跳空缺口，今日开盘价 > 昨日最高价。"""
+    gap_threshold = cfg.get("gap_threshold", 0.01)
+
+    if len(daily_df) < 2:
+        return None
+
+    today_open = float(daily_df.iloc[-1].get("open") or 0)
+    prev_high = float(daily_df.iloc[-2].get("high") or 0)
+    if today_open <= 0 or prev_high <= 0:
+        return None
+
+    gap = (today_open - prev_high) / prev_high
+    if gap < gap_threshold:
+        return None
+
+    strength = min(gap / 0.05, 1.0)  # 1%→0.2，5%→1
+    return BottomSignal(
+        signal_type="GAP_UP",
+        strength=round(strength, 3),
+        description=f"向上跳空缺口: 开盘{today_open:.2f} > 昨高{prev_high:.2f} (缺口{gap*100:.1f}%)",
+        detail={"gap_pct": round(gap, 4)},
     )

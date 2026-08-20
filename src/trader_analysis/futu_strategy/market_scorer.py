@@ -222,13 +222,15 @@ def _safe_score(fn, *args, dimension_name: str) -> dict:
 def _compute_score(
     spy_daily: pd.DataFrame,
     qqq_daily: pd.DataFrame,
-    gld_daily: pd.DataFrame,
-    vix_daily: pd.DataFrame,
     spy_weekly: pd.DataFrame,
     qqq_weekly: pd.DataFrame,
     score_date: str,
 ) -> dict:
-    """核心评分计算（纯函数，接受已切片的 DataFrame）。"""
+    """核心评分计算（纯函数，接受已切片的 DataFrame）。
+
+    注：历史版本曾含 GLD/VIX 避险维度，现已简化为 3 维度（日线+周线+价格位置），
+    gld/vix 数据不再参与评分。返回值中 gld_price/vix_value 等字段保留为 None 以兼容旧前端。
+    """
     weights = config.MARKET_TEMP_WEIGHTS
 
     has_spy = not spy_daily.empty
@@ -378,8 +380,6 @@ def calculate_market_temperature() -> dict:
 
     spy_daily = storage.query_recent("US.SPY", "1d", limit=300)
     qqq_daily = storage.query_recent("US.QQQ", "1d", limit=300)
-    gld_daily = storage.query_recent("US.GLD", "1d", limit=300)
-    vix_daily = storage.query_recent(config.MARKET_TEMP_VOL_CODE, "1d", limit=300)
     spy_weekly = storage.query_recent("US.SPY", "1w", limit=60)
     qqq_weekly = storage.query_recent("US.QQQ", "1w", limit=60)
 
@@ -389,7 +389,7 @@ def calculate_market_temperature() -> dict:
         if last_date:
             score_date = str(last_date)
 
-    result = _compute_score(spy_daily, qqq_daily, gld_daily, vix_daily, spy_weekly, qqq_weekly, score_date)
+    result = _compute_score(spy_daily, qqq_daily, spy_weekly, qqq_weekly, score_date)
     storage.upsert_market_score(score_date, result)
     return result
 
@@ -655,8 +655,6 @@ def backfill_market_temperature(days: int = 60) -> int:
     read_limit = days + 300  # 回溯天数 + 百分位计算所需缓冲
     spy_daily_all = storage.query_recent("US.SPY", "1d", limit=read_limit)
     qqq_daily_all = storage.query_recent("US.QQQ", "1d", limit=read_limit)
-    gld_daily_all = storage.query_recent("US.GLD", "1d", limit=read_limit)
-    vix_daily_all = storage.query_recent(config.MARKET_TEMP_VOL_CODE, "1d", limit=read_limit)
     spy_weekly_all = storage.query_recent("US.SPY", "1w", limit=500)
     qqq_weekly_all = storage.query_recent("US.QQQ", "1w", limit=500)
 
@@ -680,8 +678,6 @@ def backfill_market_temperature(days: int = 60) -> int:
         end_idx = total_rows - i + 1
         spy_daily = spy_daily_all.iloc[:end_idx].copy()
         qqq_daily = qqq_daily_all.iloc[:min(end_idx, len(qqq_daily_all))].copy()
-        gld_daily = gld_daily_all.iloc[:min(end_idx, len(gld_daily_all))].copy()
-        vix_daily = vix_daily_all.iloc[:min(end_idx, len(vix_daily_all))].copy()
 
         # 周线：找到日期 <= 当天的周线
         current_date = spy_daily.iloc[-1].get("date", "")
@@ -691,7 +687,7 @@ def backfill_market_temperature(days: int = 60) -> int:
         score_date = str(current_date)
 
         try:
-            result = _compute_score(spy_daily, qqq_daily, gld_daily, vix_daily, spy_weekly, qqq_weekly, score_date)
+            result = _compute_score(spy_daily, qqq_daily, spy_weekly, qqq_weekly, score_date)
             storage.upsert_market_score(score_date, result)
             count += 1
         except Exception as exc:

@@ -49,8 +49,12 @@ def _update_ktype(
 
     _KTYPE_MAP = {"1d": KLType.K_DAY, "1w": KLType.K_WEEK, "4h": KLType.K_240M}
     kl_type = _KTYPE_MAP.get(ktype, KLType.K_DAY)
+
+    # 增量更新只需拉最近一小段，避免浪费富途行情额度（覆盖约 1 个月缺口）
+    _INCREMENTAL_COUNT = {"1d": 30, "1w": 10, "4h": 60}
+    pull_count = min(max_count, _INCREMENTAL_COUNT.get(ktype, 30))
     new_df = provider.get_kline(
-        quote_ctx, code, kl_type=kl_type, count=max_count, timeframe=ktype
+        quote_ctx, code, kl_type=kl_type, count=pull_count, timeframe=ktype
     )
 
     # 统一列名为 date

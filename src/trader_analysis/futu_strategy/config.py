@@ -96,8 +96,12 @@ POSITION_CONFIG: dict = {
 }
 
 # ── 评分阈值 ───────────────────────────────────────────────────────────────────
-SCORE_STRONG_BUY: int = 80
-SCORE_BUY: int = 60
+SCORE_STRONG_BUY: int = 80   # 强烈买入
+SCORE_BUY: int = 60          # 买入
+
+# 高置信度低估做多（daily-picks）筛选阈值：介于 BUY 和 STRONG_BUY 之间
+# 需同时满足晨星低估 + 周线涨潮 + 日线回调
+DAILY_PICKS_MIN_SCORE: int = 70
 
 # ── K 线拉取配置 ──────────────────────────────────────────────────────────────
 DAILY_KLINE_COUNT: int = 250   # 需 ≥ 200 根以计算 MA200，额外 50 根作为缓冲

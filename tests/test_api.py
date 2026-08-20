@@ -16,12 +16,15 @@ def test_watchlist_returns_structure():
     assert "watchlist" in data
     assert isinstance(data["watchlist"], list)
     assert len(data["watchlist"]) > 0
-    # 每个标的应有 futu_code 和 has_data 字段
+    # 每个标的应有 code 和 has_data 字段（v2.6 起用 code 替代 futu_code）
     item = data["watchlist"][0]
-    assert "futu_code" in item
+    assert "code" in item
     assert "has_data" in item
     assert "name" in item
     assert "category" in item
+    # v3 新增：晨星折价与最新收盘价
+    assert "latest_close" in item
+    assert "ms_discount_pct" in item
 
 
 def test_indicators_not_found():

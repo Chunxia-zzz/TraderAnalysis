@@ -1153,15 +1153,16 @@ def get_daily_picks(
     """返回今日最佳做多标的：基本面低估 + 周线涨潮 + 日线回调 + 评分≥90。
 
     巴菲特原则：不懂不做，不做空，不借钱。
-    筛选逻辑：好公司（低估）+ 好位置（周线上涨+日线回调）+ 好价格（评分≥90）。
+    筛选逻辑：好公司（低估）+ 好位置（周线上涨+日线回调）+ 好价格（评分≥{config.DAILY_PICKS_MIN_SCORE}）。
     """
     conn = storage._get_conn()
     picks = []
+    min_score = config.DAILY_PICKS_MIN_SCORE
 
-    # 1. 找出评分 ≥ 70 的标的（超卖+技术面严重偏离均值）
+    # 1. 找出评分 ≥ 阈值的标的（超卖+技术面严重偏离均值）
     if date:
         score_rows = conn.execute(
-            "SELECT code, total_score FROM score_results WHERE date = ? AND total_score >= 70 ORDER BY total_score DESC",
+            f"SELECT code, total_score FROM score_results WHERE date = ? AND total_score >= {min_score} ORDER BY total_score DESC",
             (date,),
         ).fetchall()
     else:
@@ -1174,13 +1175,13 @@ def get_daily_picks(
             return {"data": [], "message": "暂无足够评分数据"}
         date = str(latest_full["date"])
         score_rows = conn.execute(
-            "SELECT code, total_score FROM score_results WHERE date = ? AND total_score >= 70 ORDER BY total_score DESC",
+            f"SELECT code, total_score FROM score_results WHERE date = ? AND total_score >= {min_score} ORDER BY total_score DESC",
             (date,),
         ).fetchall()
 
     if not score_rows:
         conn.close()
-        return {"data": [], "message": f"{date} 无评分≥90的标的"}
+        return {"data": [], "message": f"{date} 无评分≥{min_score}的标的"}
 
     # 批量查晨星公允价值
     codes = [r["code"] for r in score_rows]

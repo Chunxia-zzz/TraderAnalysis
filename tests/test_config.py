@@ -29,6 +29,8 @@ def test_categories_loaded():
 
 
 def test_futu_code_matches_detail():
+    """WATCHLIST 从 DB 动态读取（标的池已迁移到 SQLite），不再与 JSON 回退列表强一致。"""
     codes_from_list = set(config.WATCHLIST)
-    codes_from_detail = {item["futu_code"] for item in config.WATCHLIST_DETAIL}
-    assert codes_from_list == codes_from_detail
+    # DB 非空时，WATCHLIST 应包含常见标的，且规模达到扩充后的水平
+    assert "US.AAPL" in codes_from_list
+    assert len(codes_from_list) >= 100  # 标的池已扩充至 196 只

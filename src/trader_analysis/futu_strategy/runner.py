@@ -69,6 +69,17 @@ def run_strategy(codes: list[str]) -> None:
 
         # ── 2. 逐标的评分与交易 ──────────────────────────────────────────────
         today = date.today().isoformat()
+
+        # 读取最新市场温度，用于评分恐慌加成（与 cli.py score 命令保持一致）
+        import sqlite3
+
+        _conn = sqlite3.connect(config.DB_PATH)
+        _row = _conn.execute(
+            "SELECT composite_score FROM market_score ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+        _conn.close()
+        market_composite = float(_row[0]) if _row else None
+
         for code in codes:
             try:
                 logger.info(f"── 开始处理 {code} ──")
@@ -81,7 +92,7 @@ def run_strategy(codes: list[str]) -> None:
                     logger.warning(f"{code} 存储层无数据，跳过（请先运行 init_history）")
                     continue
 
-                result = calculate_score(code, daily_df, weekly_df)
+                result = calculate_score(code, daily_df, weekly_df, market_composite=market_composite)
 
                 # 写入评分结果到存储层
                 upsert_score(code, today, result)
