@@ -681,54 +681,64 @@ def scan_signals(
         typer.echo(f"回溯完成，写入 {total_top} 条顶部信号，{total_bottom} 条底部信号，{total_ema} 条EMA交叉信号。")
         return
 
-    # 仅计算最新一天
-    # 用 K 线最新日期而非 date.today()，与 score 命令保持一致（美股时差下 K 线是前一日收盘）
+    # 自动增量补算：补算「上次信号扫描之后」缺失的交易日信号
     typer.echo(f"扫描交易信号中... ({len(code_list)} 只标的)")
 
     from trader_analysis.futu_strategy.ema_cross_detector import detect_ema_cross
+
+    import sqlite3 as _sqlite3
 
     top_count = 0
     bottom_count = 0
     ema_count = 0
     for code in code_list:
-        daily_df = query_recent(code, "1d", limit=300)
-        if daily_df.empty or len(daily_df) < 30:
+        daily_all = query_recent(code, "1d", limit=300)
+        if daily_all.empty or len(daily_all) < 30:
             continue
-        signal_date = str(daily_df.iloc[-1].get("date", date.today().isoformat()))
 
-        top_sigs = detect_all_top(daily_df)
-        for sig in top_sigs:
-            try:
-                insert_top_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
-                top_count += 1
-            except Exception:
-                pass
+        four_h_all = query_recent(code, "4h", limit=120)
 
-        bottom_sigs = detect_all_bottom(daily_df)
-        for sig in bottom_sigs:
-            try:
-                insert_bottom_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
-                bottom_count += 1
-            except Exception:
-                pass
+        kline_latest = str(daily_all.iloc[-1].get("date", ""))
 
-        # EMA 交叉信号 — 日线维度
-        ema_sigs_1d = detect_ema_cross(daily_df, timeframe="1d")
-        for sig in ema_sigs_1d:
-            try:
-                if "BULL" in sig.signal_type:
-                    insert_bottom_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
-                else:
+        # 查该标的信号表最新日期（顶部 + 底部取更晚者）
+        _conn = _sqlite3.connect(config.DB_PATH)
+        _r1 = _conn.execute("SELECT MAX(date) FROM top_signal_log WHERE code = ?", (code,)).fetchone()
+        _r2 = _conn.execute("SELECT MAX(date) FROM bottom_signal_log WHERE code = ?", (code,)).fetchone()
+        _conn.close()
+        _latest_dates = [d for d in (_r1[0], _r2[0]) if d]
+        latest_signal_date = max(_latest_dates) if _latest_dates else None
+
+        if latest_signal_date is None:
+            pending_dates = [kline_latest]
+        elif kline_latest > latest_signal_date:
+            pending_dates = [str(d) for d in daily_all["date"] if str(d) > latest_signal_date]
+        else:
+            pending_dates = [kline_latest]
+
+        for signal_date in pending_dates:
+            daily_slice = daily_all[daily_all["date"] <= signal_date]
+            if len(daily_slice) < 30:
+                continue
+
+            top_sigs = detect_all_top(daily_slice)
+            for sig in top_sigs:
+                try:
                     insert_top_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
-                ema_count += 1
-            except Exception:
-                pass
+                    top_count += 1
+                except Exception:
+                    pass
 
-        # EMA 交叉信号 — 4H 维度
-        four_h_df = query_recent(code, "4h", limit=100)
-        if not four_h_df.empty and len(four_h_df) >= 2:
-            ema_sigs_4h = detect_ema_cross(four_h_df, timeframe="4h")
-            for sig in ema_sigs_4h:
+            bottom_sigs = detect_all_bottom(daily_slice)
+            for sig in bottom_sigs:
+                try:
+                    insert_bottom_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
+                    bottom_count += 1
+                except Exception:
+                    pass
+
+            # EMA 交叉信号 — 日线维度
+            ema_sigs_1d = detect_ema_cross(daily_slice, timeframe="1d")
+            for sig in ema_sigs_1d:
                 try:
                     if "BULL" in sig.signal_type:
                         insert_bottom_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
@@ -737,6 +747,22 @@ def scan_signals(
                     ema_count += 1
                 except Exception:
                     pass
+
+            # EMA 交叉信号 — 4H 维度（找到该日期对应的最后一根 4H K 线位置）
+            if not four_h_all.empty and len(four_h_all) >= 2:
+                mask = four_h_all["date"].str[:10] <= signal_date
+                four_h_slice = four_h_all[mask]
+                if len(four_h_slice) >= 2:
+                    ema_sigs_4h = detect_ema_cross(four_h_slice, timeframe="4h")
+                    for sig in ema_sigs_4h:
+                        try:
+                            if "BULL" in sig.signal_type:
+                                insert_bottom_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
+                            else:
+                                insert_top_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
+                            ema_count += 1
+                        except Exception:
+                            pass
 
     typer.echo(f"完成，写入 {top_count} 条顶部信号，{bottom_count} 条底部信号，{ema_count} 条EMA交叉信号。")
 
