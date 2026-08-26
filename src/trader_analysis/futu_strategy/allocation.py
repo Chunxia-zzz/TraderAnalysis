@@ -169,6 +169,54 @@ def _make_advice(code: str, gap: float) -> dict:
     return {"score": score, "rsi": rsi, "action": "有差距，等回调", "level": "watch", "reasons": []}
 
 
+# ── 分批加仓计划 ──────────────────────────────────────────────────────────────
+
+_REF_ETF = {"gold": "US.GLD", "btc": "US.IBIT"}
+
+
+def _batch_plan(group: dict, current_spot: float, gap_amount: float) -> dict:
+    """按现货价格区间生成分批加仓计划（分 3 批）。
+
+    批1（底部区 0~33%）买 50%、批2（中部 33~66%）买 30%、批3（顶部区 66~100%）买 20%。
+    当前价 ≤ 某批顶部 → 该批可执行。价格越接近底部，可买批次越多。
+    """
+    bottom = float(group["short_bottom"])
+    top = float(group["short_top"])
+    if top <= bottom:
+        return {"error": "区间无效（顶部需>底部）"}
+
+    span = top - bottom
+    tiers = [
+        {"tier": 1, "low": bottom, "high": bottom + span * 0.33, "pct": 0.50},
+        {"tier": 2, "low": bottom + span * 0.33, "high": bottom + span * 0.66, "pct": 0.30},
+        {"tier": 3, "low": bottom + span * 0.66, "high": top, "pct": 0.20},
+    ]
+    p = (current_spot - bottom) / span
+    exec_total = 0.0
+    plan_tiers = []
+    for t in tiers:
+        executable = current_spot <= t["high"]
+        if executable:
+            exec_total += t["pct"]
+        plan_tiers.append({
+            "tier": t["tier"],
+            "price_range": f"{t['low']:.0f}~{t['high']:.0f}",
+            "pct": round(t["pct"] * 100),
+            "amount": round(gap_amount * t["pct"], 0),
+            "executable": executable,
+        })
+
+    return {
+        "current_spot": round(current_spot, 0),
+        "bottom": bottom,
+        "top": top,
+        "position_pct": round(max(0.0, min(1.0, p)) * 100),
+        "exec_amount": round(gap_amount * exec_total, 0),
+        "exec_pct": round(exec_total * 100),
+        "tiers": plan_tiers,
+    }
+
+
 # ── 主计算 ────────────────────────────────────────────────────────────────────
 
 
@@ -233,6 +281,31 @@ def compute_allocation(env: str = "REAL") -> dict:
             items = _build_items(g.get("items", []))
 
         g_actual = sum(i["actual_value"] for i in items)
+
+        # 分批加仓计划（黄金/比特币有现货区间时）
+        batch_plan = None
+        if g.get("short_bottom") and g.get("price_scale"):
+            ref_etf = _REF_ETF.get(g["key"])
+            ref_price = None
+            pos = pos_map.get(ref_etf) if ref_etf else None
+            if pos and pos.get("price"):
+                ref_price = float(pos["price"])
+            else:
+                try:
+                    conn3 = storage._get_conn()
+                    c3 = conn3.execute(
+                        "SELECT close FROM kline_indicators WHERE code = ? AND ktype='1d' ORDER BY date DESC LIMIT 1",
+                        (ref_etf,),
+                    ).fetchone()
+                    conn3.close()
+                    if c3 and c3["close"]:
+                        ref_price = float(c3["close"])
+                except Exception:
+                    pass
+            if ref_price:
+                current_spot = ref_price * float(g["price_scale"])
+                batch_plan = _batch_plan(g, current_spot, g_target_value - g_actual)
+
         groups_out.append({
             "key": g["key"],
             "label": g["label"],
@@ -242,6 +315,7 @@ def compute_allocation(env: str = "REAL") -> dict:
             "gap": round(g_target_value - g_actual, 2),
             "items": items,
             **({"subgroups": subgroups} if has_subgroups else {}),
+            **({"batch_plan": batch_plan} if batch_plan else {}),
         })
         all_items.extend(items)
 
