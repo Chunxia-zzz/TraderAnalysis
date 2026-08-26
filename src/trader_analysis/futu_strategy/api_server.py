@@ -1403,6 +1403,38 @@ def get_position(
     return {"data": result}
 
 
+# ── 目标仓位（永久投资组合）────────────────────────────────────────────────────
+
+
+@app.get("/api/allocation")
+def get_allocation(
+    env: str = Query(default="REAL", pattern="^(REAL|SIMULATE)$", description="账户环境"),
+):
+    """目标仓位 vs 实际持仓对比（依赖 OpenD 实时持仓）。
+
+    返回三大类（美股/黄金/比特币）的目标/实际市值差距，
+    以及每只标的的加仓建议（结合评分/RSI/折价）。
+    """
+    from trader_analysis.futu_strategy.allocation import compute_allocation
+
+    result = compute_allocation(env=env)
+    if "error" in result:
+        return {"data": None, "message": result["error"]}
+    return {"data": result}
+
+
+@app.put("/api/allocation")
+def save_allocation_config(body: dict):
+    """保存目标仓位配置（权重总和须=100）。"""
+    from trader_analysis.futu_strategy.allocation import save_allocation
+
+    try:
+        saved = save_allocation(body)
+        return {"message": "目标配置已保存", "data": saved}
+    except ValueError as exc:
+        return {"data": None, "message": str(exc)}
+
+
 @app.get("/api/fundamental")
 def get_fundamental(
     code: str,
