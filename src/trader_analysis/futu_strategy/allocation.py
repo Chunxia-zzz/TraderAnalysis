@@ -174,6 +174,20 @@ def _make_advice(code: str, gap: float) -> dict:
 _REF_ETF = {"gold": "US.GLD", "btc": "US.IBIT"}
 
 
+def _spot_from_etf(group: dict, etf_price: float) -> float:
+    """两点线性校准：把 ETF 价换算成现货/期货价。
+
+    校准点：ETF1→现货1、ETF2→现货2（存于配置 calib_etf1/fut1/etf2/fut2）。
+    """
+    e1 = float(group["calib_etf1"])
+    f1 = float(group["calib_fut1"])
+    e2 = float(group["calib_etf2"])
+    f2 = float(group["calib_fut2"])
+    if e2 == e1:
+        return etf_price * f1 / e1
+    return f1 + (etf_price - e1) * (f2 - f1) / (e2 - e1)
+
+
 def _batch_plan(group: dict, current_spot: float, gap_amount: float) -> dict:
     """按现货价格区间生成分批加仓计划（分 3 批）。
 
@@ -284,7 +298,7 @@ def compute_allocation(env: str = "REAL") -> dict:
 
         # 分批加仓计划（黄金/比特币有现货区间时）
         batch_plan = None
-        if g.get("short_bottom") and g.get("price_scale"):
+        if g.get("short_bottom") and g.get("calib_etf1"):
             ref_etf = _REF_ETF.get(g["key"])
             ref_price = None
             pos = pos_map.get(ref_etf) if ref_etf else None
@@ -303,7 +317,7 @@ def compute_allocation(env: str = "REAL") -> dict:
                 except Exception:
                     pass
             if ref_price:
-                current_spot = ref_price * float(g["price_scale"])
+                current_spot = _spot_from_etf(g, ref_price)
                 batch_plan = _batch_plan(g, current_spot, g_target_value - g_actual)
 
         groups_out.append({
