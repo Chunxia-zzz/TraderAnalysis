@@ -85,7 +85,15 @@ def save_allocation(config_data: dict) -> dict:
     """保存目标配置（校验权重总和=100）。"""
     total = 0
     for g in config_data.get("groups", []):
-        g_total = sum(float(i.get("weight", 0)) for i in g.get("items", []))
+        if "subgroups" in g and g["subgroups"]:
+            # 子类结构：所有子类 items 总和 = 组权重
+            g_items = [i for sg in g["subgroups"] for i in sg.get("items", [])]
+            sg_sum = sum(float(sg.get("weight", 0)) for sg in g["subgroups"])
+            if abs(sg_sum - float(g.get("weight", 0))) > 0.5:
+                raise ValueError(f"分组 {g['label']} 子类权重 {sg_sum} ≠ 组权重 {g.get('weight')}")
+        else:
+            g_items = g.get("items", [])
+        g_total = sum(float(i.get("weight", 0)) for i in g_items)
         if abs(g_total - float(g.get("weight", 0))) > 0.5:
             raise ValueError(f"分组 {g['label']} 内部权重 {g_total} ≠ 组权重 {g.get('weight')}")
         total += float(g.get("weight", 0))
@@ -102,49 +110,58 @@ def save_allocation(config_data: dict) -> dict:
 
 
 def _make_advice(code: str, gap: float) -> dict:
-    """结合评分/RSI/折价生成加仓建议。"""
-    # 最新评分
+    """结合评分/RSI/折价生成加仓建议。
+
+    规则：
+    - 高于晨星公允价值 → "回调再买"（expensive）
+    - 低于公允价值 + 评分高/RSI低 → "建议加仓"（buy）
+    - 有差距但未到时机 → "等回调"（watch）
+    - 已达标/超配 → hold
+    """
     score = None
+    rsi = None
+    ms = None
+    close = None
     try:
         conn = storage._get_conn()
         s = conn.execute(
             "SELECT total_score FROM score_results WHERE code = ? ORDER BY date DESC LIMIT 1", (code,)
         ).fetchone()
-        rsi_row = conn.execute(
-            "SELECT rsi6 FROM kline_indicators WHERE code = ? AND ktype='1d' ORDER BY date DESC LIMIT 1", (code,)
+        row = conn.execute(
+            "SELECT rsi6, close FROM kline_indicators WHERE code = ? AND ktype='1d' ORDER BY date DESC LIMIT 1", (code,)
         ).fetchone()
         w = conn.execute(
             "SELECT morningstar_fair_value FROM watchlist WHERE code = ?", (code,)
         ).fetchone()
         conn.close()
         score = float(s["total_score"]) if s else None
-        rsi = float(rsi_row["rsi6"]) if rsi_row and rsi_row["rsi6"] is not None else None
+        rsi = float(row["rsi6"]) if row and row["rsi6"] is not None else None
+        close = float(row["close"]) if row and row["close"] else None
         ms = float(w["morningstar_fair_value"]) if w and w["morningstar_fair_value"] else None
     except Exception:
-        rsi, ms = None, None
+        pass
 
     if gap <= 0:
         return {"score": score, "rsi": rsi, "action": "已达标或超配", "level": "hold", "reasons": []}
+
+    # 规则：价格高于晨星公允价值 → 回调再买
+    if ms and close and close > ms:
+        premium = (close - ms) / ms * 100
+        return {
+            "score": score, "rsi": rsi,
+            "action": f"高于公允价值 {premium:.0f}%，回调再买",
+            "level": "expensive",
+            "reasons": [f"溢价{premium:.0f}%"],
+        }
 
     reasons = []
     if score is not None and score >= 75:
         reasons.append(f"评分{score:.0f}高")
     if rsi is not None and rsi < 40:
         reasons.append(f"RSI超卖({rsi:.0f})")
-    if ms:
-        discount = None
-        try:
-            # 从持仓拿不到现价，用最新收盘价算折价
-            conn2 = storage._get_conn()
-            c = conn2.execute(
-                "SELECT close FROM kline_indicators WHERE code = ? AND ktype='1d' ORDER BY date DESC LIMIT 1", (code,)
-            ).fetchone()
-            conn2.close()
-            if c and c["close"]:
-                discount = (ms - float(c["close"])) / float(c["close"]) * 100
-        except Exception:
-            pass
-        if discount and discount > 10:
+    if ms and close:
+        discount = (ms - close) / close * 100
+        if discount > 10:
             reasons.append(f"低估{discount:.0f}%")
 
     if reasons:
@@ -173,31 +190,49 @@ def compute_allocation(env: str = "REAL") -> dict:
         g_weight = float(g.get("weight", 0))
         g_target_value = total_assets * g_weight / 100
 
-        items = []
-        g_actual = 0.0
-        for item in g.get("items", []):
-            code = item["code"]
-            w = float(item.get("weight", 0))
-            target_value = total_assets * w / 100
-            pos = pos_map.get(code)
-            actual_value = float(pos["market_value"]) if pos else 0.0
-            gap = target_value - actual_value
-            g_actual += actual_value
+        def _build_items(raw_items):
+            out = []
+            for item in raw_items:
+                code = item["code"]
+                w = float(item.get("weight", 0))
+                target_value = total_assets * w / 100
+                pos = pos_map.get(code)
+                actual_value = float(pos["market_value"]) if pos else 0.0
+                gap = target_value - actual_value
+                advice = _make_advice(code, gap)
+                out.append({
+                    "code": code,
+                    "name": pos["name"] if pos else "",
+                    "weight": w,
+                    "target_value": round(target_value, 2),
+                    "actual_value": round(actual_value, 2),
+                    "gap": round(gap, 2),
+                    "qty": pos["qty"] if pos else 0,
+                    "price": pos["price"] if pos else None,
+                    "pl_pct": pos["pl_pct"] if pos else None,
+                    **advice,
+                })
+            return out
 
-            advice = _make_advice(code, gap)
-            items.append({
-                "code": code,
-                "name": pos["name"] if pos else "",
-                "weight": w,
-                "target_value": round(target_value, 2),
-                "actual_value": round(actual_value, 2),
-                "gap": round(gap, 2),
-                "qty": pos["qty"] if pos else 0,
-                "price": pos["price"] if pos else None,
-                "pl_pct": pos["pl_pct"] if pos else None,
-                **advice,
-            })
+        # 支持 subgroups（美股分大科技/半导体/灵活板块）
+        subgroups = []
+        has_subgroups = bool(g.get("subgroups"))
+        if has_subgroups:
+            for sg in g["subgroups"]:
+                sg_items = _build_items(sg.get("items", []))
+                sg_actual = sum(i["actual_value"] for i in sg_items)
+                subgroups.append({
+                    "label": sg["label"],
+                    "weight": float(sg.get("weight", 0)),
+                    "target_value": round(total_assets * float(sg.get("weight", 0)) / 100, 2),
+                    "actual_value": round(sg_actual, 2),
+                    "items": sg_items,
+                })
+            items = [i for sg in subgroups for i in sg["items"]]
+        else:
+            items = _build_items(g.get("items", []))
 
+        g_actual = sum(i["actual_value"] for i in items)
         groups_out.append({
             "key": g["key"],
             "label": g["label"],
@@ -206,6 +241,7 @@ def compute_allocation(env: str = "REAL") -> dict:
             "actual_value": round(g_actual, 2),
             "gap": round(g_target_value - g_actual, 2),
             "items": items,
+            **({"subgroups": subgroups} if has_subgroups else {}),
         })
         all_items.extend(items)
 
