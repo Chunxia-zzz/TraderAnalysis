@@ -39,7 +39,7 @@ def fetch_position(env: str = "REAL") -> dict:
     try:
         from futu import OpenSecTradeContext, RET_OK, SecurityFirm, TrdEnv  # type: ignore[import]
     except ImportError as exc:
-        return {"error": "futu-api 未安装，请执行: pip install futu-api"}
+        return {"error": "持仓功能需在本机运行（连接富途 OpenD），当前环境未安装 futu-api"}
 
     try:
         trd = OpenSecTradeContext(
@@ -49,7 +49,7 @@ def fetch_position(env: str = "REAL") -> dict:
         )
     except Exception as exc:
         logger.error(f"连接 OpenD 失败: {exc}")
-        return {"error": f"连接富途 OpenD 失败：{exc}"}
+        return {"error": f"无法连接富途 OpenD（{config.OPEND_HOST}:{config.OPEND_PORT}），请确认已启动"}
 
     try:
         # ── 1. 定位账户 ──
