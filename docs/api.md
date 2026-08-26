@@ -1,13 +1,14 @@
 # TraderAnalysis API 文档
 
-> 最后更新：2026-07-31
+> 最后更新：2026-08-26
 > 协议：HTTP/1.1，响应格式：`application/json`，编码：UTF-8
 
 ## 策略数据服务（futu_strategy/api_server.py）
 
 > Base URL（本地开发）：`http://localhost:8000`
 > 数据来源：SQLite 数据库（`data/indicators.db`），由 `init_history.py` / `daily_update.py` 写入
-> 特点：**不依赖 Futu OpenD**，只要数据库有数据即可独立运行
+> 特点：**大部分端点不依赖 Futu OpenD**，只要数据库有数据即可独立运行
+> ⚠️ 例外：`/api/position`、`/api/allocation` 依赖本机富途 OpenD（127.0.0.1:11111）实时行情，仅本地可用
 
 ### 启动
 
@@ -1719,5 +1720,105 @@ ktype 正则扩展为 `^(1d|4h|1w)$`。4H 数据 date 字段自动转为 Unix �
 ### GET `/api/analysis`（v3 更新）
 
 新增 `date` 参数、`dow_theory` 道氏三层趋势、`risk_reward` 盈亏比、patterns 中的 `confidence` 置信度、supports/resistances 中的 `is_key`/`pct`/`dow_context`。详见接口详情。|
+
+---
+
+## v4 新增 API（2026-08-26）
+
+> ⚠️ 以下端点依赖本机富途 OpenD（127.0.0.1:11111），每次调用实时刷新，仅本地开发环境可用。
+
+### GET `/api/position`
+
+实时查询富途账户持仓 + 配比。
+
+**参数**
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `env` | string | `REAL` 实盘（默认）/ `SIMULATE` 模拟盘 |
+| `currency` | string | `base` 账户记账币种（默认，如 HKD）/ `USD` 美元计价 |
+
+**响应**（`data` 字段）
+
+```json
+{
+  "env": "REAL",
+  "acc_id": 281756479684587643,
+  "base_currency": "HKD",
+  "display_currency": "USD",
+  "usd_hkd_rate": 7.8,
+  "cash": 38075.07,
+  "total_assets": 49198.79,
+  "cash_pct": 77.4,
+  "position_pct": 22.6,
+  "position_count": 10,
+  "positions": [
+    {
+      "code": "US.AVGO", "name": "博通", "qty": 7,
+      "cost_price": 361.61, "price": 358.87,
+      "market_value": 2506.82, "weight_pct": 5.1, "pl_pct": -0.8
+    }
+  ]
+}
+```
+
+**说明**：OpenD 不可用或未装 futu-api 时返回 `{"data": null, "message": "..."}`。实盘持仓需 `refresh_cache=True` 才有实时市值；`accinfo_query` 金额为账户记账币种（HKD），美股持仓为 USD，统一按近似汇率 7.8 换算。
+
+### GET `/api/allocation`
+
+目标仓位（永久投资组合）vs 实际持仓对比。
+
+**参数**
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `env` | string | `REAL` 实盘（默认）/ `SIMULATE` 模拟盘 |
+
+**响应**（`data` 字段，截取）
+
+```json
+{
+  "env": "REAL", "currency": "USD",
+  "total_assets": 49198.79,
+  "groups": [
+    {
+      "key": "stock", "label": "美股", "weight": 70,
+      "target_value": 34439.15, "actual_value": 5782.98, "gap": 28656.17,
+      "subgroups": [
+        {"label": "大科技", "weight": 28, "target_value": 13775.66, "actual_value": 1048.5, "items": [...]}
+      ],
+      "items": [...],
+      "batch_plan": {
+        "current_spot": 4583, "bottom": 4000, "top": 4600,
+        "position_pct": 97, "exec_amount": 755, "exec_pct": 20,
+        "tiers": [
+          {"tier": 1, "price_range": "4000~4198", "pct": 50, "amount": 1887, "executable": false}
+        ]
+      }
+    }
+  ],
+  "buy_priority": [...]
+}
+```
+
+**每只标的 items 字段**：`code/name/weight/target_value/actual_value/gap/qty/price/pl_pct` + 加仓建议 `score/rsi/action/level/reasons`，其中 `level` 取值：
+
+| level | 含义 |
+|-------|------|
+| `strong_buy` | 评分≥80 且 低于晨星公允价值 → 强烈建议加仓 |
+| `buy` | 评分高/RSI 超卖/低估 → 建议加仓 |
+| `watch` | 有差距但未到时机 → 等回调 |
+| `expensive` | 价格高于公允价值 → 回调再买 |
+| `hold` | 已达标或超配 |
+
+**batch_plan**（黄金/比特币分批加仓计划）：按现货区间分 3 批，现货价由 ETF 价经两点线性校准（`calib_etf1/fut1/etf2/fut2`）换算，当前价 ≤ 批次顶部即可执行。
+
+### PUT `/api/allocation`
+
+保存目标仓位配置（页面编辑权重/现货区间/校准点）。
+
+**请求体**：与 GET 返回的 `groups` 结构一致（含 subgroups、short_bottom/short_top、calib 字段）。
+
+**校验**：各子类权重 = 组权重、各组总和 = 100，不满足返回 400。配置存 `data/target_allocation.json`。
 
 
