@@ -27,11 +27,12 @@ _CURRENCY_RATE = {
 }
 
 
-def fetch_position(env: str = "REAL") -> dict:
+def fetch_position(env: str = "REAL", display_currency: str = "base") -> dict:
     """获取账户资产 + 持仓 + 配比（实时刷新）。
 
     Args:
         env: "REAL" 实盘 / "SIMULATE" 模拟盘
+        display_currency: "base" 按账户记账币种（如 HKD）/ "USD" 统一美元计价
 
     Returns:
         dict: 账户摘要 + positions 列表；OpenD 不可用或失败时返回 {"error": ...}
@@ -84,6 +85,7 @@ def fetch_position(env: str = "REAL") -> dict:
             rate = _CURRENCY_RATE.get(currency, USD_HKD_RATE)
             mv = float(p.get("market_val") or 0)
             mv_hkd = mv * rate
+            mv_usd = mv_hkd / USD_HKD_RATE
             weight = mv_hkd / total_assets * 100 if total_assets else 0.0
             positions.append({
                 "code": p.get("code"),
@@ -91,9 +93,10 @@ def fetch_position(env: str = "REAL") -> dict:
                 "qty": float(p.get("qty") or 0),
                 "cost_price": round(float(p.get("cost_price") or 0), 4),
                 "price": round(float(p.get("nominal_price") or 0), 4),
+                "currency": currency,
                 "market_value": round(mv, 2),
                 "market_value_hkd": round(mv_hkd, 2),
-                "currency": currency,
+                "market_value_usd": round(mv_usd, 2),
                 "weight_pct": round(weight, 2),
                 "pl_pct": round(float(p.get("pl_ratio") or 0), 2),
             })
@@ -101,14 +104,30 @@ def fetch_position(env: str = "REAL") -> dict:
         # 按市值（HKD）降序
         positions.sort(key=lambda x: -abs(x["market_value_hkd"]))
 
+        # ── 显示币种换算 ──
+        if display_currency == "USD":
+            rate_display = 1.0 / USD_HKD_RATE  # HKD → USD
+            display_cur = "USD"
+        else:
+            rate_display = 1.0
+            display_cur = base_currency
+
+        total_d = total_assets * rate_display
+        cash_d = cash * rate_display
+        market_d = market_val * rate_display
+        for p in positions:
+            p["market_value"] = round(p["market_value_hkd"] * rate_display, 2)
+            p["currency"] = display_cur
+
         return {
             "env": env,
             "acc_id": acc_id,
             "base_currency": base_currency,
+            "display_currency": display_cur,
             "usd_hkd_rate": USD_HKD_RATE,
-            "cash": round(cash, 2),
-            "total_assets": round(total_assets, 2),
-            "market_value": round(market_val, 2),
+            "cash": round(cash_d, 2),
+            "total_assets": round(total_d, 2),
+            "market_value": round(market_d, 2),
             "cash_pct": round(cash / total_assets * 100, 1) if total_assets else 0.0,
             "position_pct": round(market_val / total_assets * 100, 1) if total_assets else 0.0,
             "position_count": len(positions),

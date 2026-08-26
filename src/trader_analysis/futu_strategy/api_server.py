@@ -1388,6 +1388,7 @@ def delete_content_template(key: str):
 @app.get("/api/position")
 def get_position(
     env: str = Query(default="REAL", pattern="^(REAL|SIMULATE)$", description="账户环境：REAL 实盘 / SIMULATE 模拟盘"),
+    currency: str = Query(default="base", pattern="^(base|USD)$", description="计价币种：base 账户记账币种（如 HKD）/ USD 美元"),
 ):
     """实时查询富途持仓 + 配比（依赖 OpenD 在线）。
 
@@ -1396,7 +1397,7 @@ def get_position(
     """
     from trader_analysis.futu_strategy.position_fetcher import fetch_position
 
-    result = fetch_position(env=env)
+    result = fetch_position(env=env, display_currency=currency)
     if "error" in result:
         return {"data": None, "message": result["error"]}
     return {"data": result}
