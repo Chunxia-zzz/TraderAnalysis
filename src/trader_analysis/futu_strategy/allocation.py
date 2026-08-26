@@ -154,6 +154,16 @@ def _make_advice(code: str, gap: float) -> dict:
             "reasons": [f"溢价{premium:.0f}%"],
         }
 
+    # 规则：评分≥80 且 低于公允价值（低估）→ 强烈建议加仓（超卖+低估）
+    if ms and close and close < ms and score is not None and score >= 80:
+        discount = (ms - close) / close * 100
+        return {
+            "score": score, "rsi": rsi,
+            "action": f"强烈建议加仓（评分{score:.0f} + 低估{discount:.0f}%）",
+            "level": "strong_buy",
+            "reasons": [f"评分{score:.0f}高", f"低估{discount:.0f}%"],
+        }
+
     reasons = []
     if score is not None and score >= 75:
         reasons.append(f"评分{score:.0f}高")
