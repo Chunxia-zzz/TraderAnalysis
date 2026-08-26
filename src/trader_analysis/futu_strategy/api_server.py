@@ -1382,6 +1382,26 @@ def delete_content_template(key: str):
     return {"message": f"模板 {key} 已恢复默认", "template": tpl}
 
 
+# ── 持仓查询（依赖 OpenD，实时刷新）───────────────────────────────────────────
+
+
+@app.get("/api/position")
+def get_position(
+    env: str = Query(default="REAL", pattern="^(REAL|SIMULATE)$", description="账户环境：REAL 实盘 / SIMULATE 模拟盘"),
+):
+    """实时查询富途持仓 + 配比（依赖 OpenD 在线）。
+
+    每次调用都刷新缓存，返回最新市价与市值占比。
+    OpenD 不在线或失败时返回 {"data": null, "message": ...}。
+    """
+    from trader_analysis.futu_strategy.position_fetcher import fetch_position
+
+    result = fetch_position(env=env)
+    if "error" in result:
+        return {"data": None, "message": result["error"]}
+    return {"data": result}
+
+
 @app.get("/api/fundamental")
 def get_fundamental(
     code: str,
