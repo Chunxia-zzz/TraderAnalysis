@@ -406,6 +406,10 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
 | `momentum_score` | int\|null | 动量/趋势强度评分 0-100 |
 | `ema_ribbon` | `"green"`\|`"red"`\|null | EMA飘带方向：`ema5 > ema30` → green，否则 red（v3.6 去掉 mixed） |
 | `ribbon_flip` | `"to_bull"`\|`"to_bear"`\|null | 近5日内飘带翻转：空转多 / 多转空 / 无翻转 |
+| `dd60_pct` | float\|null | 60日跌幅%（从60日高点回撤），**<30 视为通过"过滤烂票"检查** |
+| `dd60_ok` | bool\|null | 60日跌幅是否 <30% |
+| `ms_discount_pct` | float\|null | 晨星折价率：正值=低估（价低于公允价值），负值=溢价 |
+| `ms_undervalued` | bool\|null | 是否晨星低估（close < morningstar_fair_value） |
 
 **前端展示建议：**
 
