@@ -322,14 +322,13 @@ def get_scores_overview(
     conn = sqlite3.connect(app_config.DB_PATH)
     conn.row_factory = sqlite3.Row
 
-    # 批量查询：一次拉取所有标的最近20根日线
-    # 先找出截止日期（只取最近 30 天数据减少扫描量）
+    # 批量查询：一次拉取所有标的最近 60 根日线（用于动量 + 60日跌幅）
     codes = [r["code"] for r in rows]
     placeholders = ",".join(["?"] * len(codes))
     from datetime import datetime, timedelta
-    cutoff_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    cutoff_date = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
     all_kline_rows = conn.execute(
-        f"""SELECT code, close, ma5, ma10, ma20, ma60, rsi6, macd, dif, dea, volume, vol_ma20,
+        f"""SELECT code, close, high, ma5, ma10, ma20, ma60, rsi6, macd, dif, dea, volume, vol_ma20,
             ema5, ema10, ema15, ema20, ema25, ema30, date
         FROM kline_indicators
         WHERE code IN ({placeholders}) AND ktype = '1d' AND date >= ?
@@ -337,14 +336,21 @@ def get_scores_overview(
         codes + [cutoff_date],
     ).fetchall()
 
-    # 按 code 分组（只保留最近 20 根）
+    # 按 code 分组（只保留最近 60 根）
     kline_by_code: dict[str, list] = {}
     for row in all_kline_rows:
         code = row["code"]
         if code not in kline_by_code:
             kline_by_code[code] = []
-        if len(kline_by_code[code]) < 20:
+        if len(kline_by_code[code]) < 60:
             kline_by_code[code].append(row)
+
+    # 批量查晨星公允价值
+    ms_rows = conn.execute(
+        f"SELECT code, morningstar_fair_value FROM watchlist WHERE code IN ({placeholders})",
+        codes,
+    ).fetchall()
+    ms_map = {r["code"]: float(r["morningstar_fair_value"]) for r in ms_rows if r["morningstar_fair_value"]}
 
     for r in rows:
         kline_rows = kline_by_code.get(r["code"], [])
@@ -373,6 +379,18 @@ def get_scores_overview(
                             ribbon_flip = "to_bull" if current_bull else "to_bear"
                             break
             r["ribbon_flip"] = ribbon_flip
+            # 60日跌幅（从60日高点回撤；"过滤烂票"检查：<30% 通过）
+            highs = [float(x["high"]) for x in kline_rows if x["high"]]
+            r["dd60_pct"] = round((1 - close / max(highs)) * 100, 1) if (close and highs and max(highs) > 0) else None
+            r["dd60_ok"] = r["dd60_pct"] is not None and r["dd60_pct"] < 30
+            # 晨星低估检查
+            ms = ms_map.get(r["code"])
+            if ms and close:
+                r["ms_discount_pct"] = round((ms - close) / close * 100, 1)
+                r["ms_undervalued"] = close < ms
+            else:
+                r["ms_discount_pct"] = None
+                r["ms_undervalued"] = None
         else:
             r["above_ma5"] = None
             r["close"] = None
@@ -380,6 +398,10 @@ def get_scores_overview(
             r["momentum_score"] = None
             r["ema_ribbon"] = None
             r["ribbon_flip"] = None
+            r["dd60_pct"] = None
+            r["dd60_ok"] = None
+            r["ms_discount_pct"] = None
+            r["ms_undervalued"] = None
     conn.close()
 
     strong_buy = [r for r in rows if r["signal"] == "STRONG_BUY"]
