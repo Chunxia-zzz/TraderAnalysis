@@ -211,3 +211,52 @@ systemctl status trader-api        # 查看后端状态
 systemctl restart trader-api       # 重启后端
 journalctl -u trader-api -n 50     # 查看后端日志
 ```
+
+### 5. Nginx 层：静态压缩与缓存（2026-10-12 新增）
+
+> 此前 nginx 配置**只存在于服务器上、仓库里没有记录**。本节把它固化，避免以后不知道
+> `/etc/nginx/conf.d/gzip.conf` 是干什么的。原配置备份在服务器 `/root/nginx-backup/`。
+
+**背景**：`/etc/nginx/nginx.conf:29` 的 `#gzip  on;` **一直是注释状态** → 线上 JS 原样传输。
+实测 index 主包 1531 KB 未压缩，开启后 480 KB；整页首屏实际下载 **1688 KB → 575 KB（省 66%）**。
+
+**两处配置**
+
+| 文件 | 作用 |
+|---|---|
+| `/etc/nginx/conf.d/gzip.conf` | gzip 压缩开关与类型（含 `gzip_proxied any` → `/api` 反代响应也压缩） |
+| `/etc/nginx/conf.d/trader.conf` | 站点块，新增 `/assets/` 强缓存与 `index.html` no-cache |
+
+`conf.d/*.conf` 由 `nginx.conf:31` 在 `http` 块内 include，所以 `gzip.conf` 里写 http 级指令是合法的 ——
+**新增独立文件而不是改 `nginx.conf`**，删除该文件即可回滚。
+
+**三个必须知道的坑**
+
+1. **不要叠加 `expires` 指令**。`expires 1y` 本身就会输出 `Cache-Control: max-age=...`，
+   再 `add_header Cache-Control "..., immutable"` 会让 nginx 输出**两个 Cache-Control 头**。
+   本项目只用 `add_header`。验证：`curl -sD- -o/dev/null <url> | grep -ci cache-control` 必须是 1。
+2. **`index.html` 必须 `no-cache`**。Vite 产物名带内容 hash，`/assets/` 一旦被永久强缓存，
+   而 `index.html` 也被启发式缓存住，新部署后页面仍会去请求**已删除的旧 chunk → 白屏**。
+   `no-cache` 是每次带 ETag 重验证（命中返 304），成本极低。
+3. **`application/javascript` 必须显式列进 `gzip_types`**。nginx 默认只压 `text/html`，
+   而 `.js` 的 MIME 是 `application/javascript`，不写进去等于没压。
+
+**改动后如何验证**
+
+```bash
+# 语法校验（不通过就不要 reload）
+ssh root@47.106.175.84 "nginx -t"
+# 平滑重载（不断连接）
+ssh root@47.106.175.84 "systemctl reload nginx"
+
+# 压缩是否生效：应看到 Content-Encoding: gzip，且 size 从 1567955 降到约 491000
+curl -s -o /dev/null -H 'Accept-Encoding: gzip' \
+  -w "传输 %{size_download} bytes\n" \
+  http://47.106.175.84/assets/index-<hash>.js
+
+# 缓存头是否生效
+curl -sD- -o /dev/null http://47.106.175.84/assets/index-<hash>.js | grep -i cache-control  # immutable
+curl -sD- -o /dev/null http://47.106.175.84/                          | grep -i cache-control  # no-cache
+```
+
+> 改 nginx 后**务必回归一遍站点**：7 个 SPA 路由返回 200、`/api` 反代正常、页面无 JS 异常。

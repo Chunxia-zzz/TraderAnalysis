@@ -165,6 +165,39 @@ Swing Pivot 聚类得出，是双向对称的静态支撑/压力位；利弗莫�
 
 ---
 
+### 部署 — Nginx 开启 gzip 与静态缓存（性能）
+
+> 起因：排查用户提出的「构建警告 `chunks are larger than 500 kB` 要不要管」。
+> 结论是**主包大小本身可以不管**（500 kB 只是 Vite 默认建议阈值，不影响功能与正确性，
+> 实测线上拉 1.53 MB 耗时 0.08–0.14 s），但**顺带查出一个独立的、免费的真实问题**。
+
+- **发现**：`/etc/nginx/nginx.conf:29` 的 `#gzip  on;` **一直是注释状态** →
+  线上所有 JS/CSS **原样传输**，index 主包 1531 KB 未压缩
+- **改动（纯服务器配置，未改一行前端代码、未重新构建产物）**：
+  - 新增 `/etc/nginx/conf.d/gzip.conf`：`gzip on` + `gzip_vary` + `gzip_proxied any`
+    + `gzip_comp_level 5` + `gzip_min_length 1024`；`gzip_types` 显式列出
+    `application/javascript` 等（nginx 默认只压 `text/html`，`.js` 的 MIME 是
+    `application/javascript`，不写等于没压）
+  - `/etc/nginx/conf.d/trader.conf` 新增两个 location：
+    `/assets/` → `Cache-Control: public, max-age=31536000, immutable`（Vite 产物名带内容 hash）；
+    `index.html` → `Cache-Control: no-cache`（否则新部署后引用已删除的旧 chunk **会白屏**）
+  - 新增独立文件而非改 `nginx.conf`，删除即可回滚；原配置备份于服务器 `/root/nginx-backup/`
+- **实测效果**（浏览器 Performance API 真实测量，/livermore 冷缓存首访）：
+
+  | 指标 | 改动前 | 改动后 |
+  |---|---|---|
+  | index 主包传输 | 1 531 KB | **480 KB** |
+  | 整页首屏下载 | 1 688 KB | **575 KB（省 66%）** |
+  | `/api/livermore/signals` 响应 | 55.4 KB | **10.7 KB** |
+
+- **踩坑**：`expires 1y` 自带 `Cache-Control: max-age=...`，再 `add_header Cache-Control "...immutable"`
+  会让 nginx 输出**两个 Cache-Control 头** → 本项目只用 `add_header`，并断言该头出现次数为 1
+- **回归**：7 个 SPA 路由全部 200、`/api` 反代正常、`/livermore` 渲染 4 分组 10 行、0 JS 异常
+- 服务器 nginx 配置此前**只存在于服务器上、仓库无记录** → 已在 `README.md` 新增「### 5. Nginx 层」
+  章节固化（含回滚方式与验证命令）
+
+---
+
 ## [2026-08-28]
 
 ### 新功能 — 主跌浪超卖 check 标识
