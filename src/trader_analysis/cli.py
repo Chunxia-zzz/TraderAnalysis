@@ -591,6 +591,103 @@ def scan_top(
     typer.echo(f"信号已写入 DB（top_signal_log 表），可通过 /api/top-signals 查询。")
 
 
+@app.command("livermore")
+def livermore(
+    date: Optional[str] = typer.Option(None, help="按指定日期回算 YYYY-MM-DD（默认最新）"),
+    all_tide: bool = typer.Option(False, "--all", help="不做周线潮汐过滤（默认只报潮汐向上的做多信号）"),
+    persist: bool = typer.Option(False, help="写入 livermore_signal_log 表"),
+    backfill: int = typer.Option(0, help="回填最近 N 个交易日（隐含 --persist）"),
+    top: int = typer.Option(15, help="每个分组最多打印多少条"),
+) -> None:
+    """利弗莫尔关键点扫描（独立信号体系，不并入 total_score）。
+
+    关键点 = 整理平台（窄幅箱体）上沿；突破上沿且放量 = 买点。
+    分「反转关键点」（平台建立时中期趋势尚未转多）与「连续关键点」（趋势已向上，属加仓点）。
+    同时输出逼近关键点的预备名单、已在关键点上方的持仓参考、以及假突破/止损/放量滞涨预警。
+    只读本地 DB，不依赖 OpenD。
+    """
+    from trader_analysis.futu_strategy import config
+    from trader_analysis.futu_strategy.livermore_detector import scan_livermore
+    from trader_analysis.futu_strategy.storage import init_db, insert_livermore_signal
+
+    import sqlite3
+
+    init_db()
+    require_tide_up = not all_tide and getattr(config, "LIV_REQUIRE_TIDE_UP", True)
+    daily_bars = getattr(config, "LIV_DAILY_BARS", 300)
+
+    def _persist(d: Optional[str]) -> int:
+        r = scan_livermore(date=d, require_tide_up=require_tide_up, daily_bars=daily_bars)
+        n = 0
+        for s in r["signals"]:
+            try:
+                insert_livermore_signal(s["code"], s["date"], s["signal_type"], s["strength"], s["detail"])
+                n += 1
+            except Exception:
+                pass
+        return n
+
+    # ── 回填模式：按最近 N 个交易日逐日重算 ──
+    if backfill > 0:
+        conn = sqlite3.connect(config.DB_PATH)
+        rows = conn.execute(
+            "SELECT DISTINCT date FROM kline_indicators WHERE ktype = '1d' ORDER BY date DESC LIMIT ?",
+            (backfill,),
+        ).fetchall()
+        conn.close()
+        dates = sorted(str(r[0]) for r in rows)
+        total = 0
+        for d in dates:
+            n = _persist(d)
+            total += n
+            typer.echo(f"  {d}  写入 {n} 条")
+        typer.echo(f"回填完成，共写入 {total} 条利弗莫尔信号（日期 {dates[0]} ~ {dates[-1]}）。")
+        return
+
+    result = scan_livermore(date=date, require_tide_up=require_tide_up, daily_bars=daily_bars)
+    stats = result["stats"]
+    typer.echo("")
+    typer.echo(f"── 利弗莫尔关键点扫描（数据日期 {result['date']}）──")
+    typer.echo(
+        f"  扫描 {result['scanned']}/{result['universe']} 只"
+        f"（无有效整理平台 {stats['no_platform']} 只）"
+        f" | 潮汐向上 {stats['tide_up']} / 向下 {stats['tide_down']} / 不明 {stats['tide_unknown']}"
+        f" | 龙头 {stats['leaders']}"
+    )
+    if require_tide_up:
+        typer.echo(f"  已按周线潮汐过滤：另有 {stats['filtered_by_tide']} 条做多信号因潮汐不向上被挡（加 --all 可看全量）")
+    typer.echo(f"  基准 SPY：20 日 {result['bench'].get('ret_20')}% / 60 日 {result['bench'].get('ret_60')}%")
+
+    def _dump(title: str, rows: list[dict]) -> None:
+        typer.echo("")
+        typer.echo(f"── {title}（{len(rows)} 只）──")
+        if not rows:
+            typer.echo("  （无）")
+            return
+        for x in rows[:top]:
+            flag = "★龙头" if x.get("is_leader") else "      "
+            typer.echo(
+                f"  {x['code']:11s} {flag} 关键点 {x['pivotal']:>9.2f}"
+                f"  现价 {x['close']:>9.2f}  距 {x['dist_pct']:>+6.2f}%"
+                f"  箱体 {x['platform_bars']:>3d}根/{x['platform_range_pct']:>5.2f}%"
+                f"  量比 {x['vol_ratio'] if x['vol_ratio'] is not None else '-'}"
+                f"  潮汐 {x['tide']:>7s}  {x.get('signal_label', '')}"
+            )
+
+    _dump("关键点突破（买点）", result["breakouts"])
+    _dump("逼近关键点（预备名单）", result["near_pivots"])
+    _dump("已在关键点上方（持仓参考）", result["above_pivot"])
+    _dump("危险信号（假突破/止损/滞涨）", result["dangers"])
+
+    if persist:
+        n = _persist(date)
+        typer.echo("")
+        typer.echo(f"已写入 livermore_signal_log {n} 条。")
+    else:
+        typer.echo("")
+        typer.echo("（未写库；加 --persist 落库，或加 --backfill N 回填历史）")
+
+
 @app.command("scan-signals")
 def scan_signals(
     codes: Optional[list[str]] = typer.Option(None, help="标的代码列表（默认全部 watchlist）"),
@@ -679,6 +776,33 @@ def scan_signals(
                                 pass
 
         typer.echo(f"回溯完成，写入 {total_top} 条顶部信号，{total_bottom} 条底部信号，{total_ema} 条EMA交叉信号。")
+
+        # ── 利弗莫尔关键点回溯（逐日按当时数据重算，周线与基准同步截断，无前视偏差）──
+        try:
+            import sqlite3 as _sq
+
+            from trader_analysis.futu_strategy.livermore_detector import scan_livermore
+            from trader_analysis.futu_strategy.storage import insert_livermore_signal
+
+            conn_d = _sq.connect(config.DB_PATH)
+            rows_d = conn_d.execute(
+                "SELECT DISTINCT date FROM kline_indicators WHERE ktype = '1d' ORDER BY date DESC LIMIT ?",
+                (backfill,),
+            ).fetchall()
+            conn_d.close()
+            liv_total = 0
+            for d in sorted(str(r[0]) for r in rows_d):
+                liv = scan_livermore(date=d, require_tide_up=False,
+                                     daily_bars=getattr(config, "LIV_DAILY_BARS", 300))
+                for s in liv["signals"]:
+                    try:
+                        insert_livermore_signal(s["code"], s["date"], s["signal_type"], s["strength"], s["detail"])
+                        liv_total += 1
+                    except Exception:
+                        pass
+            typer.echo(f"利弗莫尔关键点回溯：写入 {liv_total} 条。")
+        except Exception as exc:
+            typer.echo(f"利弗莫尔关键点回溯失败（不影响其他信号）：{exc}", err=True)
         return
 
     # 自动增量补算：补算「上次信号扫描之后」缺失的交易日信号
@@ -765,6 +889,26 @@ def scan_signals(
                             pass
 
     typer.echo(f"完成，写入 {top_count} 条顶部信号，{bottom_count} 条底部信号，{ema_count} 条EMA交叉信号。")
+
+    # ── 利弗莫尔关键点信号（独立体系，写入 livermore_signal_log）──
+    # 注意：这里落库的是**未按潮汐过滤**的全量信号，便于日后回测验证潮汐过滤本身是否有效；
+    # 前端展示时才按 config.LIV_REQUIRE_TIDE_UP 过滤。
+    try:
+        from trader_analysis.futu_strategy.livermore_detector import scan_livermore
+        from trader_analysis.futu_strategy.storage import insert_livermore_signal
+
+        liv = scan_livermore(date=None, require_tide_up=False,
+                             daily_bars=getattr(config, "LIV_DAILY_BARS", 300))
+        liv_n = 0
+        for s in liv["signals"]:
+            try:
+                insert_livermore_signal(s["code"], s["date"], s["signal_type"], s["strength"], s["detail"])
+                liv_n += 1
+            except Exception:
+                pass
+        typer.echo(f"利弗莫尔关键点：写入 {liv_n} 条（livermore_signal_log）。")
+    except Exception as exc:
+        typer.echo(f"利弗莫尔关键点扫描失败（不影响其他信号）：{exc}", err=True)
 
 
 @app.command("grid-status")

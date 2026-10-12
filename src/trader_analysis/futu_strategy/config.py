@@ -152,6 +152,24 @@ DB_PATH: str = os.environ.get(
     "TA_DB_PATH", os.path.join(_PROJECT_ROOT, "data", "indicators.db")
 )
 
+# ── 利弗莫尔关键点（独立信号体系）────────────────────────────────────────────
+# ⚠️ 与 scorer.py 的 6 因子均值回归**方向相反**（一个买超卖、一个买突破），
+#    因此本组信号**不并入 total_score**，也不写入 top/bottom_signal_log。
+#    默认值见 livermore_detector.py 的模块常量，此处只覆盖需要长期调的关键项。
+LIV_REQUIRE_TIDE_UP: bool = True      # 做多突破/逼近信号是否要求周线潮汐向上
+LIV_PLATFORM_LOOKBACK: int = 60       # 整理平台最长搜索窗口（根）
+LIV_PLATFORM_MIN_BARS: int = 10       # 平台最短根数
+LIV_PLATFORM_MAX_RANGE_PCT: float = 0.14  # 平台真实振幅上限（占收盘价）
+LIV_PLATFORM_MAX_RANGE_ATR: float = 5.0   # 平台真实振幅上限（ATR 倍数）
+LIV_PLATFORM_MAX_NET_RATIO: float = 0.60  # 净位移/振幅上限，排除单边趋势
+LIV_BREAKOUT_BUFFER: float = 0.002    # 突破缓冲：收盘需高于关键点 0.2%
+LIV_NEAR_PIVOT_PCT: float = 2.0       # 「逼近关键点」阈值（%）
+LIV_VOL_CONFIRM_RATIO: float = 1.5    # 放量确认阈值（volume / vol_ma20）
+LIV_STOP_ATR_MULT: float = 0.5        # 止损：关键点下方几倍 ATR
+LIV_LEADER_RS60: float = 5.0          # 龙头判定：60 日相对强度下限（%）
+LIV_DAILY_BARS: int = 300             # 扫描时每个标的读取的日线根数
+LIV_CACHE_TTL: int = 300              # API 结果内存缓存秒数（0=不缓存）
+
 # ── TP/SL 止盈止损配置 ─────────────────────────────────────────────────────
 TPSL_ATR_PERIOD: int = 14
 TPSL_ATR_MULTIPLIER: float = 2.0

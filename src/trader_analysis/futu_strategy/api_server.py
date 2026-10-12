@@ -715,6 +715,244 @@ def get_ema_cross_signals(
     }
 
 
+# ── 利弗莫尔关键点接口（独立信号体系，⚠️ 不并入 total_score）────────────────────
+#
+# 与 scorer.py 的均值回归方向相反：均分是「越跌越买」，本模块是「突破关键点才买」。
+# 因此本组信号不写 top/bottom_signal_log，而是独立成 livermore_signal_log。
+
+_LIV_CACHE: dict = {"ts": 0.0, "key": None, "data": None}
+
+
+def _livermore_scan_cached(require_tide_up: bool, force: bool = False) -> dict:
+    """带内存缓存的实时扫描（默认 TTL 见 config.LIV_CACHE_TTL）。"""
+    import time as _time
+
+    from trader_analysis.futu_strategy import config as _cfg
+    from trader_analysis.futu_strategy.livermore_detector import scan_livermore
+
+    ttl = getattr(_cfg, "LIV_CACHE_TTL", 300)
+    now = _time.time()
+    if (
+        not force and ttl > 0 and _LIV_CACHE["data"] is not None
+        and _LIV_CACHE["key"] == require_tide_up
+        and (now - _LIV_CACHE["ts"]) < ttl
+    ):
+        return _LIV_CACHE["data"]
+
+    data = scan_livermore(
+        require_tide_up=require_tide_up,
+        daily_bars=getattr(_cfg, "LIV_DAILY_BARS", 300),
+    )
+    _LIV_CACHE.update({"ts": now, "key": require_tide_up, "data": data})
+    return data
+
+
+def _livermore_group_rows(rows: list[dict], name_map: dict) -> dict[str, list[dict]]:
+    """把 DB 行按信号类型分到页面的四个分组。"""
+    from trader_analysis.futu_strategy.livermore_detector import (
+        SIG_BREAK_CONTINUATION, SIG_BREAK_REVERSAL, SIG_CLIMAX_WARNING,
+        SIG_FAILED_BREAKOUT, SIG_NEAR_PIVOT, SIG_STOP_TRIGGERED, SIGNAL_LABEL,
+    )
+
+    out: dict[str, list[dict]] = {"breakouts": [], "near_pivots": [], "above_pivot": [], "dangers": []}
+    for r in rows:
+        d = r.get("detail") or {}
+        item = {
+            "code": r["code"],
+            "name": name_map.get(r["code"], d.get("name", "")),
+            "date": r.get("date"),
+            "signal_type": r.get("signal_type"),
+            "signal_label": SIGNAL_LABEL.get(r.get("signal_type", ""), r.get("signal_type", "")),
+            "strength": r.get("strength"),
+            "pivotal": r.get("pivotal", d.get("pivotal")),
+            "close": r.get("close", d.get("close")),
+            "dist_pct": r.get("dist_pct", d.get("dist_pct")),
+            "vol_ratio": r.get("vol_ratio", d.get("vol_ratio")),
+            "tide": r.get("tide", d.get("tide")),
+            "wave": r.get("wave", d.get("wave")),
+            "context": r.get("context", d.get("context")),
+            "rs_60": r.get("rs_60", d.get("rs_60")),
+            "is_leader": bool(r.get("is_leader") or d.get("is_leader")),
+            "stop": r.get("stop", d.get("stop")),
+            "platform_bars": d.get("platform_bars"),
+            "platform_range_pct": d.get("platform_range_pct"),
+            "description": d.get("description", ""),
+        }
+        st = item["signal_type"]
+        if st in (SIG_BREAK_REVERSAL, SIG_BREAK_CONTINUATION):
+            out["breakouts"].append(item)
+        elif st == SIG_NEAR_PIVOT:
+            out["near_pivots"].append(item)
+        elif st in (SIG_FAILED_BREAKOUT, SIG_STOP_TRIGGERED, SIG_CLIMAX_WARNING):
+            out["dangers"].append(item)
+    return out
+
+
+@app.get("/api/livermore/signals")
+def get_livermore_signals(
+    date: str | None = Query(default=None, description="指定日期 YYYY-MM-DD；不传=最新"),
+    source: str = Query(default="live", pattern="^(live|db)$",
+                        description="live=实时扫描（默认，含全部四个分组）；db=读 livermore_signal_log 历史"),
+    all_tide: bool = Query(default=False, alias="all", description="true=不按周线潮汐过滤做多信号"),
+    refresh: bool = Query(default=False, description="true=忽略内存缓存强制重算（仅 live）"),
+):
+    """利弗莫尔关键点信号（独立信号体系）。
+
+    返回四个分组：
+
+    - ``breakouts``   关键点突破（今日首次收于整理平台上沿之上）
+    - ``near_pivots``  逼近关键点（在下方 ``LIV_NEAR_PIVOT_PCT`` 以内，预备名单）
+    - ``above_pivot``  已在关键点上方（突破后延续，回踩加仓参考）
+    - ``dangers``      危险信号（假突破 / 跌破关键点止损 / 高位放量滞涨）
+
+    默认只在**周线潮汐向上**时给做多类信号（``require_tide_up``）；风险信号不受限制。
+    传 ``?all=1`` 可关闭潮汐过滤。
+
+    ``source=live``（默认）实时扫描、结果最全（``above_pivot`` 只有实时模式有）；
+    ``source=db`` 读 ``scan-signals`` 落库的历史，用于回溯/回测，需先跑过扫描。
+    """
+    from trader_analysis.futu_strategy import config as _cfg
+    from trader_analysis.futu_strategy.livermore_detector import scan_livermore
+
+    require_tide_up = not all_tide and getattr(_cfg, "LIV_REQUIRE_TIDE_UP", True)
+
+    conn = storage._get_conn()
+    name_map = {
+        r["code"]: (r["name"] or "")
+        for r in conn.execute("SELECT code, name FROM watchlist").fetchall()
+    }
+    conn.close()
+
+    if source == "db":
+        rows = storage.query_livermore_signals(date=date)
+        groups = _livermore_group_rows(rows, name_map)
+        dates = storage.query_livermore_dates(limit=30)
+        return {
+            "source": "db",
+            "date": date or (dates[0]["date"] if dates else None),
+            "require_tide_up": require_tide_up,
+            "universe": None,
+            "scanned": None,
+            "stats": {
+                "breakouts": len(groups["breakouts"]),
+                "reversal": sum(1 for b in groups["breakouts"] if b.get("context") == "reversal"),
+                "continuation": sum(1 for b in groups["breakouts"] if b.get("context") == "continuation"),
+                "near_pivots": len(groups["near_pivots"]),
+                "above_pivot": 0,
+                "dangers": len(groups["dangers"]),
+                "dangers_stop": sum(1 for d in groups["dangers"] if d.get("signal_type") == "LIV_STOP_TRIGGERED"),
+                "dangers_failed": sum(1 for d in groups["dangers"] if d.get("signal_type") == "LIV_FAILED_BREAKOUT"),
+                "dangers_climax": sum(1 for d in groups["dangers"] if d.get("signal_type") == "LIV_CLIMAX_WARNING"),
+                "leaders": sum(1 for lst in groups.values() for i in lst if i.get("is_leader")),
+                "filtered_by_tide": 0,
+                "no_platform": 0,
+            },
+            "bench": {},
+            "available_dates": dates,
+            "message": None if rows else "该日期在 livermore_signal_log 中无记录，请先运行 scan-signals",
+            "skipped": [],
+            "above_pivot": [],
+            **groups,
+        }
+
+    if date:
+        # 指定历史日期：不走缓存，按该日期重算（保证 above_pivot 等状态正确）
+        data = scan_livermore(
+            date=date, require_tide_up=require_tide_up,
+            daily_bars=getattr(_cfg, "LIV_DAILY_BARS", 300),
+        )
+    else:
+        data = _livermore_scan_cached(require_tide_up=require_tide_up, force=refresh)
+
+    payload = {k: data[k] for k in (
+        "date", "universe", "scanned", "stats", "bench",
+        "breakouts", "near_pivots", "above_pivot", "dangers", "skipped",
+    )}
+    payload["source"] = "live"
+    payload["require_tide_up"] = require_tide_up
+    payload["available_dates"] = storage.query_livermore_dates(limit=30)
+    payload["message"] = None
+    return payload
+
+
+@app.get("/api/livermore/detail")
+def get_livermore_detail(
+    code: str = Query(..., description="标的代码"),
+    date: str | None = Query(default=None, description="指定日期 YYYY-MM-DD，不传取最新"),
+):
+    """单只标的的利弗莫尔关键点全景。
+
+    含箱体上下沿、关键点、前高、止损位、金字塔加仓位、潮汐/波浪、相对强度，
+    以及一个 ``levels`` 数组（供 K 线图直接画线）：
+
+    ``[{price, role, label, bars_ago}]``，role ∈
+    ``pivotal`` / ``prior_high`` / ``platform_lower`` / ``stop`` / ``pyramid_1..3``。
+
+    无有效整理平台时返回 ``panorama.pivotal == null`` 并在 ``skip_reason`` 里说明原因。
+    """
+    from trader_analysis.futu_strategy import config as _cfg
+    from trader_analysis.futu_strategy.livermore_detector import (
+        SIGNAL_BULLISH, SIGNAL_LABEL, analyze_livermore, _bench_returns,
+    )
+
+    df = storage.query_recent(code, "1d", limit=getattr(_cfg, "LIV_DAILY_BARS", 300))
+    if df.empty:
+        return {"data": None, "message": f"{code} 无日线数据"}
+
+    weekly_df = storage.query_recent(code, "1w", limit=200)
+    spy = storage.query_recent("US.SPY", "1d", limit=getattr(_cfg, "LIV_DAILY_BARS", 300))
+    b20, b60 = _bench_returns(spy)
+
+    name = ""
+    conn = storage._get_conn()
+    row = conn.execute("SELECT name FROM watchlist WHERE code = ?", (code,)).fetchone()
+    if row:
+        name = row["name"] or ""
+    conn.close()
+
+    res = analyze_livermore(
+        df, weekly_df, code=code, name=name,
+        bench_ret_20=b20, bench_ret_60=b60,
+        require_tide_up=getattr(_cfg, "LIV_REQUIRE_TIDE_UP", True),
+    )
+    pan = res.panorama
+
+    levels: list[dict] = []
+    if pan.get("pivotal"):
+        levels.append({"price": pan["pivotal"], "role": "pivotal", "label": "关键点",
+                       "bars_ago": pan.get("platform_end_bars_ago")})
+        if pan.get("prior_high"):
+            levels.append({"price": pan["prior_high"], "role": "prior_high", "label": "前高", "bars_ago": None})
+        if pan.get("platform_lower"):
+            levels.append({"price": pan["platform_lower"], "role": "platform_lower", "label": "箱体下沿",
+                           "bars_ago": pan.get("platform_end_bars_ago")})
+        if pan.get("stop"):
+            levels.append({"price": pan["stop"], "role": "stop", "label": "止损",
+                           "bars_ago": pan.get("platform_end_bars_ago")})
+        for p in pan.get("pyramid") or []:
+            levels.append({"price": p["price"], "role": f"pyramid_{p['level']}",
+                           "label": f"加仓{p['level']}", "bars_ago": None})
+
+    return {
+        "code": code,
+        "name": name,
+        "date": pan.get("date") or date,
+        "panorama": pan,
+        "levels": levels,
+        "signals": [
+            {
+                "signal_type": s.signal_type,
+                "label": SIGNAL_LABEL.get(s.signal_type, s.signal_type),
+                "bullish": SIGNAL_BULLISH.get(s.signal_type),
+                "strength": round(s.strength, 3),
+                "description": s.description,
+                "detail": s.detail,
+            }
+            for s in res.signals
+        ],
+    }
+
+
 # ── 顶背离信号接口 ────────────────────────────────────────────────────────────
 
 

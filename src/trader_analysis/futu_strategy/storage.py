@@ -179,6 +179,35 @@ CREATE TABLE IF NOT EXISTS bottom_signal_log (
 
 CREATE INDEX IF NOT EXISTS idx_bottom_signal_code_date
     ON bottom_signal_log(code, date);
+
+-- 利弗莫尔关键点信号（独立体系，不并入评分，也不与 top/bottom_signal_log 混用）
+-- ⚠️ 与 top/bottom_signal_log 不同，此表建了 UNIQUE 索引：
+--    重跑 scan-signals 时用 INSERT OR REPLACE，天然幂等，不会像那两张表一样翻倍。
+CREATE TABLE IF NOT EXISTS livermore_signal_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    code        TEXT NOT NULL,
+    date        TEXT NOT NULL,
+    signal_type TEXT NOT NULL,
+    strength    REAL,
+    pivotal     REAL,
+    close       REAL,
+    dist_pct    REAL,
+    vol_ratio   REAL,
+    tide        TEXT,
+    wave        TEXT,
+    context     TEXT,
+    rs_60       REAL,
+    is_leader   INTEGER,
+    stop        REAL,
+    detail_json TEXT,
+    created_at  TEXT DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_livermore_code_date_type
+    ON livermore_signal_log(code, date, signal_type);
+
+CREATE INDEX IF NOT EXISTS idx_livermore_date
+    ON livermore_signal_log(date);
 """
 
 # K 线 + 指标列（写入顺序）
@@ -737,6 +766,128 @@ def query_bottom_signals_all(days: int = 7) -> list[dict]:
         d.pop("detail_json", None)
         result.append(d)
     return result
+
+
+# ── 利弗莫尔关键点信号日志 ──────────────────────────────────────────────────────
+
+
+def insert_livermore_signal(
+    code: str,
+    date: str,
+    signal_type: str,
+    strength: float,
+    detail: dict,
+) -> None:
+    """写入一条利弗莫尔关键点信号。
+
+    与 ``insert_top_signal`` / ``insert_bottom_signal`` 的区别：本表带
+    ``UNIQUE(code, date, signal_type)`` + ``INSERT OR REPLACE``，**重跑幂等**，
+    不会出现那两张表「重跑 scan-signals 信号翻倍」的问题。
+
+    结构化列（pivotal/close/dist_pct/... ）自 ``detail`` 中提取，方便直接 SQL 排序筛选。
+    """
+    d = detail or {}
+    conn = _get_conn()
+    conn.execute(
+        "INSERT OR REPLACE INTO livermore_signal_log "
+        "(code, date, signal_type, strength, pivotal, close, dist_pct, vol_ratio, "
+        " tide, wave, context, rs_60, is_leader, stop, detail_json) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            code, date, signal_type, strength,
+            d.get("pivotal"), d.get("close"), d.get("dist_pct"), d.get("vol_ratio"),
+            d.get("tide"), d.get("wave"), d.get("context"), d.get("rs_60"),
+            None if d.get("is_leader") is None else int(bool(d["is_leader"])),
+            d.get("stop"),
+            json.dumps(d, ensure_ascii=False),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def delete_livermore_signals(code: str | None = None, date: str | None = None) -> int:
+    """按 code / date 删除利弗莫尔信号，返回删除行数（用于重算前清理）。"""
+    sql = "DELETE FROM livermore_signal_log"
+    conds, params = [], []
+    if code:
+        conds.append("code = ?")
+        params.append(code)
+    if date:
+        conds.append("date = ?")
+        params.append(date)
+    if conds:
+        sql += " WHERE " + " AND ".join(conds)
+    conn = _get_conn()
+    cur = conn.execute(sql, params)
+    n = cur.rowcount
+    conn.commit()
+    conn.close()
+    return n
+
+
+def query_livermore_signals(
+    date: str | None = None,
+    *,
+    code: str | None = None,
+    signal_type: str | None = None,
+    limit: int = 2000,
+) -> list[dict]:
+    """查询利弗莫尔信号历史。
+
+    date 为 None 时取库里最新一个有信号的日期；跨日期时按日期倒序。
+    """
+    conn = _get_conn()
+    try:
+        if date is None and code is None:
+            row = conn.execute("SELECT MAX(date) AS d FROM livermore_signal_log").fetchone()
+            date = row["d"] if row else None
+            if not date:
+                return []
+
+        sql = (
+            "SELECT id, code, date, signal_type, strength, pivotal, close, dist_pct, "
+            "vol_ratio, tide, wave, context, rs_60, is_leader, stop, detail_json, created_at "
+            "FROM livermore_signal_log"
+        )
+        conds, params = [], []
+        if date:
+            conds.append("date = ?")
+            params.append(date)
+        if code:
+            conds.append("code = ?")
+            params.append(code)
+        if signal_type:
+            conds.append("signal_type = ?")
+            params.append(signal_type)
+        if conds:
+            sql += " WHERE " + " AND ".join(conds)
+        sql += " ORDER BY date DESC, strength DESC LIMIT ?"
+        params.append(limit)
+
+        rows = conn.execute(sql, params).fetchall()
+    finally:
+        conn.close()
+
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["detail"] = json.loads(d["detail_json"]) if d.get("detail_json") else {}
+        d.pop("detail_json", None)
+        out.append(d)
+    return out
+
+
+def query_livermore_dates(limit: int = 30) -> list[dict]:
+    """列出有信号的日期及条数，日期降序。"""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT date, COUNT(*) AS n FROM livermore_signal_log "
+        "GROUP BY date ORDER BY date DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 # ── 持仓状态管理 ──────────────────────────────────────────────────────────────

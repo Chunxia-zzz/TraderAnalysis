@@ -79,6 +79,8 @@ Swagger UI：`http://localhost:8000/docs`
 | GET | `/api/grid/status` | 网格交易运行状态 | **GridTrading.vue** |
 | GET | `/api/grid/orders` | 网格交易记录 | **GridTrading.vue** |
 | GET | `/api/analysis` | 技术分析辅助决策（支撑/压力位 + 形态 + 趋势） | **Dashboard.vue / Chart.vue** |
+| GET | `/api/livermore/signals` | 利弗莫尔关键点信号（独立体系，四个分组） | **Livermore.vue** |
+| GET | `/api/livermore/detail` | 单标的利弗莫尔关键点全景 + 可画线 levels | **Chart.vue（K 线叠加）/ Livermore.vue（抽屉）** |
 
 ---
 
@@ -1259,6 +1261,176 @@ supports/resistances 由 `technical_analysis.find_support_resistance()` 计算�
 
 ```json
 {"data": null, "message": "US.MU 数据不足（需至少 20 根），请先更新行情"}
+```
+
+---
+
+## 利弗莫尔关键点（独立信号体系）
+
+> ⚠️ **体系定位**：本组接口对应的是**利弗莫尔式突破交易**，与项目主评分 `total_score`（6 因子均值回归）
+> **方向相反** —— 评分买超卖、本模块买突破。因此：
+>
+> - **不并入 `total_score`**，也不参与 `/api/scores/*` 的任何计算
+> - **不写 `top_signal_log` / `bottom_signal_log`**，独立落 `livermore_signal_log`
+> - 与 `/api/analysis` 的支撑压力位**不是同一套算法**：后者是 Swing Pivot 聚类的双向静态价位，
+>   本模块是带量能确认、只在顺势方向使用的**突破触发价**
+>
+> 实现见 `futu_strategy/livermore_detector.py`，核心概念映射：
+
+| 利弗莫尔概念 | 本模块映射 |
+|---|---|
+| 关键点（Pivotal Point） | **整理平台（窄幅箱体）的上沿**，用箱体内**收盘价**最高点定义（抗插针影线） |
+| 反转关键点 | 箱体建立时中期趋势未转多（MA20 ≤ MA60）→ 建仓点 |
+| 连续关键点 | 趋势已向上（MA20 > MA60）→ 加仓点 |
+| 量能确认 | `volume / vol_ma20 ≥ 1.5` |
+| 顺势过滤 | 周线潮汐向上（`LIV_REQUIRE_TIDE_UP`） |
+| 龙头股 | 60 日相对强度 ≥ 5%（`LIV_LEADER_RS60`） |
+| 止损 | 关键点 − 0.5×ATR（下限为箱体下沿） |
+| 金字塔加仓 | 关键点上方 1 / 2 / 3 × ATR |
+
+**信号类型**
+
+| signal_type | 方向 | 含义 |
+|---|---|---|
+| `LIV_PIVOT_BREAK_REVERSAL` | 做多 | 反转关键点突破（建仓） |
+| `LIV_PIVOT_BREAK_CONTINUATION` | 做多 | 连续关键点突破（加仓） |
+| `LIV_NEAR_PIVOT` | 做多 | 逼近关键点（下方 `LIV_NEAR_PIVOT_PCT` 以内，预备名单） |
+| `LIV_FAILED_BREAKOUT` | 风险 | 假突破（近 3 根内曾突破、今日收回箱体内） |
+| `LIV_STOP_TRIGGERED` | 风险 | 跌破关键点止损位（近 15 根内突破过才判定） |
+| `LIV_CLIMAX_WARNING` | 风险 | 高位放量滞涨（量比 ≥2 + 高位 + RSI ≥70 + 涨幅有限） |
+
+### GET `/api/livermore/signals`
+
+全池扫描（195 只实测约 2.1 秒），按四个分组返回。
+
+**请求参数**
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `date` | string | 不传取最新 | 指定日期回算 `YYYY-MM-DD`（回算时周线与基准 SPY **同步按日期截断**，避免前视偏差） |
+| `source` | string | `"live"` | `live`=实时扫描（含全部四个分组）\| `db`=读 `livermore_signal_log` 历史（用于回溯/回测，需先跑过 `scan-signals`） |
+| `all` | bool | `false` | `true`=关闭周线潮汐过滤，返回全部突破 |
+| `refresh` | bool | `false` | `true`=忽略内存缓存强制重算（仅 `live`；缓存 TTL 见 `config.LIV_CACHE_TTL`，默认 300 秒） |
+
+**响应 200**
+
+```json
+{
+  "source": "live",
+  "date": "2026-10-09",
+  "require_tide_up": true,
+  "universe": 195,
+  "scanned": 183,
+  "stats": {
+    "breakouts": 10, "reversal": 1, "continuation": 9,
+    "near_pivots": 11, "above_pivot": 10, "dangers": 11,
+    "dangers_stop": 9, "dangers_failed": 2, "dangers_climax": 0,
+    "leaders": 50, "filtered_by_tide": 25, "no_platform": 12,
+    "tide_up": 85, "tide_down": 97, "tide_unknown": 1
+  },
+  "bench": {"ret_20": 1.87, "ret_60": 3.33},
+  "available_dates": [{"date": "2026-10-09", "n": 54}],
+  "breakouts": [...], "near_pivots": [...], "above_pivot": [...], "dangers": [...],
+  "skipped": [{"code": "US.ARM", "name": "Arm Holdings", "reason": "近 60 根内无有效整理平台", "daily_bars": 119}],
+  "message": null
+}
+```
+
+**四个分组**
+
+| 分组 | 含义 |
+|------|------|
+| `breakouts` | 关键点突破（今日首次收于箱体上沿之上，含量能/潮汐/强度） |
+| `near_pivots` | 逼近关键点（在下方 2% 以内，尚未突破的预备名单） |
+| `above_pivot` | 已在关键点上方（突破后延续，回踩加仓参考）—— **仅 `source=live` 有** |
+| `dangers` | 风险信号（假突破 / 跌破止损 / 高位放量滞涨） |
+
+**分组行字段**：四个分组的行都是 **`/api/livermore/detail` 的 panorama 全字段**，
+外加 `signal_type` / `signal_label` / `strength` / `description` 四个信号字段：
+
+`code / name / date / state / context / close / pivotal / dist_pct / days_above /
+platform_upper / platform_lower / platform_bars / platform_range_pct / platform_amp_pct /
+platform_start_date / platform_stop_date / platform_start_bars_ago / platform_end_bars_ago /
+prior_high / prior_high_dist_pct / breakout_is_new_high / new_high_250 /
+stop / stop_dist_pct / atr14 / pyramid / tide / tide_period / tide_note / wave / ma20 / ma60 /
+vol_ratio / ret_20 / ret_60 / rs_20 / rs_60 / is_leader / daily_bars / weekly_bars /
+range_high / range_high_bars / range_high_dist_pct / high_250 / has_250_bars`
+
+> ⚠️ `above_pivot` 的行**没有 `signal_type`**（它是「状态」而不是一条信号），
+> 只有 `signal_label`（固定为「已在关键点上方」）。前端渲染时不要假设该字段存在。
+
+**`source=db` 的差异**：读 `livermore_signal_log`，行由 `_livermore_group_rows()` 组装，
+字段集比 `live` 少（无 `pyramid` / `ma20/ma60` / `range_high*` 等），
+且 `above_pivot` 恒为空、`scanned`/`universe`/`bench` 为 `null`/`{}`、`stats.filtered_by_tide` 为 0。
+
+**幂等性**：`livermore_signal_log` 带 `UNIQUE(code, date, signal_type)`，落库用 `INSERT OR REPLACE`，
+重复跑 `scan-signals` 不会翻倍（不同于 `top/bottom_signal_log`）。
+
+### GET `/api/livermore/detail`
+
+单只标的的关键点全景，供 K 线图直接画线与抽屉展示。
+
+**请求参数**
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `code` | string | 必填 | 标的代码，如 `US.AAPL` |
+| `date` | string | 不传取最新 | 指定日期 `YYYY-MM-DD` |
+
+**响应 200**
+
+```json
+{
+  "code": "US.AAPL", "name": "Apple Inc.", "date": "2026-10-09",
+  "panorama": {
+    "state": "approaching", "context": "continuation",
+    "pivotal": 341.07, "dist_pct": -1.3, "days_above": 0,
+    "platform_upper": 341.07, "platform_lower": 314.58, "platform_bars": 25,
+    "platform_range_pct": 8.02, "platform_amp_pct": 10.88,
+    "platform_start_date": "2026-08-26", "platform_stop_date": "2026-09-18",
+    "platform_start_bars_ago": 30, "platform_end_bars_ago": 6,
+    "prior_high": 344.5699, "prior_high_dist_pct": -2.3, "breakout_is_new_high": false,
+    "stop": 337.6977, "stop_dist_pct": -0.31, "atr14": 6.7447,
+    "pyramid": [{"level": 1, "price": 347.8147, "pct_from_pivotal": 1.98, "reached": false}],
+    "tide": "up", "tide_period": [20, 60], "tide_note": "标准周期", "wave": "up",
+    "ma20": 330.56, "ma60": 330.78, "vol_ratio": 1.0,
+    "rs_20": -0.55, "rs_60": -2.0, "is_leader": false,
+    "daily_bars": 300, "weekly_bars": 128
+  },
+  "levels": [
+    {"price": 341.07,   "role": "pivotal",        "label": "关键点",   "bars_ago": 6},
+    {"price": 344.5699, "role": "prior_high",     "label": "前高",     "bars_ago": null},
+    {"price": 314.58,   "role": "platform_lower", "label": "箱体下沿", "bars_ago": 6},
+    {"price": 337.6977, "role": "stop",           "label": "止损",     "bars_ago": 6},
+    {"price": 347.8147, "role": "pyramid_1",      "label": "加仓1",    "bars_ago": null}
+  ],
+  "signals": [
+    {"signal_type": "LIV_NEAR_PIVOT", "label": "逼近关键点", "bullish": true,
+     "strength": 0.59, "description": "...", "detail": {...}}
+  ]
+}
+```
+
+**`panorama.state` 取值**：`above`（关键点上方）/ `approaching`（关键点下方 2% 内）/ `below`（关键点下方）/
+`platform`（箱体内震荡）/ `no_platform`（无有效平台）。
+
+**`levels[].role` 取值**：`pivotal` / `prior_high` / `platform_lower` / `stop` / `pyramid_1..3`。
+`bars_ago` 为**从尾部计数的根数**，前端定位 K 线统一用 `idx = data.length - 1 - bars_ago`
+（**不要用 `date` 匹配时间轴**，日线是 `"2026-10-09"` 而 4H 是 `"2026-10-09 16:00:00"`）。
+
+> ⚠️ **前端实际只绘制 3 个 role**：`pivotal` / `platform_lower` / `stop`。刻意不画 `prior_high`
+> （通常与 `/api/analysis` 的压力位几乎重合，实测 AAPL 前高 344.57 vs 压力 344.30，差 0.08%）
+> 与金字塔位（3 道线会让图面过载）。接口仍完整返回，供其他消费方使用。
+
+**`panorama.pyramid[].level` 说明**：`reached=true` 表示现价已站上该级加仓位。
+
+**无有效整理平台时（HTTP 200）**：仍返回 `panorama`，但 `pivotal == null`，
+并在 `panorama.skip_reason` 里给出原因（如「近 60 根内无有效整理平台」），`levels` 与 `signals` 均为空数组。
+
+**完全无日线数据时（HTTP 200）**
+
+```json
+{"data": null, "message": "US.AIQUY 无日线数据"}
 ```
 
 ---

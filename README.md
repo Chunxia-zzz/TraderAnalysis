@@ -2,6 +2,12 @@
 
 Futu 量化评分与模拟盘交易系统。基于 195 只核心观察标的，通过 6 因子连续映射评分、道氏理论三层趋势分析、晨星公允价值估值，自动识别高置信度做多机会。
 
+> **两套并行的信号体系**（刻意不合并）：
+> ① **6 因子评分**（`total_score`）—— 纯均值回归，6 个因子全部「越低/越跌 → 分越高」，买超卖；
+> ② **利弗莫尔关键点**（`livermore_signal_log`）—— 买**突破**，只看整理平台上沿 + 量能确认 + 周线潮汐顺势。
+> 两者方向相反，因此利弗莫尔信号**不并入 `total_score`**、不写 `top/bottom_signal_log`，独立落库、独立 API、独立页面（`/livermore`）。
+> 也正因如此，系统里的「支撑压力位」是 Swing Pivot 聚类，**与利弗莫尔关键点不是一回事**，勿混称。
+
 🌐 [体验地址](http://47.106.175.84/)
 
 ## 架构
@@ -74,6 +80,16 @@ trader-analysis score --backfill 900   # 回溯 900 天历史评分
 trader-analysis temperature
 trader-analysis temperature --backfill 900
 
+# 扫描交易信号（顶/底/EMA 交叉 + 利弗莫尔关键点，需要 OpenD 拉最新行情）
+trader-analysis scan-signals
+trader-analysis scan-signals --backfill 30   # 回溯 30 个交易日
+
+# 利弗莫尔关键点（独立信号体系，不并入评分）
+trader-analysis livermore --top 10              # 四分组打印：突破 / 逼近 / 已在关键点上方 / 风险
+trader-analysis livermore --all                 # 不做周线潮汐过滤，看全部突破
+trader-analysis livermore --backfill 20         # 逐日回填语义（隐含 --persist，写 livermore_signal_log）
+trader-analysis livermore --date 2026-10-09 --persist   # 按指定日期回算并落库
+
 # 信号回测（3 种模式：买入持有 / 波段操作 / 趋势跟踪）
 trader-analysis backtest US.SNDK --mode hold --threshold 40 --holding-days 10
 trader-analysis backtest US.NVDA --mode swing --threshold 60 --exit-threshold 30
@@ -100,6 +116,8 @@ trader-analysis run
 | GET | `/api/scores/latest?code=US.AAPL` | 个股 6 因子评分（支持日期筛选） |
 | GET | `/api/scores/overview` | 全标的评分速览（含动量分+MA5确认） |
 | GET | `/api/analysis?code=US.AAPL&ktype=1d` | 道氏三层趋势 + 支撑/压力关键位（Swing Pivot 聚类）+ 形态置信度 + 盈亏比，支持 1d/4h/1w |
+| GET | `/api/livermore/signals` | 利弗莫尔关键点信号（独立体系；四分组：突破/逼近/已在关键点上方/风险），支持 `date`/`source`/`all`/`refresh` |
+| GET | `/api/livermore/detail?code=US.AAPL` | 单标的利弗莫尔关键点全景（箱体/关键点/止损/金字塔/潮汐/相对强度）+ 可画线 `levels` |
 | GET | `/api/fundamental?code=US.AAPL` | 基本面估值（分析师目标价 + 晨星公允价值） |
 | GET | `/api/daily-picks` | 高置信度低估做多机会（巴菲特原则筛选） |
 | GET | `/api/ema-cross-signals` | EMA5/30 交叉信号（空转多/多转空） |

@@ -6,6 +6,89 @@
 
 ## [2026-10-12]
 
+### 新功能 — 利弗莫尔关键点模块（独立信号体系）
+
+> ⚠️ 动机：核实确认主评分 `total_score` 是**纯均值回归**（6 因子全部「越低分越高」，无任何动量项），
+> 与利弗莫尔体系世界观相反，且系统把「突破前高」归入 **顶部预警**。因此本模块**独立成体系**：
+> 不并入 `total_score`、不写 `top/bottom_signal_log`，独立落库、独立 API、独立前端页面。
+
+- **新增 `futu_strategy/livermore_detector.py`**（约 800 行，纯计算层，`analyze_livermore()` 无 IO）
+  - **关键点 = 整理平台（窄幅箱体）上沿**，用箱体内**收盘价**最高点定义（抗插针影线，且与突破判定口径一致）
+  - 箱体识别（**自研，非 Swing Pivot**）：从右往左扩展窗口，三约束 — 真实振幅 `(max(high)−min(low))/close ≤ 14%`、
+    `≤ ATR×5`、`净位移/真实振幅 ≤ 0.60`（排除单边趋势被误判为箱体）；多锚点取「根数最多、同根数取更新」
+  - 两类关键点：`reversal`（MA20 ≤ MA60，中期未转多 → 建仓）/ `continuation`（MA20 > MA60 → 加仓）
+  - 配套规则：量能确认（`volume/vol_ma20 ≥ 1.5`）、周线潮汐顺势、龙头（RS60 ≥ 5%）、
+    止损 = 关键点 − 0.5×ATR（下限为箱体下沿）、金字塔 = 关键点上方 1/2/3×ATR
+  - 六类信号：`LIV_PIVOT_BREAK_REVERSAL` / `LIV_PIVOT_BREAK_CONTINUATION` / `LIV_NEAR_PIVOT`（做多）、
+    `LIV_FAILED_BREAKOUT` / `LIV_STOP_TRIGGERED` / `LIV_CLIMAX_WARNING`（风险）
+  - **周线潮汐周期降级**：`WEEKLY_INDICATOR_CONFIG` 未配 `ma` → 1w 的 ma20/ma60 全为 NULL，
+    改用周线收盘价现算并降级 `(20,60) → (10,30) → (5,20)`（实测 136/176 只落在 (5,20)）
+  - **数据深度现状**：日线 145/195 只仅约 119 根 → 不假设 52 周新高，改报 `range_high` + `has_250_bars`
+  - 实测**全池 195 只 2.1 秒**，183 只有箱体
+- **新增 `livermore_signal_log` 表**（`storage.py`）：带 `UNIQUE(code, date, signal_type)`，
+  落库走 `INSERT OR REPLACE` → **天然幂等**，规避 `top/bottom_signal_log`「重跑 scan-signals 信号翻倍」的既有坑
+  （已验证连跑两次均为 54 行）。新增 4 个函数：`insert_/delete_/query_livermore_signals()`、`query_livermore_dates()`
+- **新增 `config.py` 参数组**：`LIV_REQUIRE_TIDE_UP`、`LIV_PLATFORM_*`、`LIV_BREAKOUT_BUFFER`、
+  `LIV_VOL_CONFIRM_RATIO`、`LIV_STOP_ATR_MULT`、`LIV_LEADER_RS60`、`LIV_DAILY_BARS`、`LIV_CACHE_TTL`
+- **新增 CLI `trader-analysis livermore`**（`--date` / `--all` / `--persist` / `--backfill N` / `--top N`），
+  并接入 `scan-signals`（含 `--backfill` 逐日回填）。
+  落库存的是**未按潮汐过滤**的全量信号，便于日后回测「潮汐过滤本身是否有效」；展示时才过滤
+
+### 新功能 — 前端利弗莫尔页面与 K 线叠加
+
+- **新增独立页面 `/livermore`**（`views/Livermore.vue`，顶栏「利弗莫尔」入口）
+  - 工具栏（日期选择 + 潮汐过滤开关 + 刷新 + `?` 口径提示）、口径说明卡（4 行，含「⚠️ 独立体系」警示）、
+    结论条（扫描数/无平台数/突破/逼近/风险/潮汐分布/龙头数/SPY 基准）
+  - 四分组切换（`seg` 控件带计数），**表头列按分组自适应**：风险分组隐藏「箱体」「强度」列、改显示「信号」列
+  - 行内点开抽屉详情（5 块：当前信号含 action → 关键点全景 → 金字塔加仓位 → 趋势与相对强度 → 打开 K 线图）
+  - 空分组自动跳到第一个有内容的分组
+- **K 线图叠加利弗莫尔关键点**（`IndicatorChart.vue` 新增 `livermore` prop + `drawLivermore()`）
+  - 只画 3 个 role：`pivotal`（关键点，深金加粗）/ `platform_lower`（箱体下沿，褐色点线）/ `stop`（止损，暗红虚线）
+  - 刻意**不画 `prior_high`**（通常与 `/api/analysis` 压力位几乎重合，实测 AAPL 前高 344.57 vs 压力 344.30，差 0.08%）
+    与金字塔位（3 道线会让图面过载）
+  - **只给这两个「买入触发价 / 离场价」占价格轴标签**：lightweight-charts v4 的 `title`
+    **只通过价格轴标签渲染**，置 `axisLabelVisible=false` 等于连标题一起消失
+  - `Chart.vue` 三路并行拉取（`/api/indicators` + `/api/analysis` + `/api/livermore/detail`），
+    后两者失败都不影响 K 线渲染；**仅日线周期请求**（箱体/潮汐/ATR 都建立在日线尺度上）
+  - 新增「利弗莫尔关键点」开关（与「支撑压力位」并列）+ 明细卡（关键点/状态/整理箱体/止损位/周线潮汐/量能相对强度），
+    无有效平台时收窄为「原因提示 + 潮汐 + 数据深度」避免一整片 `--` 占位
+
+### Bug 修复
+
+- **激活分组文字隐形**：`views/Livermore.vue` 的 `.seg-item.active:not(.danger)` 用了 `color: var(--text)`
+  配 `background: var(--bg-emphasis)` —— 本主题里两者**都是 `#1f2328`**，文字完全不可见。改用浅色前景，
+  并在验收脚本里加了 **WCAG 对比度断言**兜底同类问题
+- **加仓位数字可读性**：`.lv-py` 的 muted 灰压在 `rgba(128,128,128,.08)` 上只有 2.82 对比度 →
+  改用淡边框（纯白底回到 3.08），并让数字用正文色
+- **明细卡数值格式**：量比 `1.0` 原样输出成「量比 1」、RS60 `-2.0` 输出成「-2%」、潮汐周期写成「MA20/60」→
+  统一补小数位与符号，周期改为「MA20 / MA60」
+- **模板里残留 markdown 粗体**：`Livermore.vue` / `Chart.vue` 有 `**收盘价**`、`**独立信号体系**`
+  直接写在模板中，Vue 不会渲染成粗体 → 改为 `<b>`
+- **`numpy` 类型序列化**：`np.bool_` / `np.float64` 无法被 FastAPI `jsonable_encoder` 处理 →
+  `livermore_detector._to_native()` 递归转原生类型（`NaN` → `None`）
+- **危险信号同标的重复**：ETN / EWT 同时出现在「跌破止损」与「假突破」，页面噪声 →
+  按 `止损 > 假突破 > 放量滞涨` + 强度排序后**按 code 去重只留最严重一条**
+  （DB 里两条都保留，供回测分别统计）
+- **`_resolve_params()` 误收常量**：原用 `globals()` 大写名过滤，会把 `SIG_*` / `SIGNAL_*` / `_TIDE_PERIODS`
+  一起收进参数字典 → 改为显式 `TUNABLE_PARAMS` 白名单
+- **假突破 / 止损判定互相干扰**：`close >= stop` 用错会误杀逼近名单（NVDA 曾同时出现在「逼近关键点」与「假突破」），
+  且「止损位只在**突破之后**才有意义」—— 未突破时价格低于止损位属正常，不能据此否决 →
+  提取 `is_failed` / `is_stopped` 两个布尔先算后统一判定
+- **`prior_high` 取错**：原用 `_swing_highs()` 找「平台起点前最近的 swing high」，实测无意义
+  → 改为「平台起点之前的**区间最高点**」，并新增 `prior_high_dist_pct` / `breakout_is_new_high` / `new_high_250`
+- **`bench` 未 round**：CLI 打印出 `1.8684007379397989%` → 返回前 `round(..., 2)`
+
+### 测试
+
+- 新增零依赖 CDP 端到端验收 `TraderAnalysisFrontend/scripts/smoke-livermore.mjs`（**89 项，全绿**）：
+  - 页面契约：口径卡 4 行 / 结论条统计 / 四分组切换与表头列自适应 / 行内容 / 抽屉 5 区块 / 潮汐开关联动
+  - **K 线叠加用 canvas 指纹验证**（关开关 → 画面必变 → 再开还原），DOM 看不到的 canvas 绘制也能被断言覆盖
+  - **对比度断言**（激活分组 ≥4.5、标签与明细卡 ≥3.0），背景色按 alpha 逐层合成
+  - 边界：**无整理平台**（US.ARM，断言不出现 `--` 占位、字段收窄为 2）、**港股**（HK.01211）、
+    **4H 周期不再请求利弗莫尔**
+  - 踩坑记录：ant-design 会在两个中文字间插空格（按钮文本是「查 询」），比较前须去空白；
+    ant-design Drawer 关闭后**不移除 DOM**，只能按可见性断言
+
 ### 新功能 — K 线支撑压力位标注
 
 - **K 线图关键位标注**（`IndicatorChart.vue`）：在 K 线主图上绘制支撑/压力水平线 + pivot 标记
