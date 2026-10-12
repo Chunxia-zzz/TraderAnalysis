@@ -4,6 +4,60 @@
 
 ---
 
+## [2026-10-12]
+
+### 新功能 — K 线支撑压力位标注
+
+- **K 线图关键位标注**（`IndicatorChart.vue`）：在 K 线主图上绘制支撑/压力水平线 + pivot 标记
+  - 每侧最多绘制 3 道（`MAX_LEVEL_LINES`），选取优先级 = 最近一道 > 强度降序，防止图面过载
+  - **最近一道**（`is_nearest`）与 MA60 关键位（`is_key`）用实线 + 加粗 + 显示价格轴标签；其余用虚线且不占轴标签
+  - pivot 标记落在关键位**形成的那根 K 线**上（支撑在下方 `arrowUp`、压力在上方 `arrowDown`），强度 ≥2 的才带文字标签
+- **K 线页接入分析接口**（`Chart.vue`）：原先只调 `/api/indicators`，现与 `/api/analysis` **并行拉取**（关键位失败不影响 K 线渲染）
+  - 新增「支撑压力位」显示开关 + 数量提示（`N 压力 / M 支撑`）
+  - 图表下方新增关键位明细卡片（压力位/支撑位双栏）：价格、label、距现价 pct、强度、MA60/最近徽章、道氏上下文，以及盈亏比区域
+  - 明细卡片与显示开关联动，关闭即隐藏
+
+### 后端增强
+
+- **`GET /api/analysis` 支持 4H 周期**：ktype 正则由 `^(1d|1w)$` 扩展为 `^(1d|4h|1w)$`，K 线页三个周期切换均可用关键位标注
+- **supports/resistances 新增 3 个字段**：`date`（关键位形成日期，MA 类为 `null`）、`bars_ago`（距今根数，从尾部计数）、`is_nearest`（是否离现价最近的一道，每侧最多一个为 `true`）
+
+### Bug 修复
+
+- **`numpy.bool_` 序列化失败**：`is_nearest` 由 `numpy.float64` 比较得出，FastAPI 无法序列化 → 外层强转原生 `bool`
+- **`_cross_up` / `_cross_down` 遇 `None` 抛 TypeError**（既有缺陷）：4H/1W 均线列 dtype 为 `object` 且含 `None`（指标未算全），直接比较报 `'<' not supported between instances of 'NoneType' and 'NoneType'` → 新增 `_clean_series()` 用 `pd.to_numeric(errors="coerce")` 归一化，比较前用 `pd.isna()` 跳过缺值根
+
+### 文档勘误（前端仓库 `TraderAnalysisFrontend`）
+
+本次核对「文档 vs 代码」时发现前端文档存在多处**与代码矛盾**的历史描述，均已按代码实况更正：
+
+| # | 文档原述 | 代码实况 |
+|---|---|---|
+| 1 | K 线图"已改用 ECharts 而非 LightweightCharts" | 实为 **lightweight-charts v4**；ECharts 只用于 `MarketTemperature.vue` 的温度趋势图。**`lightweight-charts` 不可从 `package.json` 移除** |
+| 2 | 路由表列 `/scores-overview`、`/fundamental`、`/grid-trading` | 三条路由**均未注册**；漏记 `/momentum-leaders`、`/review`、`/position`、`/allocation` |
+| 3 | `api/trader.js` 导出 `getFundamentalLatest` / `getFundamentalOverview` / `stockFilterSearch` / `stockFilterInfo` / `getGridStatus` / `getGridOrders` | 以上 **6 个函数代码中均不存在** |
+| 4 | 项目树列出 `components/KLineChart.vue`、`views/` 下 `GridTrading.vue` / `Login.vue` / `StockFilter.vue` / `Settings.vue` | 这些**文件在仓库中均不存在**（`src/` 实测仅 18 个文件） |
+| 5 | 「认证暂时禁用，Login.vue 与拦截器代码保留」 | 认证相关代码（页面/拦截器/后端端点）**已彻底移除**，非"暂时禁用" |
+| 6 | 顶栏「个股分析」下拉含"基本面"入口 | 代码中**只有 2 项**：`/dashboard`、`/chart` |
+
+**连带处理**：`views/Fundamental.vue` 唯一引用第 3 条中不存在的两个函数，且其依赖的后端端点
+`/api/fundamental/overview`、`/api/fundamental/latest` 从未实现，`watchlist.forward_pe`/`peg_ratio`/`roe`/`market_cap`
+填充率为 0/195（`fundamental_data` 表仅 1 行测试数据）→ **该页面已删除**（Git 可恢复）。
+
+### 命名更正
+
+UI 与文档此前称「利弗莫尔关键位」，**名称不准确**：该价位由 `find_support_resistance()` 的
+Swing Pivot 聚类得出，是双向对称的静态支撑/压力位；利弗莫尔的关键点（Pivotal Point）则是
+带量能确认、只在顺势方向上使用的**突破触发价**。已统一改称「支撑压力位」，
+并在 `docs/api.md` 与前端 `docs/architecture.md` 增加算法来源说明。
+
+### 说明
+- 前端定位 pivot K 线统一用 `bars_ago` 反推序号（`idx = data.length - 1 - bars_ago`），不直接匹配 `date` 字段 —— 日线 `date` 为 `"2026-10-09"`，4H 为 `"2026-10-09 16:00:00"`，且 `/api/indicators` 的 4H 时间轴已转为 Unix 时间戳，格式对不上
+- EMA 翻转标记与关键位 pivot 标记**统一写入缓冲区后按 K 线序号升序一次性提交** —— `setMarkers()` 每次调用会覆盖前值，分两次调用会丢标记
+- 验收：CDP 端到端脚本 `smoke-keylevels.mjs` 14/14、`smoke-ktype.mjs` 12/12 全通过，三周期关键位数值与 API 实测逐一吻合（日K 344.30 / 4H 342.79 / 周K 342.89），无 JS 异常
+
+---
+
 ## [2026-08-28]
 
 ### 新功能 — 主跌浪超卖 check 标识

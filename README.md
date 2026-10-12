@@ -1,6 +1,6 @@
 # TraderAnalysis
 
-Futu 量化评分与模拟盘交易系统。基于 203 只核心观察标的，通过 6 因子连续映射评分、道氏理论三层趋势分析、晨星公允价值估值，自动识别高置信度做多机会。
+Futu 量化评分与模拟盘交易系统。基于 195 只核心观察标的，通过 6 因子连续映射评分、道氏理论三层趋势分析、晨星公允价值估值，自动识别高置信度做多机会。
 
 🌐 [体验地址](http://47.106.175.84/)
 
@@ -99,7 +99,7 @@ trader-analysis run
 | GET | `/api/indicators/latest?code=US.AAPL` | 最新一根指标值 |
 | GET | `/api/scores/latest?code=US.AAPL` | 个股 6 因子评分（支持日期筛选） |
 | GET | `/api/scores/overview` | 全标的评分速览（含动量分+MA5确认） |
-| GET | `/api/analysis?code=US.AAPL` | 道氏三层趋势 + 支撑压力 + 形态置信度 + 盈亏比 |
+| GET | `/api/analysis?code=US.AAPL&ktype=1d` | 道氏三层趋势 + 支撑/压力关键位（Swing Pivot 聚类）+ 形态置信度 + 盈亏比，支持 1d/4h/1w |
 | GET | `/api/fundamental?code=US.AAPL` | 基本面估值（分析师目标价 + 晨星公允价值） |
 | GET | `/api/daily-picks` | 高置信度低估做多机会（巴菲特原则筛选） |
 | GET | `/api/ema-cross-signals` | EMA5/30 交叉信号（空转多/多转空） |
@@ -113,7 +113,7 @@ trader-analysis run
 
 ## 标的池
 
-通过 SQLite `watchlist` 表 + RESTful API 管理，当前包含 196 只标的（美股 193 + 港股 3），覆盖 26 个板块：
+通过 SQLite `watchlist` 表 + RESTful API 管理，当前包含 195 只标的（美股 192 + 港股 3：HK.00700 / HK.01211 / HK.03690），覆盖 26 个分类：
 
 大盘/黄金/BTC、存储、光通信、MAG7、加密、半导体、太空、云、中概、防守消费、AI 基建、金融、医疗、能源、工业等。
 

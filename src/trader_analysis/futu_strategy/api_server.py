@@ -1072,6 +1072,13 @@ def _enhance_levels(
     nearest_support = max((s["price"] for s in supports), default=None) if supports else None
     nearest_resistance = min((r["price"] for r in resistances), default=None) if resistances else None
 
+    # ── 标记"最近的一道"支撑/压力（前端高亮，且只有它显示价格轴标签）──
+    # 注意：price 为 numpy.float64，比较结果是 numpy.bool_，FastAPI 无法序列化 → 必须转原生 bool
+    for lv in supports:
+        lv["is_nearest"] = bool(nearest_support is not None and lv["price"] == nearest_support)
+    for lv in resistances:
+        lv["is_nearest"] = bool(nearest_resistance is not None and lv["price"] == nearest_resistance)
+
     rr = {}
     # 做多
     long_stop = nearest_support if nearest_support else close * 0.95
@@ -1103,12 +1110,16 @@ def _enhance_levels(
 @app.get("/api/analysis")
 def get_analysis(
     code: str,
-    ktype: str = Query(default="1d", pattern="^(1d|1w)$"),
+    ktype: str = Query(default="1d", pattern="^(1d|1w|4h)$"),
     date: str | None = Query(default=None, description="指定日期 YYYY-MM-DD，不传取最新"),
 ):
     """返回支撑/压力位、技术形态信号、趋势判断，辅助个股决策。
 
     基于本地 DB 中的 OHLCV + 技术指标计算，无需 OpenD。
+
+    每个支撑/压力位含：price / strength / label / type / pct（距现价%）/
+    is_key（是否 MA60 关键位）/ is_nearest（是否最近一道）/
+    date（形成日期）/ bars_ago（距今根数，从尾部计数，供前端定位 K 线）。
     """
     from trader_analysis.futu_strategy.technical_analysis import (
         analyze_dow_trend,

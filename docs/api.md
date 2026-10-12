@@ -1,6 +1,6 @@
 # TraderAnalysis API 文档
 
-> 最后更新：2026-08-26
+> 最后更新：2026-10-12
 > 协议：HTTP/1.1，响应格式：`application/json`，编码：UTF-8
 
 ## 策略数据服务（futu_strategy/api_server.py）
@@ -78,7 +78,7 @@ Swagger UI：`http://localhost:8000/docs`
 | GET | `/api/backtest/run` | 信号回测（单股策略验证） | **Backtest.vue** |
 | GET | `/api/grid/status` | 网格交易运行状态 | **GridTrading.vue** |
 | GET | `/api/grid/orders` | 网格交易记录 | **GridTrading.vue** |
-| GET | `/api/analysis` | 技术分析辅助决策（支撑/压力位 + 形态 + 趋势） | **Dashboard.vue** |
+| GET | `/api/analysis` | 技术分析辅助决策（支撑/压力位 + 形态 + 趋势） | **Dashboard.vue / Chart.vue** |
 
 ---
 
@@ -1147,7 +1147,8 @@ export const getAssetTemperatureHistory = (asset, days = 60) =>
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `code` | string | 必填 | 标的代码，如 `US.MU` |
-| `ktype` | string | `"1d"` | `1d` \| `1w` |
+| `ktype` | string | `"1d"` | `1d` \| `1w` \| `4h` |
+| `date` | string | 不传取最新 | 指定日期 `YYYY-MM-DD` |
 
 **响应 200**
 
@@ -1158,12 +1159,18 @@ export const getAssetTemperatureHistory = (asset, days = 60) =>
   "date": "2026-07-03",
   "close": 976.0,
   "supports": [
-    {"price": 951.2, "strength": 3, "label": "近期低点×3", "type": "swing_low"},
-    {"price": 962.1, "strength": 1, "label": "MA250", "type": "ma"}
+    {"price": 951.2, "strength": 3, "label": "近期低点×3", "type": "swing_low",
+     "date": "2026-06-18", "bars_ago": 11, "pct": 2.5,
+     "is_key": false, "is_nearest": true, "dow_context": "涨潮中支撑有效性较高"},
+    {"price": 962.1, "strength": 1, "label": "MA250", "type": "ma",
+     "date": null, "bars_ago": null, "pct": 1.4,
+     "is_key": true, "is_nearest": false, "dow_context": "涨潮中支撑有效性较高"}
   ],
   "resistances": [
-    {"price": 1064.0, "strength": 2, "label": "近期高点×2", "type": "swing_high"},
-    {"price": 1033.0, "strength": 1, "label": "MA20", "type": "ma"}
+    {"price": 1064.0, "strength": 2, "label": "近期高点×2", "type": "swing_high",
+     "date": "2026-06-30", "bars_ago": 3, "pct": 9.0, "is_key": false, "is_nearest": true},
+    {"price": 1033.0, "strength": 1, "label": "MA20", "type": "ma",
+     "date": null, "bars_ago": null, "pct": 5.8, "is_key": false, "is_nearest": false}
   ],
   "patterns": [
     {"id": "macd_bear", "label": "MACD死区", "bullish": false, "desc": "DIF<DEA，动量偏空"},
@@ -1184,12 +1191,45 @@ export const getAssetTemperatureHistory = (asset, days = 60) =>
 
 **supports / resistances 字段说明**
 
-| 字段 | 说明 |
-|------|------|
-| `price` | 价位（四位小数） |
-| `strength` | 强度（命中次数 × 近期权重，越大越可靠） |
-| `label` | 描述，如"近期低点×3"、"MA20" |
-| `type` | `swing_low` / `swing_high` / `ma` |
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `price` | float | 价位（四位小数） |
+| `strength` | int | 强度（命中次数 × 近期权重，近 30 根内的命中权重 ×2，越大越可靠） |
+| `label` | string | 描述，如"近期低点×3"、"MA20" |
+| `type` | string | `swing_low` / `swing_high` / `ma` |
+| `pct` | float | 距现价百分比（绝对值） |
+| `is_key` | bool | 是否为关键位（当前为 MA60） |
+| `is_nearest` | bool | 是否为**离现价最近的一道**支撑/压力（前端用于高亮 + 只给它显示价格轴标签） |
+| `date` | string\|null | 该关键位由哪根 K 线形成。MA 类为动态位，固定 `null`；4H 周期为完整时间戳 `"2026-10-08 16:00:00"` |
+| `bars_ago` | int\|null | 距今多少根 K 线（**从尾部计数**，`0` = 最后一根）。MA 类为 `null`；4H 周期 1 天 4 根，故数值约为日线的 4 倍 |
+| `dow_context` | string | 道氏层级上下文文案，**仅 supports 项携带**，如"涨潮中支撑有效性较高" |
+
+> **前端定位 K 线的正确方式**：用 `bars_ago` 反推序号 `idx = data.length - 1 - bars_ago`，再取 `data[idx].date` 作为时间轴取值。
+> 不要直接拿 `date` 字段去匹配 K 线时间轴 —— 日线的 `date` 是 `"2026-10-09"`，而 4H 的 `date` 是 `"2026-10-09 16:00:00"`，且 `/api/indicators` 返回的 4H 时间轴已转成 Unix 时间戳，格式对不上。
+
+**⚠️ 算法来源（命名易误解）**
+
+supports/resistances 由 `technical_analysis.find_support_resistance()` 计算，算法为：
+
+1. **Swing Pivot 检测** — 左右各 `n=2` 根确认的分形极值（`high[i]` 不高于前后各 2 根 → swing high）
+2. **价格聚类** — 按 `atr14 × 0.6` 的价格距离把邻近 pivot 合并，取簇内均价为价位，簇内命中次数为强度（近 30 根内的簇权重 ×2）
+3. **均线动态位** — MA20/60/120/250 中距现价 ±25% 以内的并入，强度固定为 1
+4. **过滤** — 距现价 ±25% 以外丢弃；支撑只保留现价下方的、压力只保留现价上方的（`type=ma` 除外）
+
+这是**结构型/统计型支撑压力检测**，**不是利弗莫尔（Livermore）关键点模型**。两者常被混称，但语义不同：
+
+| | 本接口的支撑/压力位 | 利弗莫尔关键点 |
+|---|---|---|
+| 定义 | 历史上被多次触及、经聚类平均的价格区域 | 一轮「正常回调」结束后趋势可望延续的**突破价位** |
+| 方向 | 双向对称：下方=支撑（低吸参考），上方=压力（减仓参考） | **单向**：向上突破=买、向下跌破=离场 |
+| 触发 | 价格**接近**该位 | 价格**穿越**该位（突破单） |
+| 量能 | 不参与计算 | 必须放量确认 |
+| 趋势前提 | 无 | 只在主要趋势方向上使用 |
+| 产物 | 一组离散价位（每侧最多 5） | 单个「当前最关键的价位」+ 动作指令 |
+
+因此前端 UI 与文档统一称「支撑压力位」，不冠以「利弗莫尔」之名。若要引入真正的利弗莫尔逻辑，
+应作为**独立信号模块**（参照 `ema_cross_detector.py` 的独立信号日志模式），而不要并入
+`total_score` —— 后者是纯均值回归范式，与突破买点在方向上相反。
 
 **patterns 字段说明**
 
@@ -1723,7 +1763,21 @@ ktype 正则扩展为 `^(1d|4h|1w)$`。4H 数据 date 字段自动转为 Unix �
 
 ### GET `/api/analysis`（v3 更新）
 
-新增 `date` 参数、`dow_theory` 道氏三层趋势、`risk_reward` 盈亏比、patterns 中的 `confidence` 置信度、supports/resistances 中的 `is_key`/`pct`/`dow_context`。详见接口详情。|
+新增 `date` 参数、`dow_theory` 道氏三层趋势、`risk_reward` 盈亏比、patterns 中的 `confidence` 置信度、supports/resistances 中的 `is_key`/`pct`/`dow_context`。详见接口详情。
+
+### GET `/api/analysis`（2026-10-12 更新）
+
+ktype 正则扩展为 `^(1d|4h|1w)$`（原先只支持 `1d|1w`），前端 K 线页的三个周期切换现均可用关键位标注。
+
+supports/resistances 每个元素新增三个字段，用于前端在 K 线图上定位与高亮关键位：
+
+| 字段 | 说明 |
+|------|------|
+| `date` | 该关键位由哪根 K 线形成；MA 类动态位为 `null` |
+| `bars_ago` | 距今根数，**从尾部计数**（`0`=最后一根）；MA 类为 `null` |
+| `is_nearest` | 是否离现价最近的支撑/压力位，每侧最多一个为 `true`；**已强转为原生 `bool`**（原 `price` 为 `numpy.float64`，比较结果 `numpy.bool_` 无法被 FastAPI 序列化） |
+
+同时修复 `technical_analysis.py` 的既有缺陷：4H/1W 的均线列 dtype 为 `object` 且含 `None`（指标未算全），`_cross_up` / `_cross_down` 直接比较会抛 `TypeError: '<' not supported between instances of 'NoneType' and 'NoneType'`。已新增 `_clean_series()` 用 `pd.to_numeric(errors="coerce")` 归一化并在比较前用 `pd.isna()` 跳过缺值根。
 
 ---
 

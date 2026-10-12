@@ -28,7 +28,14 @@ def find_support_resistance(
 
     Returns:
         (supports, resistances)，每个元素为 dict:
-        {"price": float, "strength": int, "label": str, "type": str}
+        {
+            "price": float,        # 关键位价格
+            "strength": int,       # 命中次数（近期命中权重×2）
+            "label": str,          # 展示标签，如 "近期高点×3" / "MA60"
+            "type": str,           # swing_high / swing_low / ma
+            "date": str | None,    # 该关键位形成的 K 线日期（MA 位为 None）
+            "bars_ago": int | None # 距今多少根 K 线（从尾部计数，与请求长度无关）
+        }
     """
     if df.empty or len(df) < 10:
         return [], []
@@ -124,16 +131,34 @@ def find_support_resistance(
                     continue
             strength = item["strength"]
             lbl = item.get("label")
+            recency_idx = item.get("recency_idx")
+            is_ma = item.get("type") == "ma"
             if lbl is None:
                 # swing pivot label
                 touch = strength // (2 if (total - 1 - item["recency_idx"]) <= 30 else 1)
                 suffix = f"×{touch}" if touch > 1 else ""
                 lbl = ("近期低点" if is_support else "近期高点") + suffix
+
+            # 该关键位由哪根 K 线形成（MA 为动态位，无形成日期）
+            pivot_date = None
+            bars_ago = None
+            if not is_ma and recency_idx is not None:
+                try:
+                    bars_ago = total - 1 - int(recency_idx)
+                    if "date" in df.columns:
+                        raw_date = df.iloc[int(recency_idx)]["date"]
+                        pivot_date = None if pd.isna(raw_date) else str(raw_date)
+                except (IndexError, KeyError, ValueError, TypeError):
+                    pivot_date = None
+                    bars_ago = None
+
             out.append({
                 "price": round(price, 4),
                 "strength": strength,
                 "label": lbl,
                 "type": item.get("type", "swing_low" if is_support else "swing_high"),
+                "date": pivot_date,
+                "bars_ago": bars_ago,
             })
         # 按强度降序，相同强度按距离当前价近优先
         out.sort(key=lambda x: (-x["strength"], abs(x["price"] - close)))
@@ -157,22 +182,41 @@ def find_support_resistance(
 # ── 技术形态检测 ───────────────────────────────────────────────────────────────
 
 
+def _clean_series(s: pd.Series) -> pd.Series:
+    """把含 None 的 object 列转成数值列（None / 非数值 → NaN）。
+
+    周线与 4H 的均线列可能是 object dtype 且含 None（指标未算全时），
+    直接比较会抛 TypeError: '<' not supported between 'NoneType' and 'NoneType'。
+    """
+    return pd.to_numeric(s, errors="coerce") if s.dtype == object else s
+
+
 def _cross_up(a: pd.Series, b: pd.Series, lookback: int = 5) -> bool:
-    """在近 lookback 根内，a 从下方上穿 b。"""
-    if len(a) < lookback + 1:
+    """在近 lookback 根内，a 从下方上穿 b。任一端缺值则跳过该根。"""
+    if len(a) < lookback + 1 or len(b) < lookback + 1:
         return False
+    av, bv = _clean_series(a), _clean_series(b)
     for i in range(-lookback, 0):
-        if a.iloc[i - 1] < b.iloc[i - 1] and a.iloc[i] >= b.iloc[i]:
+        a0, a1 = av.iloc[i - 1], av.iloc[i]
+        b0, b1 = bv.iloc[i - 1], bv.iloc[i]
+        if pd.isna(a0) or pd.isna(a1) or pd.isna(b0) or pd.isna(b1):
+            continue
+        if a0 < b0 and a1 >= b1:
             return True
     return False
 
 
 def _cross_down(a: pd.Series, b: pd.Series, lookback: int = 5) -> bool:
-    """在近 lookback 根内，a 从上方下穿 b。"""
-    if len(a) < lookback + 1:
+    """在近 lookback 根内，a 从上方下穿 b。任一端缺值则跳过该根。"""
+    if len(a) < lookback + 1 or len(b) < lookback + 1:
         return False
+    av, bv = _clean_series(a), _clean_series(b)
     for i in range(-lookback, 0):
-        if a.iloc[i - 1] > b.iloc[i - 1] and a.iloc[i] <= b.iloc[i]:
+        a0, a1 = av.iloc[i - 1], av.iloc[i]
+        b0, b1 = bv.iloc[i - 1], bv.iloc[i]
+        if pd.isna(a0) or pd.isna(a1) or pd.isna(b0) or pd.isna(b1):
+            continue
+        if a0 > b0 and a1 <= b1:
             return True
     return False
 
