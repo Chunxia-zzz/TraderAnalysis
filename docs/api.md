@@ -8,7 +8,11 @@
 > Base URL（本地开发）：`http://localhost:8000`
 > 数据来源：SQLite 数据库（`data/indicators.db`），由 `init_history.py` / `daily_update.py` 写入
 > 特点：**大部分端点不依赖 Futu OpenD**，只要数据库有数据即可独立运行
-> ⚠️ 例外：`/api/position`、`/api/allocation` 依赖本机富途 OpenD（127.0.0.1:11111）实时行情，仅本地可用
+> ⚠️ **例外（共 4 个，需本机富途 OpenD 127.0.0.1:11111）**：
+> `GET /api/position`、`GET /api/allocation`（实时持仓/资产）、
+> `POST /api/watchlist`（内部调 `fetch_stock_info` 补全快照）、
+> `POST /api/watchlist/refresh-snapshot`（内部调 `fetch_snapshot_batch`）
+> ⚠️ **本服务并非只读**：另有 8 个写端点（`POST/PUT/PATCH/DELETE`），见概览表
 
 ### 启动
 
@@ -32,9 +36,14 @@ Swagger UI：`http://localhost:8000/docs`
 |--------|------|------|
 | `allow_origins` | `["*"]` | 允许任意域名跨域请求 |
 | `allow_methods` | `["*"]` | 允许所有 HTTP 方法（GET/POST 等） |
-| `allow_headers` | `["*"]` | 允许任意请求头（含 Authorization） |
+| `allow_headers` | `["*"]` | 允许任意请求头（含 Authorization，但服务端并不校验） |
 
 前端可直接 `fetch` 调用，无需代理。
+
+> ⚠️ **本服务当前没有任何认证/鉴权**。`api_server.py` 中无 `Depends`、无 token 校验、无中间件；
+> `users` 表虽存在（2 行历史数据），但**没有任何代码读写它** —— 认证体系（`auth.py` / `auth_storage.py`）
+> 已于 v2.8+ 从仓库彻底移除。因此**此前给写端点标注的「（admin）」已删除**，那是历史残留标签，会让人误以为需要权限。
+> `cli.py` 的 `create-admin` 命令同样因依赖已删除模块而**执行即 ImportError**。
 
 ---
 
@@ -45,7 +54,7 @@ Swagger UI：`http://localhost:8000/docs`
 | K 线 + 指标 (`/api/indicators`) | 每日收盘后更新一次（美东 16:00 / 北京 04:00） | 缓存至次日凌晨 |
 | 个股评分 (`/api/scores/latest`) | 跟随 `trader-analysis run` 执行 | 同上 |
 | 市场温度 (`/api/market-temperature`) | 跟随 `trader-analysis temperature` 执行 | 同上 |
-| 标的池 (`/api/watchlist`) | 仅在 `watchlist.json` 编辑后变化 | 可长期缓存 |
+| 标的池 (`/api/watchlist`) | **通过标的管理页/API 增删改后变化**（存 SQLite `watchlist` 表；`data/watchlist.json` 只在表为空时作回退） | 可长期缓存 |
 
 > **注意**：周末/节假日不产生新数据，API 返回最近一个交易日的结果。
 
@@ -53,34 +62,55 @@ Swagger UI：`http://localhost:8000/docs`
 
 ## 概览
 
+共 **38 个路由**（只读 30 + 写 8）。
+
 | 方法 | 路径 | 说明 | 前端页面 |
 |------|------|------|---------|
 | GET | `/health` | 健康检查 | App.vue（启动时检测） |
 | GET | `/api/indicators` | 某标的某周期最近 N 根 K 线 + 全部指标 | Chart.vue |
-| GET | `/api/indicators/latest` | 最新一根的所有指标值 | Dashboard.vue |
+| GET | `/api/indicators/latest` | 最新一根的所有指标值 | ⚠️ 当前无页面引用（`getIndicatorsLatest` 已定义未使用） |
 | GET | `/api/scores/latest` | 单个标的评分结果（支持指定日期） | Dashboard.vue |
-| GET | `/api/scores/overview` | 全标的评分速览（按信号分组） | **机会速览页** |
-| GET | `/api/watchlist` | 标的池列表（支持筛选） | 标的选择器 |
-| GET | `/api/watchlist/{code}` | 单只标的详情 | 标的详情页 |
-| POST | `/api/watchlist` | 新增标的（自动填充富途信息） | 管理页 |
-| PATCH | `/api/watchlist/{code}` | 修改标的可编辑字段 | 管理页 |
-| DELETE | `/api/watchlist/{code}` | 删除标的 | 管理页 |
-| POST | `/api/watchlist/batch` | 批量新增 | 管理页 |
-| POST | `/api/watchlist/refresh-snapshot` | 刷新静态快照字段 | 管理页 |
-| GET | `/api/stock-filter/search` | 条件选股（需 OpenD） | 选股页 |
-| GET | `/api/stock-filter/info` | 单股信息查询 | 选股页 |
-| ~~GET~~ | ~~`/api/fundamental/latest`~~ | ~~单标的基本面数据+评分~~ **已停用**（Yahoo Finance 中国不可用） | - |
-| ~~GET~~ | ~~`/api/fundamental/overview`~~ | ~~全标的基本面速览~~ **已停用** | - |
+| GET | `/api/scores/overview` | 全标的评分速览（按信号分组） | MomentumLeaders.vue / ScoresOverview.vue |
+| GET | `/api/watchlist` | 标的池列表（支持筛选） | Chart / Dashboard / Backtest / WatchlistManage |
+| GET | `/api/watchlist/{code}` | 单只标的详情 | ⚠️ 当前无页面引用（`getWatchlistDetail` 已定义未使用） |
+| POST | `/api/watchlist` | 新增标的（**需 OpenD** 自动填充富途信息） | 标的管理页 |
+| PATCH | `/api/watchlist/{code}` | 修改标的可编辑字段 | 标的管理页 |
+| DELETE | `/api/watchlist/{code}` | 删除标的 | 标的管理页 |
+| POST | `/api/watchlist/batch` | 批量新增 | ⚠️ 当前无页面引用（`batchAddWatchlist` 已定义未使用） |
+| POST | `/api/watchlist/refresh-snapshot` | 刷新静态快照字段（**需 OpenD**） | 标的管理页 |
+| GET | `/api/fundamental` | 基本面估值（分析师目标价 + 晨星公允价值） | Dashboard.vue |
+| GET | `/api/daily-picks` | 高置信度低估做多机会 | MomentumLeaders.vue |
+| GET | `/api/ema-cross-signals` | EMA5/30 交叉信号（空转多/多转空） | MomentumLeaders.vue |
+| GET | `/api/top-signals` | 顶部信号 | ⚠️ 当前无页面引用 |
+| GET | `/api/bottom-signals` | 底部信号 | ⚠️ 当前无页面引用（`getBottomSignals` 已定义未使用） |
+| GET | `/api/trade-signals` | 顶/底交易信号 | ⚠️ 当前无页面引用（`getTradeSignals` 已定义未使用） |
+| ~~GET~~ | ~~`/api/fundamental/latest`~~ | ~~单标的基本面数据+评分~~ **从未实现**（Yahoo Finance 中国不可用，功能已废弃） | - |
+| ~~GET~~ | ~~`/api/fundamental/overview`~~ | ~~全标的基本面速览~~ **从未实现**（同上） | - |
 | GET | `/api/market-temperature` | 市场温度评分（3 维度综合），附 GLD/BTC 单资产温度 | **MarketTemperature.vue** |
 | GET | `/api/market-temperature/history` | 近 N 天市场温度历史 | **MarketTemperature.vue（趋势图）** |
-| GET | `/api/asset-temperature/history` | 单资产（GLD/BTC）历史温度评分序列（实时计算） | **MarketTemperature.vue（黄金/比特币趋势图）** |
-| GET | `/api/tp-sl` | 止盈止损自动计算（ATR+支撑/阻力） | 前端待接入 |
-| GET | `/api/backtest/run` | 信号回测（单股策略验证） | **Backtest.vue** |
-| GET | `/api/grid/status` | 网格交易运行状态 | **GridTrading.vue** |
-| GET | `/api/grid/orders` | 网格交易记录 | **GridTrading.vue** |
+| GET | `/api/asset-temperature/history` | 单资产（GLD/BTC）历史温度评分序列（实时计算） | **MarketTemperature.vue（黄金/比特币视图）** |
+| GET | `/api/tp-sl` | 止盈止损自动计算（ATR+支撑/阻力） | ScoresOverview.vue |
+| GET | `/api/backtest/run` | 信号回测（5 种策略模式） | **Backtest.vue** |
+| GET | `/api/position` | 实时持仓（**需 OpenD**） | Position.vue |
+| GET | `/api/position-states` | 持仓状态（不传 `code` 返回所有非 EMPTY 持仓） | ⚠️ 当前无页面引用 |
+| GET | `/api/allocation` | 目标仓位配置 + 偏离 + 加仓建议（**需 OpenD**） | Allocation.vue |
+| PUT | `/api/allocation` | 保存目标仓位配置 | Allocation.vue |
+| GET | `/api/sell-log` | 卖出日志（读 `trade_log.jsonl` 的 SELL 记录） | ⚠️ 当前无页面引用 |
+| GET | `/api/review` | 日/周复盘报告 | Review.vue |
+| GET | `/api/content-generator` | 自媒体文案生成 | Review.vue |
+| GET | `/api/content-templates` | 文案模板列表 | Review.vue |
+| PUT | `/api/content-templates/{key}` | 保存文案模板 | Review.vue |
+| DELETE | `/api/content-templates/{key}` | 删除文案模板 | Review.vue |
+| GET | `/api/grid/status` | 网格交易运行状态 | ⚠️ **前端页面已删除**（原 GridTrading.vue 不复存在） |
+| GET | `/api/grid/orders` | 网格交易记录 | ⚠️ **前端页面已删除**（同上） |
 | GET | `/api/analysis` | 技术分析辅助决策（支撑/压力位 + 形态 + 趋势） | **Dashboard.vue / Chart.vue** |
 | GET | `/api/livermore/signals` | 利弗莫尔关键点信号（独立体系，四个分组） | **Livermore.vue** |
 | GET | `/api/livermore/detail` | 单标的利弗莫尔关键点全景 + 可画线 levels | **Chart.vue（K 线叠加）/ Livermore.vue（抽屉）** |
+
+> ⚠️ **勘误（2026-10-12）**：本表此前列出 `GET /api/stock-filter/search` 与 `GET /api/stock-filter/info` 两个端点，
+> 但 `api_server.py` 的 38 个路由中**并不存在**（`stock_info_fetcher.search_stocks()` 有实现，但从未被任何路由调用；
+> 前端选股页 `StockFilter.vue` 也已从仓库删除）。**两个端点已从本文档移除。**
+> 同时本表此前**漏记** `/api/position-states` 与 `/api/sell-log` 两个已实现端点，已补入。
 
 ---
 
@@ -274,24 +304,32 @@ GET /api/scores/latest?code=US.NVDA&date=2026-03-27  → 查看 3月27日的评�
 | `raw` | float/null | 原始指标值（RSI 值 / 百分位 / %B / 偏离度） |
 | `ratio` | float | 归一化比率 0~1（0=无信号，1=最强信号） |
 
-**6 维度定义**
+**6 维度定义**（权重来自 `scorer.py` 的 `WEIGHTS`，合计 100）
 
 | key | 维度 | 权重 | 满分条件 | raw 含义 |
 |-----|------|------|----------|----------|
-| `weekly_rsi` | 周线 RSI6 | 25 | RSI≤20 | RSI 原始值 |
+| `weekly_rsi` | 周线 RSI6 | **20** | RSI≤20 | RSI 原始值 |
 | `daily_macd_pct` | 日线 MACD 百分位 | 20 | 百分位=0%(最弱) | 百分位排名(0~1) |
 | `boll_position` | 布林带 %B | 15 | %B=0(下轨) | %B 值(0~1) |
 | `daily_rsi` | 日线 RSI6 | 20 | RSI≤20 | RSI 原始值 |
 | `weekly_macd_pct` | 周线 MACD 百分位 | 10 | 百分位=0%(最弱) | 百分位排名(0~1) |
-| `ma250_deviation` | MA250 偏离 | 10 | 偏离≥15% | 偏离度(正=价格低于MA) |
+| **`drawdown`** | **60 日回撤** | **15** | 回撤 ≥25% | 回撤比例(正=已从高点回落) |
 
-**信号映射**
+> ⚠️ **勘误（2026-10-12）**：本表此前写作 `weekly_rsi = 25` 且第 6 项为 `ma250_deviation`（权重 10）。
+> 实为 `weekly_rsi = 20`、第 6 项是 **`drawdown`（60 日回撤，权重 15）**，映射 `(drawdown - 0.05) / 0.20`。
+> 依据 `scorer.py:28-35` 的 `WEIGHTS` 与模块 docstring。（旧表两项权重之和恰为 100，所以数字"看起来对"。）
+
+**信号映射**（阈值来自 `config.SCORE_STRONG_BUY` / `SCORE_BUY`）
 
 | 总分区间 | signal | 含义 |
 |---------|--------|------|
-| ≥ 90 | `STRONG_BUY` | 极度超卖，强烈买入 |
-| ≥ 70 | `BUY` | 明显超卖，建议买入 |
-| < 70 | `NO_ACTION` | 未达标，观望 |
+| ≥ **80** | `STRONG_BUY` | 极度超卖，强烈买入 |
+| ≥ **60** | `BUY` | 明显超卖，建议买入 |
+| < **60** | `NO_ACTION` | 未达标，观望 |
+
+> ⚠️ **勘误（2026-10-12）**：本表此前写作 `≥ 90 / ≥ 70 / < 70`，与 `config.py:99-100` 的 **80 / 60** 不符。
+
+> 另有**大盘温度加成**：`composite < 40` 时最多 `+15` 分（`scorer.py:181-184`），单项得分累加后再加成，总分可略超 100 的直觉上限。
 
 **前端渲染建议**
 
@@ -508,7 +546,7 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
 
 ---
 
-### POST `/api/watchlist`（admin）
+### POST `/api/watchlist`（需 OpenD 补全快照）
 
 新增标的。自动从富途获取基础信息（name、sector、industry 等）。OpenD 离线时降级为手动填充。
 
@@ -531,7 +569,7 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
 
 ---
 
-### PATCH `/api/watchlist/{code}`（admin）
+### PATCH `/api/watchlist/{code}`
 
 修改标的可编辑字段（部分更新，只传需要改的字段）。
 
@@ -548,7 +586,7 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
 
 ---
 
-### DELETE `/api/watchlist/{code}`（admin）
+### DELETE `/api/watchlist/{code}`
 
 删除标的（仅从 watchlist 移除，不删历史 K 线/评分数据）。
 
@@ -556,7 +594,7 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
 
 ---
 
-### POST `/api/watchlist/batch`（admin）
+### POST `/api/watchlist/batch`
 
 批量新增标的。
 
@@ -569,43 +607,75 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
 
 ---
 
-### POST `/api/watchlist/refresh-snapshot`（admin）
+### POST `/api/watchlist/refresh-snapshot`（需 OpenD）
 
 刷新标的静态快照字段（trailing_pe, market_cap, current_price 等）。需要 OpenD。
 
 **Query Parameter:** `code`（可选，不传则刷新全部）
 
-**响应 200:** `{"message": "Refreshed 40 stocks", "updated": 38, "failed": [...]}`
+**响应 200:** `{"message": "Refreshed 38 stocks", "updated": 38, "failed": []}`
+
+> 说明：`message` 由代码按 `f"Refreshed {updated} stocks"` 动态生成，`updated` 为成功刷新的只数，
+> `failed` 为未取到快照的 code 列表。此前文档写的固定值 `40 / 38` 已改为与代码一致的形式。
 
 ---
 
-### GET `/api/stock-filter/search`
+### ~~GET `/api/stock-filter/search`~~ / ~~`/api/stock-filter/info`~~ — ⚠️ 从未实现，已删除
 
-条件选股（需 OpenD 在线）。
+> **勘误（2026-10-12）**：本节此前记录了两个"条件选股"端点：
+> `GET /api/stock-filter/search`（按市值/PE/价格/板块筛选）与 `GET /api/stock-filter/info`（单股信息预览）。
+> 实测 `api_server.py` 的 **38 个路由中不存在这两个端点**；`stock_info_fetcher.search_stocks()` 虽已实现，
+> 但**没有被任何路由调用**；对应的前端选股页 `StockFilter.vue` 也已从仓库删除。
+> 因此这两个端点属「文档写了、代码没有」，本文档已删除其参数与响应说明。
+>
+> 如需恢复条件选股能力：**后端要补路由**（复用现成的 `search_stocks()`），**前端要从头新建页面**。
+
+---
+
+### GET `/api/position-states`
+
+返回持仓状态（来自 `position_state` 表）。
 
 **请求参数**
 
-| 参数 | 类型 | 说明 |
-|------|------|------|
-| `market` | `string` | 市场（默认 `US`） |
-| `min_market_cap` | `float` | 最小市值（亿美元） |
-| `max_pe` | `float` | 最大市盈率 |
-| `min_price` | `float` | 最低股价 |
-| `sector` | `string` | 行业板块 |
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|:---:|------|
+| `code` | string | ✗ | 标的代码；不传则返回所有非 `EMPTY` 状态的持仓 |
 
-**响应 200:** `{"total": 15, "results": [{code, name, market_cap, trailing_pe, current_price, in_watchlist}, ...]}`
+**响应 200（传 code）**
 
-**OpenD 离线:** `{"data": null, "message": "Futu OpenD not connected"}`
+```json
+{"code": "US.AAPL", "state": "HOLDING", "entry_price": 210.5, "qty": 100, "updated_at": "2026-10-09 16:00:00"}
+```
+
+**响应 200（不传 code）**
+
+```json
+{"total": 3, "positions": [{"code": "US.AAPL", "state": "HOLDING", "...": "..."}]}
+```
+
+> `position_state` 表当前 **0 行**（模拟盘交易未产生状态记录时会为空），属正常。
 
 ---
 
-### GET `/api/stock-filter/info`
+### GET `/api/sell-log`
 
-单股信息查询（新增前预览）。需 OpenD。
+返回卖出日志，从 `config.TRADE_LOG_FILE`（`trade_log.jsonl`）读取 `type=SELL` 的记录。
 
-**请求参数:** `code`（必填）
+**请求参数**
 
-**响应 200:** `{code, ticker, name, market, sector, industry, listing_date, market_cap, trailing_pe, current_price, ...}`
+| 参数 | 类型 | 默认 | 约束 | 说明 |
+|------|------|------|------|------|
+| `code` | string | — | — | 标的代码，不传返回全部 |
+| `days` | int | `30` | `1 ≤ days ≤ 365` | 回溯天数 |
+
+**响应 200**
+
+```json
+{"total": 0, "records": []}
+```
+
+> 日志文件不存在时返回 `{"total": 0, "records": []}`。
 
 ---
 
@@ -1633,7 +1703,7 @@ export function getMarketTemperatureHistory(days = 30) {
 | 场景 | 行为 |
 |------|------|
 | 页面加载 | 调用 `getMarketTemperature()` 获取最新 |
-| 数据为空（404） | 显示提示"暂无数据，请确认后端已运行 temperature 命令" |
+| 数据为空（HTTP 200 + `data:null`） | 显示提示"暂无数据，请确认后端已运行 temperature 命令" |
 | 自动刷新 | 不需要轮询，数据每日更新一次 |
 | 手动刷新 | 可提供一个刷新按钮重新调用接口 |
 

@@ -8,13 +8,18 @@
 
 | # | 指标 | 输入 | 输出列 | 实现方式 |
 |---|------|------|--------|---------|
-| B1 | MA（移动平均） | close | ma5, ma10, ma20, ma60, ma120, ma250 | pandas-ta `ta.sma()` |
-| B2 | EMA（多空飘带） | close | ema5~ema30（6列） | pandas-ta `ta.ema()` |
-| B3 | RSI（相对强弱） | close | rsi6, rsi12, rsi24 | pandas-ta `ta.rsi()` |
-| B4 | MACD | close | dif, dea, macd | pandas-ta `ta.macd()` |
-| B5 | 布林带 | close | boll_upper, boll_mid, boll_lower | pandas-ta `ta.bbands()` |
+| B1 | MA（移动平均） | close | ma5, ma10, ma20, ma60, ma120, **ma200**, ma250 | **纯 pandas 自实现** |
+| B2 | EMA（多空飘带） | close | ema5~ema30（6列） | 纯 pandas 自实现 |
+| B3 | RSI（相对强弱） | close | rsi6, rsi12, rsi24 | 纯 pandas 自实现 |
+| B4 | MACD | close | dif, dea, macd | 纯 pandas 自实现 |
+| B5 | 布林带 | close | boll_upper, boll_mid, boll_lower | 纯 pandas 自实现 |
 | B6 | 成交量均线 | volume | vol_ma20 | pandas `rolling().mean()` |
 | B7 | ATR（真实波幅） | high, low, close | atr14 | 自实现（Wilder EWM 平滑） |
+
+> ⚠️ **勘误（2026-10-12）**：本表此前把 B1~B5 的实现方式写成 `pandas-ta` 的 `ta.sma()` / `ta.ema()` / `ta.rsi()` /
+> `ta.macd()` / `ta.bbands()`。**本项目没有 `pandas-ta` 依赖** —— `indicators.py:13` 只 import `numpy` / `pandas` / `scipy`，
+> 模块 docstring 也明确写着「底层使用 pandas 自实现，**无外部指标库依赖**」。
+> 同时 B1 的输出列此前漏了 **`ma200`**（`config.py` 的 `'ma': [5,10,20,60,120,200,250]`，DB 中 `ma200` 列实际存在）。
 
 ---
 
@@ -41,21 +46,23 @@ data_fetcher.py  →  indicators.py  →  scorer.py
 
 ## 具体实现方案
 
-### B1~B5 — 核心函数 `calc_indicators`（自实现，底层依赖 pandas-ta）
+### B1~B5 — 核心函数 `calc_indicators`（纯 pandas 自实现）
+
+> ⚠️ **勘误（2026-10-12）**：本节此前贴了一段以 `import pandas_ta as ta` 开头、调用
+> `ta.sma()` / `ta.ema()` / `ta.rsi()` / `ta.macd()` / `ta.bbands()` 的示例代码。
+> **那是示意代码，不是本项目的实现** —— 项目既没有 `pandas-ta` 依赖，实际算法也与之不同
+> （例如 MACD 柱线要 ×2 对齐富途口径、ATR 用 Wilder EWM）。**为避免继续误导，示例代码已删除。**
+>
+> **真实实现**请看 [`src/trader_analysis/futu_strategy/indicators.py`](../../../src/trader_analysis/futu_strategy/indicators.py)
+> 的 `calc_indicators()`；函数签名与配置结构如下（这部分与代码一致）：
 
 ```python
-import pandas as pd
-import pandas_ta as ta
-
+# 实际签名（indicators.py）
 def calc_indicators(df: pd.DataFrame, config: dict) -> pd.DataFrame:
     """
-    通用指标计算函数。
-
     参数：
         df     - 含 open/high/low/close/volume 列的 K 线 DataFrame
-                 由调用方决定标的和周期，本函数完全不感知
         config - 指标配置字典
-
     返回：
         追加了指标列的 DataFrame（原始列保留）
 
@@ -64,53 +71,6 @@ def calc_indicators(df: pd.DataFrame, config: dict) -> pd.DataFrame:
         - MACD 至少需要 ~60 根预热
         - 开头的 NaN 属正常现象（预热期）
     """
-    df = df.copy()
-
-    # MA（简单移动平均）
-    for period in config.get('ma', []):
-        df[f'ma{period}'] = ta.sma(df['close'], length=period)
-
-    # EMA（指数移动平均，可选独立输出）
-    for period in config.get('ema', []):
-        df[f'ema{period}'] = ta.ema(df['close'], length=period)
-
-    # RSI
-    for period in config.get('rsi', []):
-        df[f'rsi{period}'] = ta.rsi(df['close'], length=period)
-
-    # MACD（柱线 × 2，对齐富途/A 股显示口径）
-    if 'macd' in config:
-        c = config['macd']
-        fast, slow, signal = c['fast'], c['slow'], c['signal']
-        macd_df = ta.macd(df['close'], fast=fast, slow=slow, signal=signal)
-        df['dif']  = macd_df[f'MACD_{fast}_{slow}_{signal}']
-        df['dea']  = macd_df[f'MACDs_{fast}_{slow}_{signal}']
-        df['macd'] = macd_df[f'MACDh_{fast}_{slow}_{signal}'] * 2
-
-    # 布林带
-    if 'boll' in config:
-        c = config['boll']
-        length, std = c['length'], c['std']
-        boll_df = ta.bbands(df['close'], length=length, std=std)
-        df['boll_upper'] = boll_df[f'BBU_{length}_{float(std)}']
-        df['boll_mid']   = boll_df[f'BBM_{length}_{float(std)}']
-        df['boll_lower'] = boll_df[f'BBL_{length}_{float(std)}']
-
-    # 成交量均线
-    for period in config.get('vol_ma', []):
-        df[f'vol_ma{period}'] = df['volume'].rolling(window=period).mean()
-
-    # ATR（Average True Range，Wilder 平滑）
-    for period in config.get('atr', []):
-        prev_close = df['close'].shift(1)
-        tr = pd.concat([
-            df['high'] - df['low'],
-            (df['high'] - prev_close).abs(),
-            (df['low']  - prev_close).abs(),
-        ], axis=1).max(axis=1)
-        df[f'atr{period}'] = tr.ewm(alpha=1.0 / period, adjust=False, min_periods=period).mean()
-
-    return df
 ```
 
 ### 指标配置（`config.py` 中维护）
@@ -224,9 +184,14 @@ def detect_panic_volume(df: pd.DataFrame, lookback: int = 20, panic_multiplier: 
 
 | 函数 | 输入 | 输出 | 调用方 |
 |------|------|------|--------|
-| `calc_indicators(df, config)` | OHLCV DataFrame + 配置字典 | 追加指标列的 DataFrame | scorer / storage |
-| `detect_macd_divergence(df)` | 含 `macd` 列的 DataFrame | `bool` | scorer |
-| `detect_panic_volume(df)` | 含 `vol_ma20` 列的 DataFrame | `bool` | scorer |
+| `calc_indicators(df, config)` | OHLCV DataFrame + 配置字典 | 追加指标列的 DataFrame | `init_history` / `daily_update` / `storage` |
+| `detect_macd_divergence(df)` | 含 `macd` 列的 DataFrame | `bool` | ⚠️ **当前无人调用（死代码）** |
+| `detect_panic_volume(df)` | 含 `vol_ma20` 列的 DataFrame | `bool` | ⚠️ **当前无人调用（死代码）** |
+
+> ⚠️ **勘误（2026-10-12）**：本表此前把后两个函数的调用方写成 `scorer`。
+> 实测 `scorer.py` **只 import 了 `pandas` 与 `config`**，全文没有任何 `detect_*` 调用
+> （`grep -rn "detect_macd_divergence|detect_panic_volume" src/` 除定义处无命中）。
+> 两者是 v1 二值评分时代的遗留工具函数，现在**没有接入任何评分路径** —— 保留但未使用。
 
 ## 输出列名规范
 

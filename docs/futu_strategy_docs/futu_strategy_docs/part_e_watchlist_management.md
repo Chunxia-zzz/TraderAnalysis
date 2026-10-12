@@ -36,7 +36,7 @@
 |------|------|------|
 | **市场** | 美股（US）为主，港股（HK）少量 | 仅纳入富途 OpenD 可获取行情的市场 |
 | **市值** | 大市值龙头为主，目标 ≥ $50B | 避免小盘股流动性差、波动剧烈、易操纵 |
-| **行业覆盖** | 覆盖主要行业板块，每板块选龙头 1~3 只 | 26 个板块：MAG7、半导体、金融、医疗、消费、能源、工业、科技、云、AI 基建等 |
+| **行业覆盖** | 覆盖主要行业板块，每板块选龙头 1~3 只 | 11 个分类（`watchlist.json` 的 `categories` 去重口径）：MAG7、强势半导体、存储、光通信、云、太空、加密、中概、防守消费股、新兴市场、大盘黄金比特币 |
 | **可估值** | 有晨星公允价值或分析师目标价 | 否则无法计算折价率，无法纳入低估做多筛选 |
 | **数据可得** | 富途 OpenD 能稳定拉取日线/周线/4H K 线 | 数据是评分、道氏趋势、信号检测的前提 |
 
@@ -49,7 +49,7 @@
 | **重复的行业 ETF** | 同一板块只保留正股 ETF 或龙头个股，二者取一 |
 | **无晨星/分析师覆盖的小盘股** | 无法估值，超出「不懂不做」的能力圈 |
 
-> 2026-08-20 据此规则清理：剔除 7 只杠杆/重复 ETF（YINN、SOXL、KORU、HK.07709、GDXU、EUV、FOTO），标的池由 203 → 196 只。
+> 2026-08-20 据此规则清理：剔除杠杆/重复 ETF（YINN、SOXL、KORU、HK.07709、GDXU、EUV、FOTO 等），标的池缩减至 **195 只**（2026-10-12 实测 `watchlist` 表 195 行）。
 
 #### 1.4.3 动态维护
 
@@ -108,6 +108,7 @@ CREATE TABLE IF NOT EXISTS watchlist (
     -- 备注
     thesis          TEXT DEFAULT '',           -- 投资逻辑
     notes           TEXT DEFAULT '',           -- 备注（高频编辑）
+    recommended_strategy TEXT DEFAULT '',      -- 推荐策略（用户手动）
 
     -- 时间戳
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
@@ -130,7 +131,7 @@ CREATE INDEX IF NOT EXISTS idx_watchlist_market ON watchlist(market);
 | **用户估值** | target_price, stop_loss, analyst_target_mean, morningstar_fair_value | ✅ | 用户手动 |
 | **前瞻基本面** | forward_pe, forward_eps, peg_ratio, revenue_growth, earnings_growth, profit_margin, roe, debt_to_equity | ✅ | 用户手动 / 基本面模块写入 |
 | **静态快照** | trailing_pe, market_cap, current_price, dividend_yield, beta | ❌ | 系统定期更新 |
-| **备注** | thesis, notes | ✅ | 用户手动 |
+| **备注** | thesis, notes, recommended_strategy | ✅ | 用户手动 |
 
 ### 2.3 数据迁移
 
@@ -185,7 +186,7 @@ GET /api/watchlist
 
 ```json
 {
-  "total": 40,
+  "total": 195,
   "categories": {
     "mag7": "MAG7",
     "semiconductor": "强势半导体"
@@ -212,7 +213,10 @@ GET /api/watchlist
       "current_price": 220.50,
       "thesis": "AI on device + Services 增长",
       "notes": "Q2 财报后重新评估",
+      "recommended_strategy": "",
       "has_data": true,
+      "latest_close": 220.50,
+      "ms_discount_pct": -4.8,
       "created_at": "2026-04-13T00:00:00",
       "updated_at": "2026-05-05T10:30:00"
     }
@@ -220,7 +224,7 @@ GET /api/watchlist
 }
 ```
 
-> 注：`has_data` 字段保留，表示该股票在 `kline_indicators` 中是否有数据。
+> 注：列表端点在 DB 记录基础上附加派生字段——`has_data`（该股票在 `kline_indicators` 中是否有数据）、`latest_close`（最新日线收盘价）、`ms_discount_pct`（晨星折价率 `(morningstar_fair_value - latest_close) / latest_close * 100`，ETF 类或数据缺失时为 `null`）。`categories` 直接来自 `config.WATCHLIST_CATEGORIES`（从 watchlist.json 读取）。
 
 ---
 
@@ -232,7 +236,7 @@ GET /api/watchlist/{code}
 
 **Path Parameter:** `code` — Futu 格式代码（如 `US.AAPL`）
 
-**Response 200:** 单个标的完整信息（同列表中的单条结构）
+**Response 200:** 单个标的完整信息。注意与列表端点的结构差异：单查**只追加 `has_data`** 一个派生字段，**不含** `latest_close` / `ms_discount_pct`（这两个仅在 `GET /api/watchlist` 列表端点计算）。
 
 **Response 200 (不存在):**
 ```json
@@ -278,10 +282,12 @@ POST /api/watchlist
 }
 ```
 
-**Response 409 (已存在):**
+**Response 201 (已存在，注意：状态码仍为 201，不返回 409):**
 ```json
 {"data": null, "message": "Stock US.SNDK already exists in watchlist"}
 ```
+
+> 端点固定 `status_code=201`，重复 code 时依然返回 201，仅以 body 中的 `message` 区分成功与否。
 
 ---
 
@@ -303,7 +309,7 @@ PATCH /api/watchlist/{code}
 }
 ```
 
-**可修改字段白名单:**
+**可修改字段白名单（共 18 个）:**
 
 ```python
 EDITABLE_FIELDS = [
@@ -317,7 +323,7 @@ EDITABLE_FIELDS = [
     "revenue_growth", "earnings_growth",
     "profit_margin", "roe", "debt_to_equity",
     # 备注
-    "thesis", "notes",
+    "thesis", "notes", "recommended_strategy",
 ]
 ```
 
@@ -342,7 +348,7 @@ READONLY_FIELDS = [
 }
 ```
 
-**Response 400 (尝试改只读字段):**
+**Response 200 (尝试改只读字段，注意：返回 200 而非 400):**
 ```json
 {"data": null, "message": "Fields not editable: trailing_pe, market_cap"}
 ```
@@ -390,81 +396,42 @@ POST /api/watchlist/batch
 
 ---
 
-### 3.2 富途选股对接端点
+### 3.2 已实现但未接入路由的选股能力
 
-#### 3.2.1 条件选股查询
+> 下列能力已在 `stock_info_fetcher.py` 中实现，但**当前没有对应的 FastAPI 路由**（`api_server.py` 未注册 `/api/stock-filter/*` 端点）。属规划中，见 §11 优先级。
 
-```
-GET /api/stock-filter/search
-```
+#### 3.2.1 条件选股函数 `search_stocks()`
 
-**Query Parameters:**
+条件选股逻辑已就绪，签名如下：
 
-| 参数 | 类型 | 必填 | 默认 | 说明 |
-|------|------|------|------|------|
-| `market` | str | 否 | `US` | 市场: US / HK |
-| `min_market_cap` | float | 否 | — | 最小市值（亿美元） |
-| `max_pe` | float | 否 | — | 最大市盈率 |
-| `min_price` | float | 否 | — | 最低股价 |
-| `sector` | str | 否 | — | 行业板块 |
-
-> 只做最基础的筛选条件，目的是方便查找股票并填充信息，不是全功能选股器。
-
-**Response 200:**
-
-```json
-{
-  "total": 15,
-  "results": [
-    {
-      "code": "US.SNDK",
-      "ticker": "SNDK",
-      "name": "Sandisk Corp",
-      "market": "US",
-      "sector": "Technology",
-      "industry": "Data Storage",
-      "market_cap": 22000000000,
-      "trailing_pe": 18.5,
-      "current_price": 185.30,
-      "in_watchlist": false
-    }
-  ]
-}
+```python
+def search_stocks(
+    market: str = "US",
+    min_market_cap: float | None = None,
+    max_pe: float | None = None,
+    min_price: float | None = None,
+    sector: str | None = None,
+) -> list[dict]:
+    """条件选股。OpenD 离线时抛 OpenDNotConnected。"""
 ```
 
-> `in_watchlist` 字段标记该股票是否已在标的池中。
+- `min_market_cap` 单位为**亿美元**，内部换算为富途的元（`× 1e8`）
+- `sector` 仅原样回填到结果，不作为筛选条件
+- 返回 `list[dict]`，每项含 `code / ticker / name / market / sector / industry / market_cap / trailing_pe / current_price`
+- 依赖富途 OpenD 在线；离线时抛 `OpenDNotConnected`
 
-**依赖:** 需要富途 OpenD 在线连接。
+> 说明：`search_stocks()` 内部**未**附加 `in_watchlist` 之类的"是否已在池中"标记；若未来接入路由，需要端点层自行补算。
 
----
+#### 3.2.2 单股信息预览
 
-#### 3.2.2 单股信息查询（填充辅助）
+新增标的前的信息预览能力，复用已有函数 `fetch_stock_info(code)`——同样**未单独暴露 HTTP 端点**，仅在 `POST /api/watchlist` 内部调用：
 
-```
-GET /api/stock-filter/info?code=US.SNDK
-```
-
-**用途:** 新增标的前，先查询该股票的基础信息预览。
-
-**Response 200:**
-```json
-{
-  "code": "US.SNDK",
-  "ticker": "SNDK",
-  "name": "Sandisk Corp",
-  "market": "US",
-  "sector": "Technology",
-  "industry": "Data Storage",
-  "listing_date": "2004-12-15",
-  "market_cap": 22000000000,
-  "trailing_pe": 18.5,
-  "current_price": 185.30,
-  "dividend_yield": 0.012,
-  "beta": 1.35
-}
+```python
+def fetch_stock_info(code: str) -> dict | None:
+    """获取单只股票基础信息 + 快照。OpenD 离线时返回 None。"""
 ```
 
-> 这些数据会在 `POST /api/watchlist` 时自动写入静态字段。
+返回 `name / sector / industry / listing_date / trailing_pe / market_cap / current_price / dividend_yield / beta`（`beta` 富途快照无此字段，恒为 `None`）。
 
 ---
 
@@ -485,11 +452,13 @@ POST /api/watchlist/refresh-snapshot
 **Response 200:**
 ```json
 {
-  "message": "Refreshed 40 stocks",
-  "updated": 38,
+  "message": "Refreshed 193 stocks",
+  "updated": 193,
   "failed": ["US.XXXX", "HK.00000"]
 }
 ```
+
+> `message` 中的数字是 `f"Refreshed {updated} stocks"`，即**成功刷新数**（等于 `updated`），**不是**请求的总数。失败数需用 `len(failed)` 或总数减 `updated` 求得。
 
 **触发方式:**
 - 手动调用 API
@@ -511,8 +480,8 @@ def migrate_watchlist(
 
 @app.command()
 def refresh_snapshot(
-    codes: list[str] = typer.Option(None, help="指定代码，不传则全部刷新"),
-):
+    codes: Optional[list[str]] = typer.Option(None, help="指定代码，不传则全部刷新"),
+) -> None:
     """刷新标的池静态快照字段"""
 ```
 
@@ -545,12 +514,20 @@ def get_watchlist() -> list[str]:
 ### 5.2 接口封装
 
 ```python
-# stock_info_fetcher.py (新文件)
+# stock_info_fetcher.py
 
-from futu import OpenQuoteContext, StockFilter, Market, SortDir
+# 模块顶部「不」导入 futu，全部延迟到函数内（OpenD/futu-api 缺失时可优雅降级）：
+import logging
+from trader_analysis.futu_strategy import config
+
+def _get_quote_ctx():
+    """创建 OpenQuoteContext，连接失败抛 OpenDNotConnected。"""
+    from futu import OpenQuoteContext
+    ...
 
 def fetch_stock_info(code: str) -> dict | None:
-    """获取单只股票基础信息，用于新增标的时自动填充"""
+    """获取单只股票基础信息 + 快照，用于新增标的时自动填充。OpenD 离线时返回 None。"""
+    from futu import RET_OK, Market as FutuMarket
     # 返回: {name, sector, industry, listing_date, market_cap, trailing_pe, ...}
     ...
 
@@ -558,9 +535,11 @@ def search_stocks(
     market: str = "US",
     min_market_cap: float | None = None,
     max_pe: float | None = None,
+    min_price: float | None = None,
     sector: str | None = None,
 ) -> list[dict]:
-    """条件选股，返回候选列表"""
+    """条件选股，返回候选列表。OpenD 离线时抛 OpenDNotConnected。"""
+    from futu import RET_OK, FilterType, Market, SimpleFilter, StockFilter
     ...
 ```
 
@@ -573,8 +552,9 @@ def search_stocks(
 ### 5.4 降级策略
 
 富途 OpenD 不在线时：
-- `POST /api/watchlist` — 仍可新增，但 name 回退为 ticker，sector/industry 为空
-- `GET /api/stock-filter/search` — 返回 503：`{"data": null, "message": "Futu OpenD not connected"}`
+- `POST /api/watchlist` — 仍可新增，但 `fetch_stock_info()` 返回 `None`，name 回退为 ticker，sector/industry 为空
+- `search_stocks()` — 抛 `OpenDNotConnected`（当前**无对应 HTTP 路由**，因此不涉及任何 HTTP 状态码）
+- `refresh-snapshot` — `fetch_snapshot_batch()` 返回空字典，全部计入 `failed`
 - 其他 CRUD 操作不受影响（纯 SQLite 读写）
 
 ---
@@ -593,15 +573,29 @@ watchlist 表的 forward_pe, forward_eps, peg_ratio 等可编辑字段
 
 ### 6.2 接口约定
 
-基本面模块提供一个写入函数：
+**不存在** `sync_fundamental_to_watchlist()` 这样的集中封装函数。真实的同步逻辑**内联在 `cli.py` 的 `fundamental` 命令里**，直接调用 `watchlist_storage` 的存储层函数：
+
+1. 对每只标的调用 `fetch_all()` + `calculate_fundamental_score()`，先把完整记录写入 `fundamental` 表（`upsert_fundamental`）
+2. 将前瞻基本面字段映射后调用 `update_stock(code, sync_fields)`
 
 ```python
-def sync_fundamental_to_watchlist(code: str, data: dict) -> None:
-    """将基本面分析结果同步到 watchlist 表的对应字段"""
-    # 只更新 EDITABLE_FIELDS 中的基本面字段
-    # 不覆盖用户手动修改过的值（可选：加 force 参数）
-    ...
+# cli.py fundamental 命令内联逻辑
+sync_fields = {}
+for src, dst in [
+    ("forward_pe", "forward_pe"), ("forward_eps", "forward_eps"),
+    ("peg_ratio", "peg_ratio"), ("revenue_growth", "revenue_growth"),
+    ("earnings_growth", "earnings_growth"), ("profit_margin", "profit_margin"),
+    ("roe", "roe"), ("debt_to_equity", "debt_to_equity"),
+]:
+    if data.get(src) is not None:
+        sync_fields[dst] = data[src]
+if sync_fields:
+    update_stock(code, sync_fields)          # 经 EDITABLE_FIELDS 白名单过滤
 ```
+
+3. 静态快照字段（`trailing_pe / market_cap / current_price / dividend_yield / beta`）同样内联收集后调用 `refresh_snapshot(code, snapshot)`
+
+两条路径都经过 `watchlist_storage` 的字段白名单（`EDITABLE_FIELDS` / `SNAPSHOT_FIELDS`）过滤，没有独立的中介函数。
 
 ### 6.3 冲突处理
 
@@ -634,9 +628,9 @@ src/trader_analysis/futu_strategy/
 
 ```
 src/trader_analysis/futu_strategy/
-├── config.py                 # WATCHLIST 改为从 DB 读取
-├── api_server.py             # 新增 CRUD + stock-filter 路由
-├── storage.py                # 新增 watchlist 建表语句
+├── config.py                 # WATCHLIST 改为从 DB 读取（JSON 作分类来源 + 空表回退）
+├── api_server.py             # 新增标的池 CRUD 路由 + startup 钩子调用 init_watchlist_table()
+├── watchlist_storage.py      # watchlist 建表：init_watchlist_table()（SQL 常量 _CREATE_WATCHLIST_TABLE_SQL）
 └── ...
 
 src/trader_analysis/
@@ -651,11 +645,11 @@ src/trader_analysis/
 ### 8.1 迁移步骤
 
 ```
-1. 新建 watchlist 表（storage.py init_db 中添加）
+1. 新建 watchlist 表（`watchlist_storage.py` 的 `init_watchlist_table()`，建表 SQL 常量 `_CREATE_WATCHLIST_TABLE_SQL`，由 `api_server.py` 的 startup 钩子调用）
 2. 运行 migrate-watchlist 命令导入 JSON 数据
 3. config.py 中 WATCHLIST 改为 get_watchlist() 动态读取
 4. 验证所有依赖模块正常（init/update/score/run）
-5. watchlist.json 保留作为备份，不再作为数据源
+5. watchlist.json 保留：DB 为主数据源，JSON 作为**分类来源 + 空表回退**
 ```
 
 ### 8.2 向后兼容
@@ -666,12 +660,12 @@ src/trader_analysis/
 | `daily_update.py` | 同上 | 无需改动 |
 | `scorer.py` | 同上 | 无需改动 |
 | `runner.py` | 同上 | 无需改动 |
-| `api_server.py:/api/watchlist` | 当前返回 `config.WATCHLIST_DETAIL` | 改为从 DB 查询 |
+| `api_server.py:/api/watchlist` | 迁移前返回 `config.WATCHLIST_DETAIL` | ✅ **已完成**：现由 `watchlist_storage.list_watchlist()` 从 DB 查询 |
 
 ### 8.3 categories 管理
 
-现有 `watchlist.json` 中的 `categories` 字典迁移方案：
-- **v1 简化方案：** categories 仍保留在 config.py 中作为常量（变动极低频）
+现有 `watchlist.json` 中的 `categories` 字典处理方案：
+- **v1 简化方案：** `config.WATCHLIST_CATEGORIES` 由 `config._load_watchlist()` 在导入时**从 `watchlist.json` 动态读取**（并非硬编码常量），`GET /api/watchlist` 的 `categories` 字段即取自此；变动极低频，暂不落库
 - **v2 扩展：** 可加 `watchlist_categories` 表
 
 ---
@@ -680,15 +674,16 @@ src/trader_analysis/
 
 | 场景 | 处理 |
 |------|------|
-| 新增已存在的 code | 返回 409 Conflict |
+| 新增已存在的 code | 返回 **201**（端点固定 `status_code=201`），body `{"data": null, "message": "Stock XXX already exists in watchlist"}` |
 | 删除不存在的 code | 返回 200（幂等） |
-| PATCH 不存在的 code | 返回 `{"data": null, "message": "..."}` |
-| PATCH 包含只读字段 | 返回 400，列出不可编辑的字段名 |
-| 富途 OpenD 离线时新增 | 降级：name=ticker，行业字段空 |
-| 富途 OpenD 离线时选股 | 返回 503 |
+| PATCH 不存在的 code | 返回 200，body `{"data": null, "message": "Stock XXX not found in watchlist"}` |
+| PATCH 包含只读字段 | 返回 **200**，body `{"data": null, "message": "Fields not editable: xxx"}`（非 400） |
+| PATCH 传入未知字段 | 静默忽略（不在 `EDITABLE_FIELDS` 中则不更新） |
+| 富途 OpenD 离线时新增 | 降级：`fetch_stock_info()` 返回 None，name=ticker，行业字段空 |
+| 富途 OpenD 离线时选股 | `search_stocks()` 抛 `OpenDNotConnected`（当前无 HTTP 路由，无 503 行为） |
 | 批量新增部分失败 | 返回成功/跳过列表，不全量回滚 |
-| tags 格式错误 | 期望 JSON 数组，非法格式返回 422 |
-| 数值字段传入字符串 | FastAPI Pydantic 校验，返回 422 |
+| POST body 非法（tags 非数组、数值传字符串） | `WatchlistAddRequest` 经 Pydantic 校验，返回 422 |
+| PATCH body 非法（类型错误） | PATCH 的 body 为裸 `dict`（`body: dict`），**无 Pydantic 校验，不会 422** |
 
 ---
 
@@ -696,11 +691,11 @@ src/trader_analysis/
 
 | 操作 | 数据量 | 预期耗时 |
 |------|--------|---------|
-| 查询列表（40 股） | 40 行 | < 10ms |
+| 查询列表（195 股） | 195 行 | < 10ms |
 | 单条 CRUD | 1 行 | < 5ms |
-| refresh-snapshot（40 股） | 40 次富途调用 | ~20-40s（含限频） |
+| refresh-snapshot（195 股） | 195 次富途调用 | ~20-40s（含限频） |
 | 条件选股 | 富途返回最多 200 条 | 1-3s |
-| migrate-watchlist | 40 条插入 | < 100ms |
+| migrate-watchlist | 49 条插入（watchlist.json 全部条目） | < 100ms |
 
 ---
 
@@ -709,7 +704,7 @@ src/trader_analysis/
 | 阶段 | 范围 | 验收标准 |
 |------|------|---------|
 | **P0** | 建表 + 迁移 + 基础 CRUD API | GET/POST/PATCH/DELETE 可用，现有模块不受影响 |
-| **P1** | 富途信息填充 + stock-filter | 新增标的时自动填充名称/行业 |
+| **P1** | 富途信息填充 + 选股函数 `search_stocks()` | 新增标的时自动填充名称/行业（选股函数已就绪，HTTP 路由仍在规划中） |
 | **P2** | refresh-snapshot + CLI | 静态字段定期刷新 |
 | **P3** | 基本面模块写入协同 | fundamental 模块可同步数据到 watchlist |
 
@@ -717,11 +712,11 @@ src/trader_analysis/
 
 ## 12. 验收标准（P0）
 
-- [ ] `trader-analysis migrate-watchlist` 成功导入 40 条记录
+- [ ] `trader-analysis migrate-watchlist` 成功导入 49 条记录（watchlist.json 全部条目）
 - [ ] `GET /api/watchlist` 返回结构与现有兼容（前端无感切换）
 - [ ] `POST /api/watchlist` 可新增标的（OpenD 离线时降级正常）
 - [ ] `PATCH /api/watchlist/US.AAPL` 可修改 notes/forward_pe 等
-- [ ] `PATCH` 尝试修改 trailing_pe/market_cap 时返回 400
+- [ ] `PATCH` 尝试修改 trailing_pe/market_cap 时返回 200（body 含 `Fields not editable`）
 - [ ] `DELETE /api/watchlist/US.XXXX` 删除后不影响历史评分数据
 - [ ] `trader-analysis score` / `update` / `run` 功能不受影响
 - [ ] 单条 CRUD 响应时间 < 50ms

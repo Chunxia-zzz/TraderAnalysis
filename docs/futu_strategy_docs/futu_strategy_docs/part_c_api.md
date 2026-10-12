@@ -1,220 +1,97 @@
 # Part C — API 服务层（api_server.py）
 
-> API 层将存储层的数据暴露为 HTTP 接口，供前端图表组件消费。它只做读取，不调用 Futu SDK，不做任何计算，可以独立于后端运行。
-
-> **⚠️ 本文件为 v2.0 初始架构设计文档，仅供参考。**
-> 当前完整 API 文档（含所有端点、响应格式、错误处理）请见：[`docs/api.md`](../../../api.md)
+> API 层将存储层的数据暴露为 HTTP 接口，供前端消费。**绝大多数端点只做读取**，不调用 Futu SDK、不做计算，可独立于后端进程运行。
 >
-> 主要变更（v2.1 至今）：
-> - 端点数从 4 个扩展至 15 个（评分概览、市场温度、回测、止盈止损、网格交易、标的池 CRUD 等）
-> - 无数据时统一返回 HTTP 200 + `{data: null, message}` 而非 404
-> - breakdown 结构从 `{score, triggered}` 改为 `{score, raw, ratio}`
-> - 标的池从 JSON 文件迁移到 SQLite（watchlist 表）
+> **⚠️ 例外**：`/api/position`（持仓查询）与 `/api/allocation`（目标仓位，含 `PUT` 保存）依赖**本机 Futu OpenD（127.0.0.1:11111）** 实时查询，不能脱离后端环境。
+>
+> 源码位置：`src/trader_analysis/futu_strategy/api_server.py`
+> **完整端点清单、请求参数、响应样例请以 [`docs/api.md`](../../../api.md) 为准**（本文档只讲架构与通用约定，不再逐条复制）。
 
 ---
 
-## 功能清单
+## 功能清单（按分组）
 
-| # | 接口 | 方法 | 用途 |
-|---|------|------|------|
-| J1 | `/api/indicators` | GET | 返回某标的某周期最近 N 根 K 线 + 全部指标（绘图用） |
-| J2 | `/api/indicators/latest` | GET | 返回最新一根指标值（面板/信号灯展示） |
-| J3 | `/api/scores/latest` | GET | 返回最新评分结果（评分面板展示） |
-| J4 | `/api/watchlist` | GET | 返回完整标的池（含分类、标签、数据状态） |
+| 分组 | 端点数 | 说明 |
+|------|--------|------|
+| 健康检查 | 1 | `GET /health` |
+| 指标 | 2 | `GET /api/indicators`、`/api/indicators/latest` |
+| 个股评分 | 2 | `GET /api/scores/latest`、`/api/scores/overview` |
+| 标的池 CRUD | 7 | `GET/POST /api/watchlist`、`GET/PATCH/DELETE /api/watchlist/{code}`、`POST /api/watchlist/batch`、`POST /api/watchlist/refresh-snapshot` |
+| 市场温度 | 3 | `GET /api/market-temperature`、`/api/market-temperature/history`、`/api/asset-temperature/history` |
+| 信号 | 6 | `GET /api/top-signals`、`/api/bottom-signals`、`/api/ema-cross-signals`、`/api/trade-signals`、`/api/livermore/signals`、`/api/livermore/detail` |
+| 复盘与文案 | 7 | `GET /api/analysis`、`/api/daily-picks`、`/api/content-generator`、`/api/review`、`/api/content-templates`、`PUT/DELETE /api/content-templates/{key}` |
+| 交易执行 | 5 | `GET /api/position-states`、`/api/sell-log`、`/api/tp-sl`、`/api/grid/status`、`/api/grid/orders` |
+| 回测 | 1 | `GET /api/backtest/run` |
+| 持仓与配置 | 3 | `GET /api/position`、`GET/PUT /api/allocation` |
+| 基本面 | 1 | `GET /api/fundamental` |
+
+> 合计 **37 个业务端点 + 1 个健康检查 = 38 条路由**。
+> 其中 **8 个为写端点**（`POST/PUT/DELETE`）：标的池 5 个（增/改/删/批量增/刷新快照）、
+> 文案模板 2 个（`PUT`/`DELETE`）、目标仓位 1 个（`PUT`）——**API 层并非纯只读**。
+> （本文件初版只设计了 4 个端点，见文末「历史沿革」。）
 
 ---
 
 ## 实现思路
 
 - 使用 **FastAPI** 框架：轻量、自带 Swagger 文档（`/docs`）
-- 所有接口只读 SQLite，调用 `storage.py` 的查询函数
-- 不连接 Futu OpenD，不依赖后端进程
-- 开发阶段允许跨域（CORS `*`），生产环境应限制 `allow_origins`
+- 所有接口只读 SQLite，调用 `storage.py` / `watchlist_storage.py` 的查询函数
+- **不连接 Futu OpenD**（`/api/position`、`/api/allocation` 除外）
+- CORS 全开放：`allow_origins=["*"]`、`allow_methods=["*"]`、`allow_headers=["*"]`（**不是仅 GET**）
+- 服务**无鉴权，全开放**
+- 启动时执行 `@app.on_event("startup")` 钩子：`storage.init_db()` + `watchlist_storage.init_watchlist_table()` + `template_store.init_templates_table()`（幂等建表，无需手工初始化）
 
 ---
 
 ## 具体实现方案
 
-### api_server.py（自实现，依赖 FastAPI + storage.py）
+### 应用骨架
 
 ```python
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-import storage
 
 app = FastAPI(title="Strategy Indicators API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],       # 开发阶段允许所有来源
-    allow_methods=["GET"],
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-@app.get("/api/indicators")
-def get_indicators(
-    code:  str,
-    ktype: str = Query(default="1d", pattern="^(1d|1w)$"),
-    days:  int = Query(default=60, ge=1, le=500),
-):
-    """
-    J1: 返回某标的某周期最近 N 根 K 线 + 全部指标。
-    日期升序返回（最旧在前，最新在后），符合图表从左到右的时间轴。
-    无数据时返回 404 + 描述性提示。
-    """
-    rows = storage.query_range(code, ktype, days)
-    if not rows:
-        ktype_label = {"1d": "日线", "1w": "周线"}.get(ktype, ktype)
-        return JSONResponse(status_code=404, content={
-            "code": code, "ktype": ktype, "data": [],
-            "message": f"{code} 暂无{ktype_label}数据，请等待历史数据导入完成",
-        })
-    return {"code": code, "ktype": ktype, "data": rows}
-
-
-@app.get("/api/indicators/latest")
-def get_latest(
-    code:  str,
-    ktype: str = Query(default="1d", pattern="^(1d|1w)$"),
-):
-    """J2: 返回最新一根的所有指标值。无数据时返回 404。"""
-    result = storage.query_latest(code, ktype)
-    if not result:
-        return JSONResponse(status_code=404, content={
-            "message": f"{code} 暂无数据，请等待历史数据导入完成",
-        })
-    return result
-
-
-@app.get("/api/scores/latest")
-def get_latest_score(code: str):
-    """J3: 返回最新一次评分结果。无数据时返回 404。"""
-    result = storage.query_latest_score(code)
-    if not result:
-        return JSONResponse(status_code=404, content={
-            "message": f"{code} 暂无评分数据",
-        })
-    return result
-
-
-@app.get("/api/watchlist")
-def get_watchlist():
-    """J4: 返回完整标的池（含分类、标签、数据状态），数据来源为 watchlist.json。"""
-    codes_in_db = set(storage.list_codes())
-    items = [{**item, "has_data": item["futu_code"] in codes_in_db}
-             for item in config.WATCHLIST_DETAIL]
-    return {"categories": config.WATCHLIST_CATEGORIES, "watchlist": items}
+@app.on_event("startup")
+def _ensure_db() -> None:
+    storage.init_db()
+    watchlist_storage.init_watchlist_table()
+    from trader_analysis.futu_strategy.template_store import init_templates_table
+    init_templates_table()
 ```
 
 ### 启动命令
 
 ```bash
-pip install fastapi uvicorn
-uvicorn api_server:app --host 0.0.0.0 --port 8000
+uvicorn trader_analysis.futu_strategy.api_server:app --host 0.0.0.0 --port 8000
 
 # Swagger 文档地址：http://localhost:8000/docs
 ```
 
 ---
 
-## 响应数据格式
+## 通用约定（重要）
 
-### J1: `GET /api/indicators?code=HK.00700&ktype=1d&days=60`
+### 1. 无数据时统一返回 HTTP 200 + `data: null`
 
-```json
-{
-  "code": "HK.00700",
-  "ktype": "1d",
-  "data": [
-    {
-      "date": "2026-02-14",
-      "open": 398.0, "high": 405.0, "low": 396.0, "close": 402.0,
-      "volume": 12340000,
-      "ma5": 399.2, "ma10": 397.8, "ma20": 394.1, "ma60": 385.3, "ma120": 375.0, "ma250": 358.0,
-      "rsi14": 54.2,
-      "dif": 2.31, "dea": 1.85, "macd": 0.92,
-      "boll_upper": 418.5, "boll_mid": 394.1, "boll_lower": 369.7,
-      "vol_ma20": 11200000
-    },
-    { "date": "2026-02-17", "...": "..." }
-  ]
-}
-```
-
-### J2: `GET /api/indicators/latest?code=HK.00700&ktype=1d`
+**不再返回 404。** 前端通过 `data` 字段判空，`message` 用于提示：
 
 ```json
 {
-  "code": "HK.00700",
-  "ktype": "1d",
-  "date": "2026-04-14",
-  "close": 412.0,
-  "ma5": 408.2, "ma10": 405.1, "ma20": 394.1, "ma60": 385.3, "ma120": 375.0, "ma250": 358.0,
-  "rsi14": 54.2,
-  "dif": 2.31, "dea": 1.85, "macd": 0.92,
-  "boll_upper": 418.5, "boll_mid": 394.1, "boll_lower": 369.7,
-  "vol_ma20": 11200000
+  "data": null,
+  "message": "US.FAKECODE 暂无评分数据"
 }
 ```
 
-### J3: `GET /api/scores/latest?code=US.AAPL`
-
-```json
-{
-  "code": "US.AAPL",
-  "date": "2026-04-14",
-  "total_score": 78,
-  "signal": "BUY",
-  "breakdown": {
-    "weekly_rsi":            {"score": 22, "value": 28.3, "triggered": true},
-    "daily_macd_divergence": {"score": 0,  "triggered": false},
-    "vix":                   {"score": 12, "value": 32.1, "triggered": true},
-    "boll_lower":            {"score": 10, "value": 395.0, "triggered": true},
-    "daily_rsi":             {"score": 0,  "value": 42.1, "triggered": false},
-    "cnn_fg":                {"score": 10, "value": 18.0, "triggered": true},
-    "panic_volume":          {"score": 8,  "triggered": true},
-    "weekly_macd_shrink":    {"score": 6,  "triggered": true},
-    "ma250_deviation":       {"score": 6,  "value": 0.092, "triggered": true}
-  }
-}
-```
-
-### J4: `GET /api/watchlist`
-
-```json
-{
-  "categories": {
-    "mag7": "MAG7",
-    "storage": "存储",
-    "crypto": "加密"
-  },
-  "watchlist": [
-    {
-      "ticker": "NVDA",
-      "name": "NVIDIA Corporation",
-      "market": "US",
-      "category": "mag7",
-      "tags": ["AI芯片", "GPU"],
-      "futu_code": "US.NVDA",
-      "has_data": true
-    },
-    {
-      "ticker": "SNDK",
-      "name": "Sandisk Corporation",
-      "market": "US",
-      "category": "storage",
-      "futu_code": "US.SNDK",
-      "has_data": true
-    }
-  ]
-}
-```
-
-- `has_data: true` 表示该标的已有历史数据，可查询指标
-- `has_data: false` 表示尚未导入数据，前端可显示"数据加载中"
-
-### 无数据时的 404 响应
-
-当查询的标的尚无数据时，J1/J2/J3 返回 HTTP 404：
+`/api/indicators` 是唯一格式略有差异的端点（保留 `code` / `ktype` 上下文）：
 
 ```json
 {
@@ -225,7 +102,99 @@ uvicorn api_server:app --host 0.0.0.0 --port 8000
 }
 ```
 
-前端应检查 HTTP 状态码，404 时显示 `message` 字段内容。
+### 2. `ktype` 支持三个周期
+
+`Query(pattern="^(1d|4h|1w)$")`——初版文档只写了 `1d|1w`，**现已有 `4h`**。
+
+⚠️ **`4h` 的 `date` 字段返回 Unix 时间戳（秒，int）**，而 `1d`/`1w` 返回 `'YYYY-MM-DD'` 字符串。这是为了让 lightweight-charts 正确显示时间轴。
+
+### 3. `breakdown` 结构为 `{score, raw, ratio}`
+
+初版的 `{score, triggered}` / `{score, value, triggered}` **已废弃**。当前每个因子返回三元组：
+
+```json
+{
+  "US.AAPL": {
+    "date": "2026-10-09",
+    "total_score": 78,
+    "signal": "BUY",
+    "breakdown": {
+      "weekly_rsi":      {"score": 22.0, "raw": 28.3,  "ratio": 0.861},
+      "daily_macd_pct":  {"score": 16.4, "raw": 0.182, "ratio": 0.818},
+      "boll_position":   {"score": 9.9,  "raw": 0.34,  "ratio": 0.66},
+      "daily_rsi":       {"score": 18.7, "raw": 23.9,  "ratio": 0.935},
+      "weekly_macd_pct": {"score": 5.2,  "raw": 0.48,  "ratio": 0.52},
+      "drawdown":        {"score": 11.0, "raw": 0.197, "ratio": 0.735}
+    }
+  }
+}
+```
+
+- `ratio` 为归一化后的 0~1 触发强度，`score = ratio × WEIGHTS[因子]`
+- 因子键名固定 6 个，与 `scorer.py` 的 `WEIGHTS` 字典一一对应
+- 无数据时 `raw` / `ratio` 均为 `null` / `0`
+- **总分另有「大盘温度加成」**，因此 6 个因子 `score` 之和可能小于 `total_score`
+
+### 4. 标的池已从 JSON 迁移到 SQLite
+
+- 初版数据源 `watchlist.json` / `config.WATCHLIST_DETAIL` **已废弃**
+- 现由 `watchlist_storage.py` 管理 `watchlist` 表，提供完整 CRUD
+- `GET /api/watchlist` 支持 `category` / `status` / `market` / `search` 四个筛选参数
+- 单只标的详情用 `GET /api/watchlist/{code}`；`has_data` 字段表示该标的在 `kline_indicators` 中是否已有数据
+
+---
+
+## 响应数据格式（示例）
+
+### `GET /api/indicators?code=HK.00700&ktype=1d&days=60`
+
+```json
+{
+  "code": "HK.00700",
+  "ktype": "1d",
+  "data": [
+    {
+      "date": "2026-02-14",
+      "open": 398.0, "high": 405.0, "low": 396.0, "close": 402.0,
+      "volume": 12340000,
+      "ma5": 399.2, "ma10": 397.8, "ma20": 394.1, "ma60": 385.3,
+      "ma120": 375.0, "ma200": 368.2, "ma250": 358.0,
+      "rsi6": 58.1, "rsi12": 54.2, "rsi24": 51.7,
+      "dif": 2.31, "dea": 1.85, "macd": 0.92,
+      "boll_upper": 418.5, "boll_mid": 394.1, "boll_lower": 369.7,
+      "vol_ma20": 11200000,
+      "ema5": 400.1, "ema10": 398.4, "ema15": 396.9,
+      "ema20": 395.2, "ema25": 393.8, "ema30": 392.1,
+      "atr14": 8.6
+    },
+    { "date": "2026-02-17", "...": "..." }
+  ]
+}
+```
+
+> ⚠️ 指标列是 **`rsi6` / `rsi12` / `rsi24` 三周期**，**没有 `rsi14`**；均线含 `ma200`。
+
+### `GET /api/scores/latest?code=US.AAPL&date=2026-10-09`
+
+- 带 `date` 查询指定交易日评分（走 `query_score_by_date`），不传则返回最新
+- 结构与上节 `breakdown` 示例一致
+
+### `GET /api/watchlist?category=mag7`
+
+返回 SQLite `watchlist` 表中的记录 + 派生字段 `has_data`：
+
+```json
+[
+  {
+    "code": "US.NVDA",
+    "name": "NVIDIA Corporation",
+    "market": "US",
+    "category": "mag7",
+    "tags": ["AI芯片", "GPU"],
+    "has_data": true
+  }
+]
+```
 
 ---
 
@@ -235,29 +204,34 @@ uvicorn api_server:app --host 0.0.0.0 --port 8000
 
 | 库 | 适合场景 | 说明 |
 |----|---------|------|
+| `lightweight-charts` | TradingView 风格 | 项目实际使用；专为金融图表设计，性能优秀。**4h 周期需传 Unix 时间戳** |
 | `echarts` | React/Vue 通用 | 内置 K 线图、折线、柱状，配置灵活 |
-| `lightweight-charts` | TradingView 风格 | 专为金融图表设计，性能优秀 |
 | `recharts` | React 项目 | 通用图表，金融场景需自定义较多 |
 
-### ECharts 消费示例
+### 消费示例
 
 ```javascript
 const res = await fetch('/api/indicators?code=HK.00700&ktype=1d&days=60')
-const { data } = await res.json()
+const { data, message } = await res.json()
+if (!data.length) { showEmpty(message); return }
 
-// K 线主图
-const klineData = data.map(d => [d.open, d.close, d.low, d.high])
-const dates     = data.map(d => d.date)
-
-// MA 叠加线
-const ma5  = data.map(d => d.ma5)
-const ma20 = data.map(d => d.ma20)
-
-// RSI 副图
-const rsi = data.map(d => d.rsi14)
-
-// MACD 副图
-const dif  = data.map(d => d.dif)
-const dea  = data.map(d => d.dea)
-const macd = data.map(d => d.macd)
+const klineData = data.map(d => ({ time: d.date, open: d.open, high: d.high, low: d.low, close: d.close }))
+const ma20  = data.map(d => ({ time: d.date, value: d.ma20 }))
+const rsi   = data.map(d => ({ time: d.date, value: d.rsi12 }))   // 注意：不是 rsi14
 ```
+
+---
+
+## 历史沿革（v2.0 初版设计 → 现状）
+
+| 维度 | v2.0 初版设计 | 当前实现 |
+|------|--------------|---------|
+| 端点数 | 4 个 | 37 个业务端点（+1 健康检查） |
+| 无数据响应 | HTTP 404 + message | HTTP 200 + `{data: null, message}` |
+| `breakdown` 结构 | `{score, triggered}` | `{score, raw, ratio}` |
+| 标的池存储 | `watchlist.json` / `config.WATCHLIST_DETAIL` | SQLite `watchlist` 表（`watchlist_storage.py`） |
+| CORS | 仅 `GET` | 全方法 + 全 header |
+| 指标列 | `rsi14` | `rsi6` / `rsi12` / `rsi24` |
+| `ktype` | `1d` / `1w` | `1d` / `4h` / `1w` |
+| 只读保证 | 全部只读 | `/api/position`、`/api/allocation` 依赖本机 OpenD |
+| 鉴权 | 无 | 无（仍全开放） |

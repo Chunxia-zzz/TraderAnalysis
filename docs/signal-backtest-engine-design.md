@@ -1,12 +1,14 @@
 # Signal Backtest Engine 技术设计文档
 
-> 最后更新：2026-05-11 | 版本：v2.0 | 状态：P0+P1+扩展 已实现
+> 最后更新：2026-05-11 | 版本：v2.0 | 状态：P0+P1 已实现；批量/参数扫描（§5.2/§5.3）为设计稿；代码另已实现 swing/trend/ribbon 模式（本文档未覆盖）（详见各节标注及文末「实现现状核对表」）
 
 ---
 
 ## 1. 概述
 
 ### 1.1 目标
+
+> ⚠️ **状态：已实现并已扩展**。代码在本文描述的「hold（买入持有）」之外，另实现了 `swing`（评分回落卖出）、`trend`（跌破 MA 卖出）、`ribbon_long`/`ribbon_short`（EMA 飘带）模式，由 `BacktestParams.mode` 选择（`backtest.py:35-53`、`519-599`）；本文档未覆盖这些模式。
 
 基于已有 ~900 天的评分数据（`score_results`）和价格数据（`kline_indicators`），构建一个信号回测引擎，验证"当评分达到阈值时买入，持有 N 个交易日后卖出"的策略收益表现。
 
@@ -119,6 +121,8 @@ return_pct  = (exit_price - entry_price) / entry_price * 100
 
 ### 4.1 单次交易记录
 
+> ⚠️ **状态：部分不符**。实际交易字段为 `entry_score`（并非 `total_score`），且额外包含 `holding_days`、`exit_score`、`exit_reason`（`backtest.py:56-67`、`624-638`）。
+
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `signal_date` | str | 信号触发日期 |
@@ -131,6 +135,8 @@ return_pct  = (exit_price - entry_price) / entry_price * 100
 | `status` | str | `complete` / `incomplete` |
 
 ### 4.2 汇总统计
+
+> ⚠️ **状态：已实现，字段略有出入**。本文 12 项指标均已实现（`backtest.py:144-189`），另额外返回 `avg_holding_days`（平均实际持有天数，本文未列）。注意 `sharpe_like`、`profit_factor` 在样本不足时分别取 0 与 999.0。
 
 | 指标 | 计算方式 |
 |------|---------|
@@ -149,6 +155,8 @@ return_pct  = (exit_price - entry_price) / entry_price * 100
 
 ### 4.3 分组统计（可选）
 
+> ⚠️ **状态：设计稿，代码中未实现**（截至 2026-10-12 在 `backtest.py` 中未找到按年度/评分区间/市场温度的分组统计逻辑）。
+
 - 按年度分组
 - 按评分区间分组（40-60, 60-80, 80-100）
 - 按市场温度分组（bull/neutral/bear）
@@ -158,6 +166,8 @@ return_pct  = (exit_price - entry_price) / entry_price * 100
 ## 5. API 设计
 
 ### 5.1 回测执行端点
+
+> ⚠️ **状态：已实现，参数与响应比本文更丰富**。端点存在（`api_server.py:472`）。实际 Query 参数额外包含 `mode`、`exit_threshold`、`max_holding_days`、`trail_ma`、`entry_confirm`（`api_server.py:475-481`）；`holding_days` 范围为 `1-250`（非 1-60）。响应顶层额外含 `mode`，`params` 亦含各模式专属字段（`backtest.py:608-622`）。无数据时返回 `{"data": null, "message": ...}`，与本文一致。
 
 ```
 GET /api/backtest/run
@@ -227,6 +237,8 @@ GET /api/backtest/run
 
 ### 5.2 批量回测端点（v2）
 
+> ⚠️ **状态：设计稿，代码中未实现**（截至 2026-10-12 在 `api_server.py` 中未找到 `/api/backtest/batch`）。
+
 ```
 GET /api/backtest/batch
 ```
@@ -240,6 +252,8 @@ GET /api/backtest/batch
 返回每只股票的 summary（不含 trades 明细），用于横向对比。
 
 ### 5.3 参数扫描端点（v2）
+
+> ⚠️ **状态：设计稿，代码中未实现**（截至 2026-10-12 在 `api_server.py` 中未找到 `/api/backtest/sweep`）。
 
 ```
 GET /api/backtest/sweep
@@ -258,6 +272,8 @@ GET /api/backtest/sweep
 ## 6. CLI 设计
 
 ### 6.1 命令定义
+
+> ⚠️ **状态：已实现，签名与本文不符**。实际 `backtest` 命令（`cli.py:359-373`）**没有 `output` 参数**，但额外支持 `--mode`、`--exit-threshold`、`--max-holding-days`、`--trail-ma`、`--entry-confirm`、`--cooldown-days`。
 
 ```python
 @app.command()
@@ -322,6 +338,8 @@ src/trader_analysis/
 
 ### 7.2 核心类/函数
 
+> ⚠️ **状态：部分不符**。① `BacktestParams` 实际多出 `mode`/`exit_threshold`/`max_holding_days`/`trail_ma`/`entry_confirm`（`backtest.py:34-52`）；② `Trade` 用 `entry_score`（非 `total_score`），并含 `holding_days`/`exit_score`/`exit_reason`（`backtest.py:55-67`）；③ **不存在 `BacktestResult` 类**——`run_backtest` 返回的是 `dict`（`backtest.py:519`），不是 `BacktestResult` 实例。
+
 ```python
 # backtest.py
 
@@ -359,6 +377,8 @@ def run_backtest(params: BacktestParams) -> BacktestResult:
 ```
 
 ### 7.3 Storage 层新增函数
+
+> ✅ **状态：已实现**。三个函数签名与本文一致：`storage.py:582`（`query_all_scores`）、`storage.py:599`（`query_close_prices`）、`storage.py:650`（`query_trading_dates`）。另代码还新增了 `query_price_and_ma`（`storage.py:616`）、`query_ema_ribbon_data`（`storage.py:633`）供扩展模式使用。
 
 ```python
 # storage.py 新增
@@ -483,6 +503,8 @@ def run_backtest(params: BacktestParams) -> BacktestResult:
 
 ## 10. 扩展方向（v2+）
 
+> ⚠️ **状态：部分已提前实现**。§10.2 的「信号退出」「跟踪止损」已分别实现为 `swing`（评分回落卖出，`backtest.py:245`）与 `trend`（跌破 MA 卖出，`backtest.py:335`）模式；§10.1 多因子、§10.3 组合回测、§10.4 可视化为设计意图，代码中未实现。
+
 ### 10.1 多因子回测
 
 - 结合市场温度（`market_score.composite_score`）过滤
@@ -514,6 +536,8 @@ def run_backtest(params: BacktestParams) -> BacktestResult:
 
 ## 11. 实现优先级
 
+> ⚠️ **状态：与代码进度不完全对应**。P0/P1 已达成；**P2（`/api/backtest/batch` + `/sweep`）未实现**；P3 的「止盈止损」类能力已提前实现（`swing`/`trend` 模式），但 P3 的「市场温度联合」未实现；P4 未实现。
+
 | 阶段 | 范围 | 预期产出 |
 |------|------|---------|
 | **P0** | 单股 + 固定持有 + CLI | `backtest` 命令可用 |
@@ -526,8 +550,44 @@ def run_backtest(params: BacktestParams) -> BacktestResult:
 
 ## 12. 验收标准（P0）
 
+> ⚠️ **状态：部分达成**。命令可用、结果可复现、边界不 crash 均已满足；但「核心计算逻辑有单元测试」**未达成**——截至 2026-10-12，`tests/` 下（`test_api.py`/`test_storage.py`/`test_smoke.py` 等）未找到任何引用 `backtest` 的测试。
+
 - [ ] `trader-analysis backtest US.SNDK --threshold 40 --holding-days 10` 正确输出统计结果
 - [ ] 回测结果可复现（相同输入 → 相同输出）
 - [ ] 边界情况不 crash（无数据、阈值过高、holding 超范围）
 - [ ] 单股回测响应时间 < 500ms
 - [ ] 代码覆盖：核心计算逻辑有单元测试
+
+---
+
+## 实现现状核对表
+
+> 核对时间：2026-10-12。✅ 已实现 / ⚠️ 部分实现或与文档不符 / ❌ 代码中未找到。
+
+| 章节 | 设计内容 | 代码现状 | 对应代码位置 / 说明 |
+|------|---------|---------|-------------------|
+| §1.1 | 目标（仅 hold 策略） | ⚠️ | 已扩展 `swing`/`trend`/`ribbon_long`/`ribbon_short`（`backtest.py:35-53`） |
+| §2.1 | 输入数据源 score_results/kline_indicators | ✅ | `storage.py:582-664` |
+| §2.2 | 阈值 STRONG_BUY=80 / BUY=60 | ✅ | `config.py:99-100` |
+| §2.3 | 主键对齐、ktype='1d' | ✅ | `storage.py:599-664` |
+| §3.1 | 信号触发 `total_score >= threshold` | ✅ | `backtest.py:194` |
+| §3.2 | 去重策略 none/holding/custom | ✅ | `backtest.py:70-99` |
+| §3.3 | 收益计算（收盘买/卖） | ✅ | `backtest.py:233` |
+| §3.4 | 完整流程 | ✅ | `run_backtest`，`backtest.py:519` |
+| §4.1 | 单次交易字段（`total_score`） | ⚠️ | 实为 `entry_score`，另有 `holding_days`/`exit_score`/`exit_reason`（`backtest.py:56-67`） |
+| §4.2 | 汇总统计 12 项 | ⚠️ | 均已实现，另多 `avg_holding_days`（`backtest.py:144-189`） |
+| §4.3 | 分组统计（年度/评分/温度） | ❌ | 未找到实现 |
+| §5.1 | `GET /api/backtest/run` | ⚠️ | 已实现（`api_server.py:472`），参数多 `mode` 等，响应多 `mode` |
+| §5.2 | `GET /api/backtest/batch` | ❌ | 未找到路由 |
+| §5.3 | `GET /api/backtest/sweep` | ❌ | 未找到路由 |
+| §6.1 | CLI `backtest` 命令 | ⚠️ | 已实现（`cli.py:359`），**无 `output` 参数**，多模式参数 |
+| §7.1 | 模块结构 | ✅ | `backtest.py` / `api_server.py` / `storage.py` / `cli.py` |
+| §7.2 | 核心类/函数 | ⚠️ | 无 `BacktestResult` 类，`run_backtest` 返回 `dict`；`Trade` 字段不同 |
+| §7.3 | storage 新增查询函数 | ✅ | `storage.py:582`/`599`/`650` |
+| §7.4 | 算法流程（hold） | ✅ | `_run_hold_mode`，`backtest.py:192` |
+| §8 | 边界情况处理 | ✅ | 与代码一致（`backtest.py:576-583`、`211-231` 等） |
+| §10 | 扩展方向 | ⚠️ | §10.2 信号退出/跟踪止损已实现为 swing/trend |
+| §11 | 实现优先级 P0-P4 | ⚠️ | P2 未实现；P3 止盈止损类已提前实现 |
+| §12 | 验收标准（含单元测试） | ⚠️ | 命令可用、可复现、不 crash 达成；**无 backtest 单测** |
+
+**统计**：✅ 11 条 ｜ ⚠️ 9 条 ｜ ❌ 3 条（共 23 条）。

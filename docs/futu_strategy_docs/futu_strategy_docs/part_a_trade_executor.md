@@ -29,8 +29,14 @@
 
 ### 交易执行
 - 收到 scorer 的评分结果后，`STRONG_BUY` 和 `BUY` 触发下单，`NO_ACTION` 跳过
-- 下单前查持仓防重复（已持有且非 `STRONG_BUY` 则跳过）
+- 下单前查持仓防重复：**`config.ALLOW_PYRAMID` 为 `False`（默认）时，只要已持有就跳过买入**（与信号等级无关）；
+  设为 `True` 才允许加仓
 - 默认使用模拟环境 `TrdEnv.SIMULATE`
+
+> ⚠️ **勘误（2026-10-12）**：本节此前写「已持有且**非 `STRONG_BUY`** 则跳过」。
+> 实测 `trade_executor.py:63-67` 的判断是 `if not config.ALLOW_PYRAMID:` → 已持有即 `return`，
+> **完全不看信号等级**（`ALLOW_PYRAMID` 默认 `False`，见 `config.py:113`）。
+> 也就是说 `STRONG_BUY` 对已持仓标的**不会**触发加仓。
 
 ### 调度机制
 - 策略基于日线/周线数据，**不需要实时 tick 触发**，每日收盘后运行一次即可
@@ -74,11 +80,11 @@ def execute_trade(signal: dict, acc_id: int, trd_ctx, quote_ctx):
 
     # 3. 检查持仓（防重复）
     ret, positions = trd_ctx.position_list_query(
-        code=code, trd_env=TrdEnv.SIMULATE, acc_id=acc_id, refresh_cache=True
+        code=code, refresh_cache=True
     )
     if ret == RET_OK and not positions.empty:
-        if signal['signal'] != 'STRONG_BUY':
-            return  # 已持有且非强烈买入，跳过
+        if not config.ALLOW_PYRAMID:      # 默认 False
+            return                        # 已持有即跳过（不看信号等级）
 
     # 4. 下单
     ret, data = trd_ctx.place_order(
@@ -124,11 +130,20 @@ while True:
 
 **方式二：系统定时任务（推荐生产使用）**
 
-- **Windows**：任务计划程序，每日定时执行 `python strategy_runner.py`
-- **Linux/Mac**：`crontab -e`，添加 `0 6 * * * python /path/strategy_runner.py`
+- **Windows**：任务计划程序，每日定时执行 `trader-analysis run`
+- **Linux/Mac**：`crontab -e`，添加 `0 6 * * * trader-analysis run`
 
 **方式三：手动触发（测试阶段）**
 
 ```bash
-python strategy_runner.py --codes US.AAPL US.TSLA HK.00700
+# 真实入口：CLI 的 run 命令
+trader-analysis run
+
+# 或直接跑模块（runner.py 用 argparse 接 --codes）
+python -m trader_analysis.futu_strategy --codes US.AAPL US.TSLA HK.00700
 ```
+
+> ⚠️ **勘误（2026-10-12）**：本文档此前三处都写 `python strategy_runner.py`（含 `--codes` 示例）。
+> **仓库中不存在 `strategy_runner.py`** —— 真实入口是 `cli.py` 的 `run` 命令
+> （`cli.py:55`，走 `runner.run_strategy()`），或 `python -m trader_analysis.futu_strategy`
+> （`__main__.py` → `runner.main()`，`runner.py:165-181` 用 argparse 定义 `--codes`）。已全部更正。

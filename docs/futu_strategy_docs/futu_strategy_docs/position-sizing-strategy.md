@@ -2,6 +2,9 @@
 
 > 版本：v1.0 | 创建日期：2026-04-30
 > 数据源：Futu OpenAPI | 评估频率：周频
+> 最近核对：2026-10-12（对照 `market_scorer.py` / `config.py` 逐条核对；本文档描述的策略框架为主，实际生效口径以代码为准）
+>
+> **⚠️ 重要说明**：本文档最初按「六维度」设计。截至 2026-10-12，**实际代码已简化为三维度**（日线技术面 50% + 周线技术面 35% + 价格位置 15%），**波动率(VIX)、量能确认、避险信号(GLD) 三个维度已从市场温度评分中移除**（相关章节保留原设计构想并加标注）。此外，黄金/比特币已拆分为**独立的单资产温度**（见第 4.7 节）。
 
 ---
 
@@ -24,8 +27,10 @@
 |------|------|
 | 投资标的 | 美股权益类（SPY/QQQ 为主） |
 | 评估频率 | 每周一次（周日晚/周一盘前） |
-| 仓位范围 | 10% ~ 120%（90%以上为杠杆区） |
+| 仓位范围 | 30% ~ 120%（目标仓位映射输出下限为 30%；>90% 起出现杠杆工具建议，>100% 进入杠杆区） |
 | 持仓周期 | 中长线（周级别调仓） |
+
+> 核对：仓位映射下限为 30%（`market_scorer.py:287` `_clamp(..., 30, 85)`）。原文档写作「10% ~ 120%」，与实现不符，已更正。`leverage_tool` 在目标仓位 >90% 时给出 `margin`、>100% 时给出 `margin + OTM_call`（`market_scorer.py:290-294`）。
 
 ---
 
@@ -39,6 +44,8 @@
 | Nasdaq 100 ETF | `US.QQQ` | 科技成长代表 | 通常比 SPY 波动更大，更早反映风险偏好 |
 | Gold ETF | `US.GLD` | 避险情绪代理 | GLD 走强通常意味 risk-off |
 | VIX 恐慌指数 | `US.VIX` | 波动率/恐慌度 | 市场的"恐惧温度计" |
+
+> ⚠️ **状态：市场温度评分仅使用 SPY + QQQ**（`config.py:194` `MARKET_TEMP_CODES = ["US.SPY", "US.QQQ"]`；`config.py:191-193` 明确「VIX 期货由用户肉眼观察，不纳入算法」）。**GLD / VIX 不再参与市场温度评分**——GLD 改为独立的单资产温度（第 4.7 节），VIX 仅作为人工参考。原「避险信号(GLD)」「波动率(VIX)」两个评分维度已从 `market_scorer.py` 中移除（源码注释：`market_scorer.py:231-232`「历史版本曾含 GLD/VIX 避险维度，现已简化为 3 维度」）。
 
 ### 2.2 Futu API 数据获取
 
@@ -91,58 +98,64 @@ python scripts/quote/get_snapshot.py US.SPY US.QQQ US.GLD US.VIX --json
 | 60 ~ 80 | 偏贪婪 | 逐步减仓 |
 | 80 ~ 100 | 极度贪婪 / 超买 | 大幅减仓 |
 
-### 3.1 六大评分维度与权重
+> 注：上表为粗粒度方向示意。代码中精确的状态分档为 `5 / 15 / 30 / 45 / 55 / 70 / 85 / 100`（`market_scorer.py:23-32`，与 C.4.1 一致）。
+
+### 3.1 三大评分维度与权重
 
 ```
-综合评分 = 日线技术面(30%) + 周线技术面(15%) + 波动率(25%) + 价格位置(15%) + 量能确认(8%) + 避险信号(7%)
+综合评分 = 日线技术面(50%) + 周线技术面(35%) + 价格位置(15%)
 ```
 
 | 维度 | 权重 | 输入标的 | 核心逻辑 |
 |------|------|---------|---------|
-| 日线技术面 | 30% | SPY + QQQ | 日线 RSI/MACD/BOLL 判断超买超卖 |
-| 周线技术面 | 15% | SPY + QQQ | 周线 RSI/MACD 过滤日线噪音，确认大级别方向 |
-| 波动率 | 25% | VIX | 恐慌度量（反向映射） |
-| 价格位置 | 15% | SPY + QQQ | 距高点远近 + MA200偏离度 |
-| 量能确认 | 8% | SPY + QQQ | 成交量异常检测（恐慌放量/地量） |
-| 避险信号 | 7% | GLD | 避险资产热度（反向映射） |
+| 日线技术面 | 50% | SPY + QQQ | 日线 RSI/MACD/BOLL 判断超买超卖 |
+| 周线技术面 | 35% | SPY + QQQ | 周线 RSI/MACD/BOLL 过滤日线噪音，确认大级别方向 |
+| 价格位置 | 15% | SPY + QQQ | 52 周位置 + ATH 回撤 + MA200 偏离度 |
+
+> 核对：与 `config.py:196-200` `MARKET_TEMP_WEIGHTS`（daily_tech 0.50 / weekly_tech 0.35 / price_pos 0.15）一致，加权求和见 `market_scorer.py:258-262`。
+> 已更新：原为六维度「30/15/25/15/8/7」；现为三维度「50/35/15」，波动率、量能、避险三维度已从代码移除。
 
 > **权重设计理由**：
-> - 日线技术面（30%）：最直接的超买超卖信号，但从 40% 降至 30%，分出 15% 给周线
-> - 周线技术面（15%）：过滤日线噪音，日线 RSI 可能反复超卖但周线还没到位（如 2022 持续阴跌），是判断"跌够没有"的关键
-> - 波动率（25%）：VIX 是恐慌实时温度计，从 30% 微降至 25%
-> - 价格位置（15%）：从 20% 降至 15%，新增 MA200 偏离度子指标，提供均值回归视角
-> - 量能确认（8%）：新增维度——恐慌性放量通常是底部特征，持续缩量阴跌说明还没到底
-> - 避险信号（7%）：GLD 受多因素影响，从 10% 降至 7%，作为辅助验证
+> - 日线技术面（50%）：最直接的超买超卖信号，是市场温度的主导维度
+> - 周线技术面（35%）：过滤日线噪音，日线 RSI 可能反复超卖但周线还没到位（如 2022 持续阴跌），是判断"跌够没有"的关键
+> - 价格位置（15%）：52 周位置 + ATH 回撤 + MA200 偏离度，提供均值回归视角
+> - ~~波动率（原 25%）/ 量能确认（原 8%）/ 避险信号（原 7%）~~：**已从市场温度评分中移除**（见 4.3 / 4.5 / 4.6 节标注）
 
 ---
 
 ## 4. 各维度评分规则
 
-### 4.1 日线技术面维度（权重 30%）
+### 4.1 日线技术面维度（权重 50%）
 
 对 **SPY** 和 **QQQ** 分别计算以下三个子指标，共 6 个评分，取算术平均。
 
-#### 4.1.1 RSI(14) 评分
+#### 4.1.1 RSI(6) 分档评分
 
-**参数**：周期 = 14 日
+**参数**：周期 = 6 日（代码使用 `rsi6` 列，非 RSI(14)）
 
-**映射公式**：
+**映射公式**（分档制，每 10 点一档）：
 
 ```
-RSI_score = clamp((RSI - 20) / 60 × 100,  0,  100)
+RSI_score = clamp(floor(RSI / 10) × 10,  0,  100)
 ```
+
+即 RSI 落在哪一「十位档」，评分就取该档的整十值。
 
 | RSI 值 | 评分 | 市场状态 |
 |--------|------|---------|
-| ≤ 20 | 0 | 极度超卖，恐慌性抛售 |
-| 30 | 17 | 超卖区 |
-| 40 | 33 | 偏冷 |
-| 50 | 50 | 中性 |
-| 60 | 67 | 偏热 |
-| 70 | 83 | 超买区 |
-| ≥ 80 | 100 | 极度超买，FOMO 阶段 |
+| < 10 | 0 | 极度超卖，恐慌性抛售 |
+| 10 ~ 19 | 10 | 极度超卖 |
+| 20 ~ 29 | 20 | 深度超卖区 |
+| 30 ~ 39 | 30 | 超卖区 |
+| 40 ~ 49 | 40 | 偏冷 |
+| 50 ~ 59 | 50 | 中性 |
+| 60 ~ 69 | 60 | 偏热 |
+| 70 ~ 79 | 70 | 超买区 |
+| 80 ~ 89 | 80 | 极度超买 |
+| ≥ 90 | 90 | 极端 FOMO |
 
-> **为什么选 [20, 80] 而非 [30, 70]？** 宽指 ETF（SPY/QQQ）的 RSI 极端值比个股更难达到，30/70 已经是比较强的信号，20/80 是极端信号。使用更宽的区间让中间段评分更有区分度。
+> 已更新：原为「RSI(14) + 线性映射 `(RSI-20)/60×100`」；现为「RSI(6) + 分档映射 `int(rsi/10)*10`」。证据：`config.py:120` `"rsi": [6, 12, 24]`；`market_scorer.py:81-82`（日线）与 `123-124`（周线）`rsi = ...get("rsi6", 50); rsi_score = _clamp(int(rsi / 10) * 10.0)`。
+> 注：分档映射下 RSI 不到 90 时评分上限为 90，不存在「≥90 得 100」的旧口径。
 
 #### 4.1.2 MACD(12,26,9) 柱状图评分
 
@@ -153,6 +166,8 @@ RSI_score = clamp((RSI - 20) / 60 × 100,  0,  100)
 ```
 MACD_score = percentile_rank(current_histogram, lookback=252) × 100
 ```
+
+> 核对：与 `market_scorer.py:88-91` 一致（`_percentile_rank(df["macd"], macd_current, 252) * 100`）。注：代码中 `macd = (dif - dea) * 2`（`indicators.py:46`，乘 2 对齐富途显示口径），但百分位排名与倍数无关，结果不受影响。
 
 | MACD 柱状图分位数 | 评分 | 含义 |
 |------------------|------|------|
@@ -188,17 +203,23 @@ BB_score = clamp(%B × 100,  0,  100)
 | 0.8 | 80 | 接近上轨 |
 | ≥ 1.0 | 100 | 价格突破上轨，极度超买 |
 
+> 核对：与 `market_scorer.py:99-100` 一致（`pct_b` 由存储列 `boll_upper/boll_lower` 计算，`bb_score = _clamp(pct_b * 100)`）。
+
 #### 4.1.4 日线技术面综合评分
 
 ```
 daily_tech_score = (SPY_RSI + QQQ_RSI + SPY_MACD + QQQ_MACD + SPY_BB + QQQ_BB) / 6
 ```
 
+> 核对：与 `market_scorer.py:70-106` 一致（6 项算术平均）。
+
 ---
 
-### 4.2 周线技术面维度（权重 15%）
+### 4.2 周线技术面维度（权重 35%）
 
-对 **SPY** 和 **QQQ** 的**周线 K 线**分别计算 RSI 和 MACD，共 4 个评分，取算术平均。
+对 **SPY** 和 **QQQ** 的**周线 K 线**分别计算 RSI、MACD 和 BOLL，共 6 个评分，取算术平均。
+
+> 已更新：原为「权重 15%、RSI + MACD 共 4 项」；现为「权重 35%、RSI + MACD + BOLL 共 6 项」。证据：`config.py:199` `"weekly_tech": 0.35`；`market_scorer.py:112-148`（周线含 `Weekly_BB` 子项）。
 
 > **数据需求**：需要约 60 根周 K 线（≈ 1.2 年），Futu API 获取方式：
 > ```bash
@@ -206,23 +227,27 @@ daily_tech_score = (SPY_RSI + QQQ_RSI + SPY_MACD + QQQ_MACD + SPY_BB + QQQ_BB) /
 > python scripts/quote/get_kline.py US.QQQ --ktype 1w --num 60 --json
 > ```
 
-#### 4.2.1 周线 RSI(14) 评分
+#### 4.2.1 周线 RSI(6) 分档评分
 
-**映射公式**（与日线相同）：
+**参数**：周期 = 6（周线同样使用 `rsi6` 列）
+
+**映射公式**（与日线相同，分档制）：
 
 ```
-Weekly_RSI_score = clamp((Weekly_RSI - 20) / 60 × 100,  0,  100)
+Weekly_RSI_score = clamp(floor(Weekly_RSI / 10) × 10,  0,  100)
 ```
 
 | 周线 RSI 值 | 评分 | 市场状态 |
 |------------|------|---------|
-| ≤ 20 | 0 | 极度超卖（2008/2020级别，非常罕见） |
-| 30 | 17 | 周级别超卖，大级别底部信号 |
-| 40 | 33 | 偏弱 |
-| 50 | 50 | 中性 |
-| 60 | 67 | 偏强 |
-| 70 | 83 | 周级别超买 |
-| ≥ 80 | 100 | 极度超买（牛市末期） |
+| < 10 | 0 | 极度超卖（罕见，非常极端） |
+| 20 ~ 29 | 20 | 周级别超卖，大级别底部信号 |
+| 40 ~ 49 | 40 | 偏弱 |
+| 50 ~ 59 | 50 | 中性 |
+| 60 ~ 69 | 60 | 偏强 |
+| 70 ~ 79 | 70 | 周级别超买 |
+| ≥ 90 | 90 | 极度超买（牛市末期） |
+
+> 已更新：原为「周线 RSI(14) + 线性映射」；现为「RSI(6) + 分档映射」，与日线同一函数（`market_scorer.py:122-124`）。
 
 > **周线 RSI vs 日线 RSI 的区别**：宽指 ETF 周线 RSI 极少低于 30（只在 2008、2011、2020、2022 出现过），一旦到 30 以下基本是大级别底部区域。日线 RSI 到 30 则较常见，可能只是正常回调。
 
@@ -234,17 +259,34 @@ Weekly_RSI_score = clamp((Weekly_RSI - 20) / 60 × 100,  0,  100)
 Weekly_MACD_score = percentile_rank(weekly_histogram, lookback=52) × 100
 ```
 
-#### 4.2.3 周线技术面综合评分
+> 核对：与 `market_scorer.py:129-133` 一致。
+
+#### 4.2.3 周线布林带 %B 评分
+
+**参数**：周期 = 20 周，标准差倍数 = 2
+
+**映射公式**（与日线相同）：
 
 ```
-weekly_tech_score = (SPY_Weekly_RSI + QQQ_Weekly_RSI + SPY_Weekly_MACD + QQQ_Weekly_MACD) / 4
+Weekly_BB_score = clamp(Weekly_%B × 100,  0,  100)
 ```
 
-> **为什么周线不加布林带？** 周线布林带需要 20 根周 K 才开始稳定，数据点较少时噪音大。RSI + MACD 已足够判断周级别的超买超卖和动能方向。
+> 已新增：原设计「周线不加布林带」，现代码已加入周线 %B 子项（`market_scorer.py:137-145`）。周线与日线共用存储列 `boll_upper/boll_lower`（周线由 `WEEKLY_INDICATOR_CONFIG` 计算，见 `config.py:132`）。
+
+#### 4.2.4 周线技术面综合评分
+
+```
+weekly_tech_score = (SPY_Weekly_RSI + QQQ_Weekly_RSI + SPY_Weekly_MACD
+                   + QQQ_Weekly_MACD + SPY_Weekly_BB + QQQ_Weekly_BB) / 6
+```
+
+> 核对：与 `market_scorer.py:112-148` 一致（6 项算术平均）。
 
 ---
 
 ### 4.3 波动率维度（权重 25%）
+
+> ⚠️ **状态：设计构想，代码中未实现**（截至 2026-10-12 在 `market_scorer.py` / `config.py` 中未找到对应实现。VIX 不参与市场温度评分——`config.py:191-193`「VIX 期货由用户肉眼观察，不纳入算法」；`market_scorer.py:354` 中 `vol_score` 恒为 `None`）。本节数值为 v1.0 设计口径，保留备查。
 
 VIX 与恐慌正相关——**反向映射**：VIX 越高 → 评分越低 → 应加仓。
 
@@ -322,17 +364,20 @@ score_52w = clamp(pos_52w × 100,  0,  100)
 **映射公式**：
 
 ```
-drawdown = (ATH - Price) / ATH           # 0 表示在ATH，0.2 表示回撤 20%
-ATH_score = clamp((1 - drawdown / 0.20) × 100,  0,  100)
+drawdown = (ATH - Price) / ATH           # 0 表示在ATH，0.15 表示回撤 15%
+ATH_score = clamp((1 - drawdown / 0.15) × 100,  0,  100)
 ```
 
 | 距 ATH 回撤幅度 | 评分 | 含义 |
 |----------------|------|------|
 | 0%（创新高） | 100 | 价格在历史最高，可能过热 |
-| -5% | 75 | 小幅回调 |
-| -10% | 50 | 技术性回调 |
-| -15% | 25 | 较深回调 |
-| ≥ -20% | 0 | 进入技术性熊市区间 |
+| -3.75% | 75 | 小幅回调 |
+| -7.5% | 50 | 技术性回调 |
+| -11.25% | 25 | 较深回调 |
+| ≥ -15% | 0 | 进入技术性熊市区间 |
+
+> 已更新：零分线原为回撤 20%，现为 **15%**。证据：`market_scorer.py:180-182` `ath = df["high"].max(); ath_score = _clamp((1 - drawdown / 0.15) * 100)`（大盘回撤 15% 即视为极端恐慌）。注：代码 ATH 取**全部已入库 K 线**的 `high` 最大值（非固定 5 年窗口）。
+> 单资产（黄金/比特币）零分线不同，见第 4.7 节。
 
 > **ATH 数据获取**：Futu 快照不直接提供 ATH，可通过拉取较长历史 K 线（如 5 年日 K）取最高收盘价计算：
 > ```bash
@@ -345,16 +390,19 @@ ATH_score = clamp((1 - drawdown / 0.20) × 100,  0,  100)
 
 ```
 MA200_dev = (Price - MA200) / MA200
-MA200_score = clamp((MA200_dev + 0.20) / 0.40 × 100,  0,  100)
+MA200_score = clamp((MA200_dev + 0.15) / 0.30 × 100,  0,  100)
 ```
 
 | MA200 偏离度 | 评分 | 含义 |
 |-------------|------|------|
-| ≤ -20% | 0 | 极度偏离均线下方（恐慌性超跌，均值回归动能强） |
-| -10% | 25 | 显著低于均线 |
+| ≤ -15% | 0 | 极度偏离均线下方（恐慌性超跌，均值回归动能强） |
+| -7.5% | 25 | 显著低于均线 |
 | 0%（在MA200上） | 50 | 中性 |
-| +10% | 75 | 显著高于均线 |
-| ≥ +20% | 100 | 极度偏离均线上方（过热，回归压力大） |
+| +7.5% | 75 | 显著高于均线 |
+| ≥ +15% | 100 | 极度偏离均线上方（过热，回归压力大） |
+
+> 已更新：映射区间原为 `[-20%, +20%]`（跨度 0.40），现为 **`[-15%, +15%]`（跨度 0.30）**。证据：`market_scorer.py:196` `ma200_score = _clamp((deviation + 0.15) / 0.30 * 100)`。
+> 单资产（黄金/比特币）映射区间不同，见第 4.7 节。
 
 > **为什么加 MA200 偏离度？** 52 周位置和 ATH 回撤只告诉你"从高点跌了多少"，但不能区分"均线本身也在下行（趋势破坏）"vs"价格急跌远离均线（超跌反弹概率高）"。偏离度捕捉的是均值回归的弹性空间。
 
@@ -364,9 +412,13 @@ MA200_score = clamp((MA200_dev + 0.20) / 0.40 × 100,  0,  100)
 price_score = (SPY_52w + QQQ_52w + SPY_ATH + QQQ_ATH + SPY_MA200 + QQQ_MA200) / 6
 ```
 
+> 核对：与 `market_scorer.py:154-202` 一致（52 周位置取近 252 根的 high/low，6 项算术平均）。
+
 ---
 
 ### 4.5 量能确认维度（权重 8%）
+
+> ⚠️ **状态：设计构想，代码中未实现**（截至 2026-10-12 在 `market_scorer.py` / `config.py` 中未找到对应实现。`market_scorer.py:356` 中 `volume_score` 恒为 `None`）。本节阈值/分档为 v1.0 设计口径，保留备查。
 
 成交量是判断底部的重要辅助信号。恐慌性放量通常标志情绪宣泄完毕（卖盘枯竭），而持续缩量阴跌说明卖压尚未释放。
 
@@ -458,6 +510,8 @@ volume_score = (SPY_vol_ratio + QQQ_vol_ratio + SPY_vol_trend + QQQ_vol_trend) /
 
 ### 4.6 避险信号维度（权重 7%）
 
+> ⚠️ **状态：设计构想，代码中未实现**（截至 2026-10-12 在 `market_scorer.py` / `config.py` 中未找到对应实现。GLD 已不再作为市场温度的避险子维度，`market_scorer.py:357` 中 `safe_haven_score` 恒为 `None`）。GLD 现改为**独立的单资产温度**（见第 4.7 节，取值为绝对的黄金自身冷热，而非对权益市场的反向映射）。本节为 v1.0 设计口径，保留备查。
+
 GLD 上涨通常反映避险需求上升，与权益市场恐慌正相关。因此 GLD 的技术指标采用**反向映射**：GLD 越强（RSI高/MACD强/突破上轨）→ 评分越低 → 意味着权益市场偏冷 → 应加仓权益。
 
 #### 4.6.1 GLD RSI(14) 反向评分
@@ -492,7 +546,25 @@ GLD_BB_score = clamp((1 - GLD_%B) × 100,  0,  100)
 safe_haven_score = (GLD_RSI_score + GLD_MACD_score + GLD_BB_score) / 3
 ```
 
-> **局限性说明**：GLD 受黄金供需、美元指数、实际利率、央行购金等多因素影响，并非纯粹的避险指标。权重设为 10% 正是为了限制其影响，仅作为情绪验证的辅助信号。当 GLD 走势与 SPY/QQQ 出现异常同向时，参见第 7 节特殊情况处理。
+> **局限性说明**：GLD 受黄金供需、美元指数、实际利率、央行购金等多因素影响，并非纯粹的避险指标。（本节已随维度移除而废弃，见上方状态标注。）
+
+---
+
+### 4.7 单资产温度（黄金 / 比特币）
+
+> ✅ 已实现（截至 2026-10-12）。原文档未描述单资产温度，此处据 `market_scorer.py:compute_asset_temperature` 补充。
+
+单资产温度复用三维度框架（日线技术面 50% + 周线技术面 35% + 价格位置 15%），但**阈值按资产波动特性独立校准**：
+
+| 资产 | key | 代码 | ATH 回撤零分线 | MA200 偏离映射区间 |
+|------|-----|------|---------------|-------------------|
+| 黄金 | `GLD` | `US.GLD` | 25% | ±20% |
+| 比特币 | `BTC` | `US.IBIT` | 50% | ±60% |
+
+- 黄金：`ath_drawdown_zero = 0.25`、`ma200_range = 0.20`（黄金正常回调幅度较大）——`market_scorer.py:400-406`
+- 比特币：`ath_drawdown_zero = 0.50`、`ma200_range = 0.60`（BTC 腰斩为常态）——`market_scorer.py:407-414`。注：IBIT 上市于 2024 年初，历史样本有限，百分位置信度较低。
+- 与大盘温度不同，单资产**没有极端层判定、没有仓位映射**，只输出评分（0~100）与状态文案；RSI 同样使用 `rsi6` 分档（`market_scorer.py:418-475`）。
+- 入口：`GET /api/market-temperature`（响应附加 `gld_temp` / `btc_temp`）、`GET /api/asset-temperature/history?asset=GLD|BTC`（`api_server.py:444-466`）。
 
 ---
 
@@ -505,6 +577,8 @@ composite = daily_tech_score × 0.50
           + weekly_tech_score × 0.35
           + price_score       × 0.15
 ```
+
+> 核对：与 `market_scorer.py:258-262` 一致（三维度加权，权重取自 `config.py:196-200`）。
 
 ### 5.2 仓位映射公式（三层）
 
@@ -531,6 +605,8 @@ target_position(%) = 100 + (15 - composite) × (20 / 15)
 钳位 [100%, 120%]
 ```
 
+> 核对：三段映射与 `market_scorer.py:279-287` 逐字一致（`heavy_extreme` / `light_extreme` / 正常区）。极端条件中 RSI 为 **RSI(6)**（`market_scorer.py:265-266` 取 `rsi6`）。
+
 | 综合评分 | 市场状态 | 目标仓位 | 操作建议 |
 |---------|---------|---------|---------|
 | 0 ~ 15 | 重度极端（RSI达标） | 100% ~ 120% | 融资 + 期权超配 |
@@ -538,9 +614,11 @@ target_position(%) = 100 + (15 - composite) × (20 / 15)
 | 25 ~ 40 | 偏悲观 | 74% ~ 85% | 积极加仓 |
 | 40 ~ 55 | 略偏冷 | 63% ~ 74% | 适度加仓 |
 | 55 ~ 65 | 中性 | 56% ~ 63% | 维持仓位 |
-| 65 ~ 80 | 略偏热 | 41% ~ 56% | 适度减仓 |
-| 80 ~ 90 | 偏贪婪 | 34% ~ 41% | 积极减仓 |
-| 90 ~ 100 | 极度贪婪 | 30% ~ 34% | 减至底仓 |
+| 65 ~ 80 | 略偏热 | 45% ~ 56% | 适度减仓 |
+| 80 ~ 90 | 偏贪婪 | 37% ~ 45% | 积极减仓 |
+| 90 ~ 100 | 极度贪婪 | 30% ~ 37% | 减至底仓 |
+
+> 已更新：65~80 / 80~90 / 90~100 三档目标仓位原为「41%~56% / 34%~41% / 30%~34%」，按当前映射公式 `85 - (composite-25) × (55/75)` 重算为「45%~56% / 37%~45% / 30%~37%」（原值系旧映射口径遗留）。
 
 ### 5.3 极端层触发条件（两级）
 
@@ -558,6 +636,8 @@ target_position(%) = 100 + (15 - composite) × (20 / 15)
 | 2 | SPY **周线** RSI(6) < 30 | 周级别超卖确认，非日内噪音 |
 | 3 | SPY **日线** RSI(6) < 30 | 日级别深度超卖 |
 
+> 核对：与 `market_scorer.py:269-273` 一致（`heavy_extreme = composite <= 15 and spy_daily_rsi < 30 and spy_weekly_rsi < 30`，RSI 取 `rsi6`）。**注意：代码中重度极端不再要求 VIX 条件**（旧 v1.0 曾含 `vix_current > 35`，现已移除）。
+
 **极端层内部分级：**
 
 | 仓位目标 | 层级 | 执行工具 |
@@ -572,7 +652,7 @@ target_position(%) = 100 + (15 - composite) × (20 / 15)
 
 | 信号 | 定义 | 确认含义 |
 |------|------|---------|
-| RSI 底背离 | 价格创新低，但日线 RSI(14) 未创新低 | 下跌动能衰竭，底部概率高 |
+| RSI 底背离 | 价格创新低，但日线 RSI(6) 未创新低 | 下跌动能衰竭，底部概率高 |
 | MACD 零轴下金叉 | DIF 在零轴以下上穿 DEA | 短期反转动能启动 |
 | 布林带收口 | 布林带宽度（bandwidth）从极端扩张开始收窄 | 波动率从恐慌回归正常 |
 | 恐慌放量后缩量 | 某日量比>2.5 暴跌后，后续 2~3 日量比回落至<1.0 | 卖盘枯竭，恐慌情绪释放完毕 |
@@ -665,11 +745,13 @@ target_position(%) = 100 + (15 - composite) × (20 / 15)
 
 | 限制 | 值 | 理由 |
 |------|------|------|
-| 最低仓位 | **10%** | 保留底仓防踏空 |
-| 常规最高仓位 | **90%** | 保留现金作安全垫和加仓弹药 |
+| 最低仓位 | **30%** | 保留底仓防踏空（正常区映射下限，`market_scorer.py:287` 钳位 `[30, 85]`） |
+| 常规最高仓位 | **85%** | 保留现金作安全垫和加仓弹药（正常区映射上限） |
 | 杠杆区最高仓位 | **120%** | 需满足极端触发条件（见 5.3 节） |
 | 融资上限 | 净值 **30%** | 控制爆仓风险 |
 | 期权上限 | 净值 **10%**（权利金） | 亏损封顶 |
+
+> 已更新：最低仓位原为 10%，现为 **30%**（与代码映射下限一致）；常规最高仓位原为 90%，现为 **85%**（正常区映射上限；>90% 已是轻度极端区）。
 
 ---
 
@@ -678,6 +760,8 @@ target_position(%) = 100 + (15 - composite) × (20 / 15)
 ### 7.1 数据缺失
 
 某个指标数据获取失败时，该指标评分设为 **50（中性）**，权重不变。
+
+> 核对：与 `market_scorer.py:210-219` `_safe_score` 一致（维度计算异常时返回 `NEUTRAL_SCORE = 50`，见 `market_scorer.py:34`）。
 
 ```
 例：VIX 数据获取失败
@@ -688,12 +772,16 @@ target_position(%) = 100 + (15 - composite) × (20 / 15)
 
 ### 7.2 极端行情加速规则
 
+> ⚠️ **状态：设计构想，代码中未实现**（截至 2026-10-12 在 `market_scorer.py` / `allocation.py` 中未找到自动调仓/分批限制逻辑，本节为人工执行规则）。
+
 | 触发条件 | 特殊规则 |
 |---------|---------|
 | SPY 或 QQQ 单日暴跌 > 5% | 忽略冷却期 + 单次调仓上限放宽至 **25%** |
 | 综合评分 < 10 持续 3 天以上 | 可一次性调仓至目标仓位（忽略分批限制） |
 
 ### 7.3 GLD 与 SPY/QQQ 同向异常
+
+> ⚠️ **状态：设计构想，代码中未实现**（截至 2026-10-12 在 `market_scorer.py` / `config.py` 中未找到对应实现。GLD 已移出市场温度评分，不存在「避险权重减半」的实现）。
 
 | 场景 | 处理 |
 |------|------|
@@ -712,6 +800,18 @@ target_position(%) = 100 + (15 - composite) × (20 / 15)
 ---
 
 ## 8. 指标计算代码参考
+
+> ⚠️ **状态：v1.0 参考实现，与当前代码不一致。** 本节为文档最初附带的示例代码，**并非项目实际运行的代码**。当前实现位于 `market_scorer.py` + `indicators.py`，主要差异如下（详见各小节标注）：
+>
+> | 项 | 本节示例（v1.0） | 当前实现 |
+> |----|------------------|---------|
+> | 评分维度 | 六维度 30/15/25/15/8/7 | 三维度 50/35/15 |
+> | RSI | `calc_rsi(period=14)`，线性映射 `(RSI-20)/60×100` | `rsi6`（周期 6），分档映射 `int(rsi/10)*10` |
+> | 周线技术面 | RSI + MACD（4 项） | RSI + MACD + BB（6 项） |
+> | ATH 零分线 | 20% | 15% |
+> | MA200 映射区间 | ±20%（跨度 0.40） | ±15%（跨度 0.30） |
+> | 仓位映射 | 两段（`90-c×0.8` / `90+(15-c)×2`） | 三段（正常区 / 轻度极端 / 重度极端） |
+> | 极端条件 | `composite<=15 and spy_rsi<25 and weekly_rsi<30 and vix>35` | `composite<=15 and spy_daily_rsi<30 and spy_weekly_rsi<30`（无 VIX） |
 
 ### 8.1 RSI 计算
 
@@ -772,11 +872,15 @@ def calc_ma200_deviation(closes: pd.Series) -> float:
     return (current_price - ma200) / ma200
 
 def score_ma200_deviation(deviation: float) -> float:
-    """MA200偏离度映射到评分 (偏离 -20%→0分, 0%→50分, +20%→100分)"""
-    return clamp((deviation + 0.20) / 0.40 * 100)
+    """MA200偏离度映射到评分 (偏离 -15%→0分, 0%→50分, +15%→100分)"""
+    return clamp((deviation + 0.15) / 0.30 * 100)
 ```
 
+> 已更新：映射区间原为 `±20% / 0.40`，现为 `±15% / 0.30`（`market_scorer.py:196`）。
+
 ### 8.6 量能评分计算
+
+> ⚠️ **状态：设计构想，代码中未实现**（量能维度已从市场温度评分移除，见 4.5 节）。
 
 ```python
 def calc_volume_score(closes: pd.Series, volumes: pd.Series) -> dict:
@@ -865,11 +969,12 @@ def calc_composite_score(spy_closes, qqq_closes, gld_closes, vix_closes,
     - vix_current: VIX 当前值
     """
 
-    # === 日线技术面 (30%) ===
+    # === 日线技术面 (50%) ===   # 已更新：原 30%
+    # 已更新：实际用 rsi6 与分档映射 int(rsi/10)*10；下方线性映射为 v1.0 旧口径
     spy_rsi = calc_rsi(spy_closes).iloc[-1]
     qqq_rsi = calc_rsi(qqq_closes).iloc[-1]
-    spy_rsi_score = clamp((spy_rsi - 20) / 60 * 100)
-    qqq_rsi_score = clamp((qqq_rsi - 20) / 60 * 100)
+    spy_rsi_score = clamp(int(spy_rsi / 10) * 10)   # 旧：clamp((spy_rsi - 20) / 60 * 100)
+    qqq_rsi_score = clamp(int(qqq_rsi / 10) * 10)   # 旧：clamp((qqq_rsi - 20) / 60 * 100)
 
     _, _, spy_hist = calc_macd(spy_closes)
     _, _, qqq_hist = calc_macd(qqq_closes)
@@ -884,7 +989,7 @@ def calc_composite_score(spy_closes, qqq_closes, gld_closes, vix_closes,
     daily_tech_score = (spy_rsi_score + qqq_rsi_score + spy_macd_score +
                         qqq_macd_score + spy_bb_score + qqq_bb_score) / 6
 
-    # === 周线技术面 (15%) ===
+    # === 周线技术面 (35%) ===   # 已更新：原 15%（且现含周线 BB，共 6 项）
     spy_weekly_rsi = calc_rsi(spy_weekly_closes).iloc[-1]
     qqq_weekly_rsi = calc_rsi(qqq_weekly_closes).iloc[-1]
     spy_weekly_rsi_score = clamp((spy_weekly_rsi - 20) / 60 * 100)
@@ -908,8 +1013,8 @@ def calc_composite_score(spy_closes, qqq_closes, gld_closes, vix_closes,
     qqq_52w_score = clamp((qqq_price - qqq_52w_low) / (qqq_52w_high - qqq_52w_low) * 100)
     spy_dd = (spy_ath - spy_price) / spy_ath
     qqq_dd = (qqq_ath - qqq_price) / qqq_ath
-    spy_ath_score = clamp((1 - spy_dd / 0.20) * 100)
-    qqq_ath_score = clamp((1 - qqq_dd / 0.20) * 100)
+    spy_ath_score = clamp((1 - spy_dd / 0.15) * 100)   # 已更新：零分线 20% → 15%
+    qqq_ath_score = clamp((1 - qqq_dd / 0.15) * 100)
     spy_ma200_dev = calc_ma200_deviation(spy_closes)
     qqq_ma200_dev = calc_ma200_deviation(qqq_closes)
     spy_ma200_score = score_ma200_deviation(spy_ma200_dev)
@@ -933,23 +1038,23 @@ def calc_composite_score(spy_closes, qqq_closes, gld_closes, vix_closes,
     safe_haven_score = (gld_rsi_score + gld_macd_score + gld_bb_score) / 3
 
     # === 综合 ===
-    composite = (daily_tech_score * 0.30 + weekly_tech_score * 0.15 +
-                 vol_score * 0.25 + price_score * 0.15 +
-                 volume_score * 0.08 + safe_haven_score * 0.07)
+    # 已更新：当前为三维度加权（与 market_scorer.py:258-262 一致）
+    composite = (daily_tech_score * 0.50 + weekly_tech_score * 0.35 +
+                 price_score * 0.15)
 
-    # === 极端层判断 ===
-    extreme_triggered = (
-        composite <= 15
-        and spy_rsi < 25
-        and spy_weekly_rsi < 30
-        and vix_current > 35
-    )
+    # === 极端层判断（两级）===
+    # 已更新：heavy 不再要求 VIX；RSI 阈值为 30（market_scorer.py:269-276）
+    heavy_extreme = (composite <= 15 and spy_rsi < 30 and spy_weekly_rsi < 30)
+    light_extreme = composite <= 25 and not heavy_extreme
+    extreme_triggered = heavy_extreme or light_extreme
 
-    if extreme_triggered:
-        # 极端公式：90 + (15 - composite) × 2，钳位 [90, 120]
-        target_position = clamp(90 + (15 - composite) * 2, 90, 120)
+    # 已更新：三段映射（market_scorer.py:279-287）
+    if heavy_extreme:
+        target_position = clamp(100 + (15 - composite) * (20.0 / 15), 100, 120)
+    elif light_extreme:
+        target_position = clamp(85 + (25 - composite) * (15.0 / 10), 85, 100)
     else:
-        target_position = clamp(90 - composite * 0.8, 10, 90)
+        target_position = clamp(85 - (composite - 25) * (55.0 / 75), 30, 85)
 
     # === 杠杆工具建议 ===
     leverage_tool = 'none'
@@ -1016,6 +1121,8 @@ def calc_composite_score(spy_closes, qqq_closes, gld_closes, vix_closes,
 ---
 
 ## 9. 历史场景回测验证
+
+> ⚠️ **状态：示例基于 v1.0 旧口径，与当前实现不一致。** 本节各例的「综合评分」均按**四维权重 `技术面×0.4 + 波动率×0.3 + 价格位置×0.2 + 避险×0.1`** 与旧仓位公式 `90 - composite×0.8` 计算，且 RSI 用 RSI(14)。当前实现为**三维度 50/35/15** + 三段映射（见第 5 节），维度名称与权重均已变化。以下数值仅作历史量级参考，**不可直接与现行系统输出比较**。
 
 以下为关键历史时刻的指标近似值和策略建议，用于验证评分逻辑的合理性。
 
@@ -1128,16 +1235,17 @@ def calc_composite_score(spy_closes, qqq_closes, gld_closes, vix_closes,
 | 避险 | GLD MACD(inv) | | |
 | 避险 | GLD BB(inv) | | |
 
+> ⚠️ **注**：上表中「波动率 / 量能 / 避险」三类子指标已不再参与市场温度评分（见 4.3 / 4.5 / 4.6 节），仅保留供人工记录参考。RSI 实际口径为 **RSI(6)** 分档（见 4.1.1），非 RSI(14)。
+
 ### 评分汇总
 | 维度 | 评分 | 权重 | 加权 |
 |------|------|------|------|
-| 日线技术面 | | 30% | |
-| 周线技术面 | | 15% | |
-| 波动率 | | 25% | |
+| 日线技术面 | | 50% | |
+| 周线技术面 | | 35% | |
 | 价格位置 | | 15% | |
-| 量能确认 | | 8% | |
-| 避险信号 | | 7% | |
 | **综合** | **__** | | |
+
+> 已更新：原为六维度 30/15/25/15/8/7，现为三维度 50/35/15（`config.py:196-200`）。
 
 ### 仓位决策
 - 目标仓位：___%
@@ -1161,17 +1269,18 @@ def calc_composite_score(spy_closes, qqq_closes, gld_closes, vix_closes,
 
 | 参数 | 当前值 | 调优方向 | 说明 |
 |------|--------|---------|------|
-| 日线 RSI 映射区间 | [20, 80] | 可收窄至 [25, 75] | 收窄后更敏感，扩宽后更保守 |
+| 日线/周线 RSI 周期 | 6（`rsi6`） | 可改为 12 / 24 | `config.py:120,130` `"rsi": [6, 12, 24]`，代码取 `rsi6` |
+| RSI 评分档宽 | 每 10 点一档 | 可改为 5 点/20 点一档 | `market_scorer.py:82` `int(rsi/10)*10` |
 | 日线 MACD 回溯天数 | 252 | 可缩至 126（半年） | 短回溯更灵敏，长回溯更稳定 |
 | 周线 MACD 回溯 | 52 根周K | 可调为 40~60 | 周线数据点少，不宜过短 |
-| VIX 映射区间 | [12, 40] | 可调为 [13, 35] | 根据近年 VIX 中枢调整 |
-| ATH 回撤满分线 | -20% | 可调为 -15% 或 -25% | 更保守则用 -25%（更大回撤才满分加仓） |
-| MA200 偏离度映射区间 | [-20%, +20%] | 可调为 [-15%, +15%] | 收窄后对偏离更敏感 |
-| 量比恐慌阈值 | 2.5 | 可调为 2.0~3.0 | 不同标的波动特性不同 |
-| 维度权重 | 30/15/25/15/8/7 | 根据回测效果微调 | 总和保持 100% |
-| 单次调仓上限 | 15% | 可调为 10%~20% | 保守者用 10%，激进者用 20% |
-| 冷却期 | 3 交易日 | 可调为 2~5 天 | 越短越灵敏，越长越稳定 |
-| 常规仓位上下限 | [10%, 90%] | 可调为 [15%, 85%] | 更保守的选择 |
+| ~~VIX 映射区间~~ | ~~[12, 40]~~ | ❌ 未实现 | VIX 未参与评分（见 4.3 节） |
+| ATH 回撤零分线 | -15% | 可调为 -10% 或 -20% | `market_scorer.py:182`（大盘）；黄金 25% / BTC 50% |
+| MA200 偏离度映射区间 | [-15%, +15%] | 可调为 [-20%, +20%] | `market_scorer.py:196`（大盘）；黄金 ±20% / BTC ±60% |
+| ~~量比恐慌阈值~~ | ~~2.5~~ | ❌ 未实现 | 量能维度未参与评分（见 4.5 节） |
+| 维度权重 | 50/35/15 | 根据回测效果微调 | 总和保持 100% |
+| 单次调仓上限 | 15% | 可调为 10%~20% | 保守者用 10%，激进者用 20%（人工规则，代码未实现） |
+| 冷却期 | 3 交易日 | 可调为 2~5 天 | 越短越灵敏，越长越稳定（人工规则，代码未实现） |
+| 常规仓位上下限 | [30%, 85%] | 可调为 [40%, 80%] | 更保守的选择（`market_scorer.py:287`） |
 | 极端层仓位上限 | 120% | 可调为 100%~130% | 取决于融资成本和风险承受力 |
 
 ---
@@ -1258,7 +1367,7 @@ CREATE TABLE market_score (
     extreme_triggered INTEGER DEFAULT 0,    -- 是否触发极端层 0/1
     leverage_tool TEXT DEFAULT 'none',      -- 'none' / 'margin' / 'margin + OTM_call'
 
-    -- 六维度评分
+    -- 评分维度（现为三维度；vol/volume/safe_haven 恒为 NULL）
     daily_tech_score REAL,
     weekly_tech_score REAL,
     vol_score REAL,
@@ -1292,39 +1401,37 @@ CREATE TABLE market_score_detail (
 );
 ```
 
+> 核对：表结构与 `storage.py:69-102` 完全一致。**但注意字段口径变化**：由于市场温度已简化为三维度，`vol_score` / `volume_score` / `safe_haven_score` / `gld_price` / `vix_value` 五个字段现恒写入 `NULL`（`market_scorer.py:354-361`）；另新增的 `extreme_level`（`"none"/"light"/"heavy"`）字段**未落库**，仅在 API 内存返回（`market_scorer.py:345`）。
+
 ### C.3 后端 API 接口
 
 #### GET /api/market-temperature
 
 返回最新一期的市场温度评分，供首页展示。
 
-**Response:**
+**Response（示意；实际返回为 `market_score` 表行 + `detail` 明细，另附加 `gld_temp` / `btc_temp`）：**
 
 ```json
 {
   "date": "2026-04-30",
-  "update_time": "2026-04-30 04:15:00",
   "composite_score": 42.3,
-  "target_position_pct": 56.2,
+  "target_position_pct": 72.3,
   "extreme_triggered": false,
   "leverage_tool": "none",
   "market_status": "略偏冷",
   "action_suggestion": "适度加仓",
+  "extreme_level": "none",
   "dimensions": [
-    {"key": "daily_tech", "label": "日线技术面", "score": 38.5, "weight": 0.30},
-    {"key": "weekly_tech", "label": "周线技术面", "score": 45.2, "weight": 0.15},
-    {"key": "volatility", "label": "波动率", "score": 52.1, "weight": 0.25},
-    {"key": "price_position", "label": "价格位置", "score": 35.8, "weight": 0.15},
-    {"key": "volume", "label": "量能确认", "score": 44.0, "weight": 0.08},
-    {"key": "safe_haven", "label": "避险信号", "score": 55.3, "weight": 0.07}
+    {"key": "daily_tech", "label": "日线技术面", "score": 38.5, "weight": 0.50},
+    {"key": "weekly_tech", "label": "周线技术面", "score": 45.2, "weight": 0.35},
+    {"key": "price_position", "label": "价格位置", "score": 35.8, "weight": 0.15}
   ],
   "indicators": {
     "SPY": {
-      "price": 5320.50,
+      "price": 532.50,
       "daily_rsi": 45.2,
       "weekly_rsi": 52.1,
       "ma200_dev": -0.031,
-      "ma200_dev_pct": "-3.1%",
       "vol_ratio": 1.2,
       "bb_pct_b": 0.42
     },
@@ -1333,22 +1440,16 @@ CREATE TABLE market_score_detail (
       "daily_rsi": 42.8,
       "weekly_rsi": 48.5,
       "ma200_dev": -0.052,
-      "ma200_dev_pct": "-5.2%",
       "vol_ratio": 0.9,
       "bb_pct_b": 0.38
-    },
-    "GLD": {
-      "price": 312.50,
-      "daily_rsi": 62.3
-    },
-    "VIX": {
-      "value": 22.5,
-      "percentile_rank": 0.65,
-      "abs_score": 62.5
     }
-  }
+  },
+  "gld_temp": {"label": "黄金", "composite_score": 61.4, "market_status": "略偏热"},
+  "btc_temp": {"label": "比特币 (IBIT)", "composite_score": 55.0, "market_status": "中性"}
 }
 ```
+
+> 已更新：原示例含六维度（含 volatility/volume/safe_haven）、`GLD`/`VIX` 指标块，且 `target_position_pct: 56.2`；现改为三维度，并按当前映射 `85 - (42.3-25) × (55/75) = 72.3` 修正目标仓位。注：`dimensions` / `market_status` / `action_suggestion` / `indicators` 由 `market_scorer._compute_score` 组装（`market_scorer.py:303-333`），**但 `GET /api/market-temperature` 直接返回 `storage.query_latest_market_score()` 的库表行 + `detail`**（`api_server.py:438-446`），上述数组字段是否透出取决于部署的前端；以实际接口返回为准。
 
 #### GET /api/market-temperature/history?days=30
 
@@ -1357,8 +1458,8 @@ CREATE TABLE market_score_detail (
 ```json
 {
   "history": [
-    {"date": "2026-04-30", "composite_score": 42.3, "target_position_pct": 56.2},
-    {"date": "2026-04-29", "composite_score": 44.1, "target_position_pct": 54.7},
+    {"date": "2026-04-30", "composite_score": 42.3, "target_position_pct": 72.3},
+    {"date": "2026-04-29", "composite_score": 44.1, "target_position_pct": 71.0},
     ...
   ]
 }
@@ -1443,30 +1544,31 @@ function getDimensionColor(score) {
 │                                                         │
 │  综合评分: ████████░░░░░░░░░░░░  42.3 / 100            │
 │  市场状态: 略偏冷 ❄️                                    │
-│  建议仓位: 56%                                          │
+│  建议仓位: 72%                                          │
 │  操作建议: 适度加仓                                     │
 │                                                         │
 ├─────────────────────────────────────────────────────────┤
 │  维度拆解:                                              │
-│  日线技术面 [30%]  ████████░░░░  38.5                   │
-│  周线技术面 [15%]  █████████░░░  45.2                   │
-│  波动率    [25%]  ██████████░░  52.1                   │
+│  日线技术面 [50%]  ████████░░░░  38.5                   │
+│  周线技术面 [35%]  █████████░░░  45.2                   │
 │  价格位置  [15%]  ███████░░░░░  35.8                   │
-│  量能确认   [8%]  █████████░░░  44.0                   │
-│  避险信号   [7%]  ██████████░░  55.3                   │
 │                                                         │
 ├──────────┬──────────┬──────────────────────────────────┤
-│   SPY    │   QQQ    │   GLD          │   VIX           │
-│  $5,320  │  $438.2  │  $312.5        │   22.5          │
+│   SPY    │   QQQ    │   黄金(GLD)    │   比特币(IBIT)  │
+│  $532.5  │  $438.2  │  $312.5        │   $45.8         │
 │          │          │                │                 │
-│ 日RSI 45 │ 日RSI 43 │  RSI 62        │  分位 65%       │
+│ 日RSI 45 │ 日RSI 43 │  温度 61.4     │   温度 55.0     │
 │ 周RSI 52 │ 周RSI 49 │                │                 │
 │ MA200 -3%│ MA200 -5%│                │                 │
 │ 量比 1.2x│ 量比 0.9x│                │                 │
 └──────────┴──────────┴──────────┴─────┴─────────────────┘
 ```
 
+> 已更新：原模板为六维度 + GLD/VIX 指标列、建议仓位 56%；现改为三维度 + 黄金/比特币单资产温度列、建议仓位 72%（`85 - (42.3-25) × (55/75)`）。
+
 ### C.5 定时任务设计
+
+> ⚠️ **状态：设计构想，代码中未实现**（截至 2026-10-12 全局未找到 APScheduler / `scheduler.py`）。实际日更由 `scripts/daily_sync.bat` 通过系统计划任务触发，依次执行 `python -m trader_analysis update` → `temperature` → `score` → `scan-signals`，并把 `data/indicators.db` scp 到服务器。下方 `scheduler.py` 仅为设计示意。
 
 ```python
 # scheduler.py - 每日收盘后执行
@@ -1502,6 +1604,57 @@ def weekly_review_reminder():
 | 数据缺失处理 | Futu 拉取失败时，对应维度评分设为 50（中性），前端显示"数据待更新" |
 | 非交易日 | 周末/节假日不执行计算，API 返回最近一个交易日的数据 |
 | 首次部署 | 需一次性拉取 260 日K + 60 周K 的历史数据初始化 |
-| ATH 数据 | 首次部署时拉取 5 年日K 计算 ATH，后续每日更新 max(ATH, today_high) |
+| ATH 数据 | ⚠️ 已更新：实际不拉 5 年日K。ATH = **已入库日线**的 `high` 最大值，而 `calculate_market_temperature` 仅读最近 300 根（`market_scorer.py:381` `limit=300`），故 ATH 实为「近约 300 个交易日（~1.2 年）内最高」，并非历史最高。 |
 | 前端缓存 | 评分每天只更新一次，前端可缓存至次日凌晨 |
 | API 限流 | Futu OpenD 有频率限制，批量拉取时每个请求间隔 1 秒 |
+
+---
+
+## 实现现状核对表
+
+> 核对基准：`market_scorer.py` / `config.py` / `storage.py` / `allocation.py` / `api_server.py` / `cli.py`，核对日期 2026-10-12。
+
+| 文档章节 | 策略要素 | 代码现状 | 对应代码位置 |
+|---------|---------|---------|-------------|
+| 3.1 / 5.1 | 三维度权重 50/35/15 | 已实现 ✅ | `config.py:196-200`；`market_scorer.py:258-262` |
+| 3.1 / 4.3 / 4.5 / 4.6 | 波动率/量能/避险维度 | 未实现 ❌（已移除） | `market_scorer.py:231-232,354-357` |
+| 4.1.1 / 4.2.1 | RSI 周期 | 部分实现 ⚠️（用 RSI6，非 RSI14） | `market_scorer.py:81,123`；`config.py:120,130` |
+| 4.1.1 | RSI 评分映射 | 部分实现 ⚠️（分档 `int(rsi/10)*10`，非线性） | `market_scorer.py:82,124` |
+| 4.1.2 | 日线 MACD 百分位 (252) | 已实现 ✅ | `market_scorer.py:88-91` |
+| 4.1.3 | 日线布林 %B | 已实现 ✅ | `market_scorer.py:96-100` |
+| 4.2.2 | 周线 MACD 百分位 (52) | 已实现 ✅ | `market_scorer.py:130-133` |
+| 4.2.3 | 周线布林 %B | 已实现 ✅（文档原写「不加布林带」，已更正） | `market_scorer.py:137-145` |
+| 4.4.1 | 52 周位置 (252 根 high/low) | 已实现 ✅ | `market_scorer.py:166-176` |
+| 4.4.2 | ATH 回撤（零分线 15%） | 已实现 ✅（文档原 20%，已更正） | `market_scorer.py:180-182` |
+| 4.4.3 | MA200 偏离（±15%） | 已实现 ✅（文档原 ±20%，已更正） | `market_scorer.py:187-196` |
+| 4.7 | 单资产温度（GLD/BTC 独立标定） | 已实现 ✅（文档原先缺失，已补） | `market_scorer.py:397-576` |
+| 5.1 | 综合评分公式 | 已实现 ✅ | `market_scorer.py:258-262` |
+| 5.2 | 三段仓位映射 | 已实现 ✅ | `market_scorer.py:279-287` |
+| 5.2 | 映射区间表（65~100 档） | 部分实现 ⚠️（原数值旧映射遗留，已重算） | `market_scorer.py:285-287` |
+| 5.3 | 极端层触发条件（composite≤15 + 日/周 RSI<30） | 已实现 ✅ | `market_scorer.py:269-276` |
+| 5.3 | `leverage_tool` 分级 (margin / margin+OTM_call) | 已实现 ✅ | `market_scorer.py:290-294` |
+| 5.3 / C.2 | `extreme_triggered` 字段 | 已实现 ✅ | `market_scorer.py:344`；`storage.py:74` |
+| — | `extreme_level` 字段 (none/light/heavy) | 已实现 ✅（文档原先缺失，未落库仅内存返回） | `market_scorer.py:297,345` |
+| 5.4 / 5.5 | 底部确认辅助信号 / 杠杆区执行规则 | 未实现 ❌（人工规则） | 未找到 |
+| 6.1~6.3 | 评估节奏 / 调仓幅度 / 冷却期 | 未实现 ❌（人工规则） | 未找到 |
+| 6.4 | 仓位硬限制 | 部分实现 ⚠️（映射下限 30%/上限 85%，其余为人工规则） | `market_scorer.py:287` |
+| 7.1 | 数据缺失 → 中性 50 | 已实现 ✅ | `market_scorer.py:210-219` |
+| 7.2 / 7.3 | 极端加速 / GLD 同向异常 | 未实现 ❌ | 未找到 |
+| 8.1~8.7 | 指标计算参考代码 | 未实现 ❌（仅为 v1.0 示例，非运行代码） | 实际见 `market_scorer.py` / `indicators.py` |
+| 9.1~9.3 | 历史场景回测示例 | 部分实现 ⚠️（示例基于旧四维口径，非当前算法） | 见第 9 节说明 |
+| 10 | 操作记录模板权重表 | 已实现 ✅（已更正为三维度） | — |
+| 11 | 参数调优表 | 部分实现 ⚠️（权重/RSI/ATH/MA200 已更正；VIX/量比行标注未实现） | — |
+| C.2 | `market_score` 表结构 | 已实现 ✅ | `storage.py:69-102` |
+| C.3 | `/api/market-temperature` | 部分实现 ⚠️（返回库表行 + `gld_temp`/`btc_temp`；`dimensions`/`indicators` 由前端决定） | `api_server.py:438-446` |
+| C.3 | `/api/market-temperature/history` | 已实现 ✅ | `api_server.py:449-455` |
+| C.3 | `/api/asset-temperature/history` | 已实现 ✅（文档原先缺失） | `api_server.py:458-466` |
+| C.4.1 | 市场温度状态文案映射 | 已实现 ✅（与代码逐字一致） | `market_scorer.py:23-32` |
+| C.4.2 | 杠杆工具文案映射 | 已实现 ✅ | `market_scorer.py:290-294` |
+| C.5 | APScheduler 定时任务 | 未实现 ❌（实为 `daily_sync.bat`） | `scripts/daily_sync.bat` |
+| — | `trader-analysis temperature` 命令 | 已实现 ✅ | `cli.py:326-356` |
+| — | 加仓建议分级 strong_buy/buy/watch/expensive | 已实现 ✅（配置仓位组合，非市场温度） | `allocation.py:112-179` |
+| — | 目标仓位与实际偏离 + 分批加仓计划 | 已实现 ✅（黄金/比特币现货区间） | `allocation.py:247-358` |
+
+**结论统计**：共 38 项 —— 已实现 ✅ 25 项 / 部分实现 ⚠️ 7 项 / 未实现 ❌ 6 项。
+
+> 说明：`allocation.py` 的「目标仓位 vs 实际偏离 / 加仓建议分级 / 分批加仓」属于**永久投资组合配置**模块，与本文档的「市场温度→权益仓位」是两套独立体系，此处仅作关联登记。

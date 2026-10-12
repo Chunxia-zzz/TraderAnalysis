@@ -196,6 +196,38 @@ Swing Pivot 聚类得出，是双向对称的静态支撑/压力位；利弗莫�
 - 服务器 nginx 配置此前**只存在于服务器上、仓库无记录** → 已在 `README.md` 新增「### 5. Nginx 层」
   章节固化（含回滚方式与验证命令）
 
+### 文档 — 全量代码 ↔ 文档一致性审计（后端 + 前端）
+
+> 范围：后端 13,603 行 Python / 4,521 行文档，前端 8,053 行源码 / 880 行文档，**逐文件通读**。
+> 方法：先建行数基线 → 子代理并行普查 → 高影响项逐条回读源码核验 → 就地修正。
+
+**重大失真（已修正）**
+
+| # | 文档 | 原文 | 代码实况 |
+|---|---|---|---|
+| 1 | `position-sizing-strategy.md` | 市场温度**六维**权重 `30/15/25/15/8/7` | **三维** `50/35/15`（`config.py:196-200`） |
+| 2 | 同上 | 波动率(VIX)/量能/避险(GLD) 三维度有公式与阈值 | **已删除**，对应得分恒为 `NULL`（`market_scorer.py`） |
+| 3 | 同上 | RSI(14) + 线性映射 `(RSI−20)/60×100` | **`rsi6`** + 分档 `int(rsi/10)*10` |
+| 4 | 同上 | 极端层 `spy_rsi<25 and vix>35`、两段式仓位公式 | 三段式、**无 VIX**（`market_scorer.py:269-287`） |
+| 5 | `part_c_api.md` | 4 个端点 / 404 无数据 / breakdown `{score,triggered}` | **37 端点**（+1 健康检查） / HTTP 200 + `{data:null,message}` / `{score,raw,ratio}` |
+| 6 | `part_b_storage.md` | 2 张表、9 个函数、`DB_PATH` 环境变量 | **9 张表、35+ 函数**、环境变量为 **`TA_DB_PATH`**、连接函数是私有 `_get_conn()` |
+| 7 | `part_e_..._management.md` | `GET /api/stock-filter/{search,info}` 两个端点 + 409/400 | 端点**不存在**；实际 **201/200** + message |
+| 8 | `part_f_fundamental.md` | `/api/fundamental/latest`、`/overview` + 分组响应 | 仅 1 个**扁平**端点 `GET /api/fundamental` |
+| 9 | `signal-backtest-engine-design.md` | `run_backtest() -> BacktestResult` 核心类 | **无 `BacktestResult` 类**，返回 `dict`；`Trade.total_score` 实为 `entry_score` |
+| 10 | `grid-trading-engine-design.md` | 状态「P0 已实现」 | **部分实现**：`order_handler.py` 不存在、撤单/同步持仓/限频器均未实现 |
+
+**新增可信度锚点**：3 份设计文档（网格 / 回测 / 仓位框架）文末各加 `## 实现现状核对表`，
+逐条标注 已实现✅ / 部分⚠️ / 未实现❌ 并给出代码位置 —— 合计 90 项（✅42 / ⚠️36 / ❌12）。
+
+**口径固化（易误读，务必记住）**
+- `ms_discount_pct` = `(晨星公允价值 − 现价) / 现价 × 100`，即「**上涨空间%**」，**不是折价率**
+  （TMUS 148.58 / fv 235 → 58.2% 表示还有 58% 上行空间）。已写入 `part_f_fundamental.md` 新增第 18 节
+- `top/bottom_signal_log` **无唯一约束**（重跑 `scan-signals` 会翻倍）；
+  `livermore_signal_log` **有** `UNIQUE(code,date,signal_type)`，重跑幂等
+
+**历史条目勘误**：`v2.6.0`（`/api/stock-filter/*`、400 状态码）、`v2.7.0`（`/api/fundamental/{latest,overview}`）
+两条变更记录描述的端点**从未实现**，已在原条目下就地加 ⚠️ 勘误块（保留历史，不做删除）。
+
 ---
 
 ## [2026-08-28]
@@ -648,6 +680,12 @@ Swing Pivot 聚类得出，是双向对称的静态支撑/压力位；利弗莫�
 - **`GET /api/fundamental/latest?code=US.NVDA`**：单标的基本面数据 + 评分（分组结构化响应）
 - **`GET /api/fundamental/overview`**：全标的基本面速览（UNDERVALUED / FAIR / OVERVALUED 分组）
 
+> ⚠️ **勘误（2026-10-12）**：上述 **两个端点从未实现**。实际只落地了一个**扁平**端点
+> `GET /api/fundamental`（`code` 必填、`date` 可选），响应为 10 个扁平字段，
+> **无** `valuation{}`/`growth{}`/`analyst{}` 分块、**无** `breakdown`。
+> 另：文档所述「yfinance 为数据源」亦已失效——估值以富途拉取的晨星公允价值
+> (`morningstar_fair_value`) + 分析师目标价 (`analyst_target_mean`) 为准。详见 `part_f_fundamental.md`。
+
 **新 CLI 命令：**
 
 - **`trader-analysis fundamental`**：批量拉取基本面数据并评分（`--codes` 可选）
@@ -692,6 +730,12 @@ Swing Pivot 聚类得出，是双向对称的静态支撑/压力位；利弗莫�
 - **`POST /api/watchlist/refresh-snapshot`**：刷新静态快照字段（admin，需 OpenD）
 - **`GET /api/stock-filter/search`**：条件选股（需 OpenD）
 - **`GET /api/stock-filter/info`**：单股信息查询
+
+> ⚠️ **勘误（2026-10-12）**：`/api/stock-filter/*` 两个端点**从未实现**——
+> `stock_info_fetcher.search_stocks()` / `fetch_stock_info()` 函数已就绪，但 `api_server.py` 未注册任何路由。
+> 另：本条所述「只读字段返回 400」**不准确**，`PATCH /api/watchlist/{code}` 实际返回
+> **HTTP 200** + `{"data": null, "message": "Fields not editable: ..."}`；新增重复 code 也仍是 **201** 而非 409。
+> 当前可编辑字段为 **18 个**（含 `recommended_strategy`）。详见 `part_e_watchlist_management.md`。
 
 **新 CLI 命令：**
 

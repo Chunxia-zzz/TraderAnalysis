@@ -15,8 +15,13 @@ Futu 量化评分与模拟盘交易系统。基于 195 只核心观察标的，�
 三层架构，通过 SQLite 解耦：
 
 - **Part A — 后端核心层**：K 线拉取、指标计算、6 因子连续评分、市场温度、模拟盘交易
-- **Part B — 持久化存储层**：SQLite 存储 K 线 + 指标 + 评分，支持历史初始化和每日增量更新
-- **Part C — API 服务层**：FastAPI 只读接口，供前端消费，不依赖 Futu OpenD
+- **Part B — 持久化存储层**：SQLite 存储 K 线 + 指标 + 评分 + 信号 + 标的池，支持历史初始化和每日增量更新
+- **Part C — API 服务层**：FastAPI 接口，供前端消费
+
+> ⚠️ **Part C 不是「只读」也不完全独立于 OpenD**：`api_server.py` 有 **8 个写端点**
+> （`POST/PUT/DELETE`，如标的池增删改、目标仓位保存、文案模板），且以下端点在请求时会直连 Futu OpenD：
+> `POST /api/watchlist`（调 `fetch_stock_info` 补全快照）、`POST /api/watchlist/refresh-snapshot`（调 `fetch_snapshot_batch`）、
+> `GET /api/position`、`GET /api/allocation`。**只读的只是评分/指标/信号那一大类。**
 
 详细技术方案见 [`docs/futu_strategy_docs/futu_strategy_docs/README.md`](docs/futu_strategy_docs/futu_strategy_docs/README.md)
 
@@ -49,7 +54,7 @@ trader-analysis init
 trader-analysis init --start 2022-06-01 --force
 ```
 
-- 自动从 `data/watchlist.json` 读取 40 只标的
+- 标的池由 **SQLite `watchlist` 表**提供（当前 **195 只**）；`data/watchlist.json`（49 条）只作**表为空时的回退**
 - 支持断点续传：中断后重新运行，已完成的标的会自动跳过
 - 可选参数：`--codes US.AAPL US.TSLA`（指定标的）、`--force`（强制重拉）
 
@@ -106,26 +111,79 @@ trader-analysis grid-stop 1        # 停止
 trader-analysis run
 ```
 
+**全部 CLI 命令（共 18 个，2026-10-12 核对）**
+
+| 命令 | 说明 | 需要 OpenD |
+|------|------|:---:|
+| `serve` | 启动 FastAPI 服务 | ✗ |
+| `init` | 拉取历史 K 线并计算指标（支持 `--codes` / `--force` / `--start`） | ✓ |
+| `update` | 增量更新 K 线与指标（每日收盘后） | ✓ |
+| `run` | 完整策略流程：增量更新 → 评分 → 模拟盘交易 | ✓ |
+| `score` | 纯本地评分：从 DB 读指标计算并写 `score_results`（支持 `--backfill N`） | ✗ |
+| `temperature` | 市场温度评分 + 目标仓位建议（支持 `--backfill N`） | ✗ |
+| `scan-signals` | 扫描顶/底信号并落库（支持 `--backfill N`） | ✗ |
+| `scan-top` | 只扫顶背离预警（不依赖 OpenD） | ✗ |
+| `livermore` | 利弗莫尔关键点扫描（`--top` / `--all` / `--date` / `--persist` / `--backfill N`） | ✗ |
+| `backtest` | 信号回测（5 种模式：`hold` / `swing` / `trend` / `ribbon_long` / `ribbon_short`） | ✗ |
+| `fundamental` | 拉取基本面数据并评分（数据源 yfinance） | ✗ |
+| `migrate-watchlist` | `watchlist.json` → SQLite 一次性迁移 | ✗ |
+| `refresh-snapshot` | 刷新标的池静态快照字段（`trailing_pe` / `market_cap` 等） | ✓ |
+| `grid-create` / `grid-start` / `grid-stop` / `grid-status` | 网格交易引擎四件套 | ✓ |
+| `create-admin` | ⚠️ **当前不可用**：内部 `from ...auth import hash_password` / `...auth_storage import create_user`，而 `auth.py`、`auth_storage.py` **已随认证体系一并从仓库移除** → 执行会 `ImportError` | — |
+
 ## API 接口
+
+共 **38 个路由**（只读 30 + 写 8，2026-10-12 核对；完整参数与响应见 [`docs/api.md`](docs/api.md)）。
+
+**只读（30）**
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
+| GET | `/health` | 健康检查 |
 | GET | `/api/watchlist` | 标的池（含晨星折价、最新收盘价、分类标签） |
+| GET | `/api/watchlist/{code}` | 单个标的信息 |
 | GET | `/api/indicators?code=US.AAPL&ktype=1d&days=60` | K 线 + 技术指标（支持 1d/4h/1w） |
 | GET | `/api/indicators/latest?code=US.AAPL` | 最新一根指标值 |
 | GET | `/api/scores/latest?code=US.AAPL` | 个股 6 因子评分（支持日期筛选） |
 | GET | `/api/scores/overview` | 全标的评分速览（含动量分+MA5确认） |
-| GET | `/api/analysis?code=US.AAPL&ktype=1d` | 道氏三层趋势 + 支撑/压力关键位（Swing Pivot 聚类）+ 形态置信度 + 盈亏比，支持 1d/4h/1w |
-| GET | `/api/livermore/signals` | 利弗莫尔关键点信号（独立体系；四分组：突破/逼近/已在关键点上方/风险），支持 `date`/`source`/`all`/`refresh` |
-| GET | `/api/livermore/detail?code=US.AAPL` | 单标的利弗莫尔关键点全景（箱体/关键点/止损/金字塔/潮汐/相对强度）+ 可画线 `levels` |
+| GET | `/api/analysis?code=US.AAPL&ktype=1d` | 道氏三层趋势 + 支撑/压力关键位（Swing Pivot 聚类）+ 形态置信度 + 盈亏比 |
 | GET | `/api/fundamental?code=US.AAPL` | 基本面估值（分析师目标价 + 晨星公允价值） |
 | GET | `/api/daily-picks` | 高置信度低估做多机会（巴菲特原则筛选） |
 | GET | `/api/ema-cross-signals` | EMA5/30 交叉信号（空转多/多转空） |
+| GET | `/api/top-signals` | 顶部信号（顶背离 / 顶部预警） |
+| GET | `/api/bottom-signals` | 底部信号 |
+| GET | `/api/trade-signals` | 顶/底交易信号 |
+| GET | `/api/tp-sl` | 止盈止损位计算 |
+| GET | `/api/livermore/signals` | 利弗莫尔关键点信号（独立体系；四分组：突破/逼近/已在关键点上方/风险），支持 `date`/`source`/`all`/`refresh` |
+| GET | `/api/livermore/detail?code=US.AAPL` | 单标的利弗莫尔关键点全景（箱体/关键点/止损/金字塔/潮汐/相对强度）+ 可画线 `levels` |
 | GET | `/api/market-temperature` | 市场温度评分（3 维度综合） |
 | GET | `/api/market-temperature/history?days=30` | 市场温度历史趋势 |
-| GET | `/api/backtest/run?code=US.SNDK&mode=trend` | 信号回测（3种策略模式） |
+| GET | `/api/asset-temperature/history?asset=GLD&days=60` | 黄金/比特币资产温度历史 |
+| GET | `/api/position?env=real` | 实时持仓（**需 OpenD**） |
+| GET | `/api/position-states?code=US.AAPL` | 持仓状态（不传 code 返回所有非 EMPTY 持仓） |
+| GET | `/api/allocation?env=real` | 目标仓位配置 + 偏离 + 加仓建议（**需 OpenD**） |
+| GET | `/api/sell-log?days=30` | 卖出日志（读 `trade_log.jsonl` 的 SELL 记录） |
+| GET | `/api/backtest/run?code=US.SNDK&mode=trend` | 信号回测（5 种策略模式） |
+| GET | `/api/review?type=daily` | 日/周复盘报告 |
+| GET | `/api/content-generator?code=US.AAPL` | 自媒体文案生成 |
+| GET | `/api/content-templates` | 文案模板列表 |
+| GET | `/api/grid/status` | 网格引擎运行状态 |
+| GET | `/api/grid/orders` | 网格成交订单 |
 
-所有接口无数据时返回 HTTP 200 + `{data: null, message: "提示文案"}`。
+**写（8）**
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/watchlist` | 新增标的（**需 OpenD** 补全快照） |
+| POST | `/api/watchlist/batch` | 批量新增 |
+| POST | `/api/watchlist/refresh-snapshot` | 批量刷新快照（**需 OpenD**） |
+| PATCH | `/api/watchlist/{code}` | 编辑标的（仅白名单字段） |
+| DELETE | `/api/watchlist/{code}` | 删除标的 |
+| PUT | `/api/allocation` | 保存目标仓位配置 |
+| PUT | `/api/content-templates/{key}` | 保存文案模板 |
+| DELETE | `/api/content-templates/{key}` | 删除文案模板 |
+
+所有接口无数据时返回 **HTTP 200 + `{data: null, message: "提示文案"}`**（不是 404）。
 
 详细接口文档见 [`docs/api.md`](docs/api.md)
 
@@ -139,7 +197,7 @@ trader-analysis run
 - 纳入：大市值龙头（≥ $50B）、覆盖主要行业、可估值（有晨星/分析师目标价）
 - 排除：杠杆/反向 ETF、重复的行业 ETF、无法估值的股票
 
-**管理方式**：通过 API 增删改查（标的管理页或 `POST/PATCH/DELETE /api/watchlist`），新增后跑 `init` 拉历史数据，`score`/`scan-signals` 纳入评分与信号。`config.WATCHLIST` 动态从 DB 读取，无需重启。
+**管理方式**：通过 API 增删改查（标的管理页或 `POST/PATCH/DELETE /api/watchlist`），新增后跑 `init` 拉历史数据，`score`/`scan-signals` 纳入评分与信号。`config.WATCHLIST` 是**动态属性**，每次访问从 DB 读取，无需重启。
 
 ## 开发
 
@@ -202,7 +260,7 @@ scp /f/TraderAnalysis/data/indicators.db \
     root@47.106.175.84:/opt/trader-analysis/data/indicators.db
 ```
 
-### 4. 常用服务器命令
+### 3. 常用服务器命令
 
 登录服务器后可用：
 
@@ -212,7 +270,7 @@ systemctl restart trader-api       # 重启后端
 journalctl -u trader-api -n 50     # 查看后端日志
 ```
 
-### 5. Nginx 层：静态压缩与缓存（2026-10-12 新增）
+### 4. Nginx 层：静态压缩与缓存（2026-10-12 新增）
 
 > 此前 nginx 配置**只存在于服务器上、仓库里没有记录**。本节把它固化，避免以后不知道
 > `/etc/nginx/conf.d/gzip.conf` 是干什么的。原配置备份在服务器 `/root/nginx-backup/`。

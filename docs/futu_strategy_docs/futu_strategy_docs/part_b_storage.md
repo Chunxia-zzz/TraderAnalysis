@@ -1,6 +1,8 @@
 # Part B — 持久化存储层（storage.py / init_history.py / daily_update.py）
 
-> 存储层是后端（写入方）与 API 服务（读取方）之间的桥梁。后端将 K 线和计算好的指标写入本地数据库，API 层直接读取返回，两者通过 SQLite 文件解耦。
+> 存储层是后端（写入方）与 API 服务（读取方）之间的桥梁。后端将 K 线、计算好的指标、评分、信号、持仓状态写入本地 SQLite，API 层直接读取返回，两者通过**同一个 DB 文件**解耦。
+>
+> 源码位置：`src/trader_analysis/futu_strategy/{storage,init_history,daily_update}.py`
 
 ---
 
@@ -11,9 +13,13 @@
 | # | 功能 | 实现方式 |
 |---|------|---------|
 | F1 | 存储 K 线原始数据 + 全部技术指标值 | SQLite `kline_indicators` 表 |
-| F2 | 支持多标的、多周期（日线/周线）共存 | 主键 `(code, ktype, date)` |
+| F2 | 支持多标的、多周期（日线/周线/4小时）共存 | 主键 `(code, ktype, date)` |
 | F3 | 按标的+周期+日期范围快速查询 | 索引 `idx_code_ktype_date` |
-| F4 | 存储评分结果供 API 读取 | SQLite `score_results` 表 |
+| F4 | 存储个股评分结果供 API 读取 | SQLite `score_results` 表 |
+| F5 | 存储大盘温度（市场评分）结果 | `market_score` + `market_score_detail` 表 |
+| F6 | 存储基本面/估值数据 | `fundamental_data` 表 |
+| F7 | 存储信号日志（顶部/底部/利弗莫尔） | `top_signal_log` / `bottom_signal_log` / `livermore_signal_log` |
+| F8 | 存储交易模块持仓状态机 | `position_state` 表 |
 
 ### 历史初始化
 
@@ -29,22 +35,39 @@
 |---|------|---------|
 | H1 | 查询各标的本地最新日期 | storage.get_latest_date（自实现） |
 | H2 | 只拉取新增的 K 线 | 调用 data_fetcher（外部数据） |
-| H3 | 与历史数据拼接后重新计算末尾指标 | 调用 storage.query_recent + indicators（自实现） |
-| H4 | UPSERT 最新行到数据库 | storage.upsert（自实现） |
+| H3 | 与历史数据拼接后重新计算全段指标 | storage.query_recent + indicators（自实现） |
+| H4 | UPSERT 最新行到数据库 | storage.batch_upsert（自实现） |
 
-### 存储层读写接口
+### 存储层读写接口（`storage.py` 全部函数）
 
-| # | 函数 | 用途 | 调用方 |
-|---|------|------|--------|
-| I1 | `init_db()` | 建表（幂等，首次运行） | init_history |
-| I2 | `batch_upsert(code, ktype, df)` | 批量写入/更新 | init_history / daily_update |
-| I3 | `query_recent(code, ktype, limit)` | 读最近 N 根 | daily_update |
-| I4 | `get_latest_date(code, ktype)` | 查最新日期 | daily_update |
-| I5 | `query_range(code, ktype, days)` | 按天数范围查询 | api_server |
-| I6 | `query_latest(code, ktype)` | 查最新一根 | api_server |
-| I7 | `list_codes()` | 列出所有已入库标的 | api_server |
-| I8 | `upsert_score(code, date, result)` | 写入评分结果 | scorer |
-| I9 | `query_latest_score(code)` | 查最新评分 | api_server |
+| 分组 | 函数 | 用途 |
+|------|------|------|
+| 建库 | `init_db()` | 建表 + 建索引（幂等，首次运行） |
+| K 线 | `batch_upsert(code, ktype, df) -> int` | 批量写入/更新，返回写入行数 |
+| K 线 | `query_recent(code, ktype, limit=250) -> DataFrame` | 读最近 N 根（日期升序） |
+| K 线 | `get_latest_date(code, ktype) -> str \| None` | 查最新日期 |
+| K 线 | `query_range(code, ktype, days=60) -> list[dict]` | 按根数查询，供 API 层使用 |
+| K 线 | `query_latest(code, ktype) -> dict` | 查最新一根 |
+| K 线 | `list_codes() -> list[str]` | 列出所有已入库标的 |
+| 评分 | `upsert_score(code, date, result)` | 写入个股评分结果 |
+| 评分 | `query_latest_score(code) -> dict` | 查最新评分（`breakdown` 已反序列化） |
+| 评分 | `query_score_by_date(code, date) -> dict` | 查指定日评分 |
+| 评分 | `query_scores_overview(date=None) -> list[dict]` | 全池评分概览（指定日或最新日） |
+| 温度 | `upsert_market_score(date, result)` | 写入大盘温度 |
+| 温度 | `query_latest_market_score() -> dict` | 查最新温度 |
+| 温度 | `query_market_score_history(days=30) -> list[dict]` | 温度历史曲线 |
+| 基本面 | `upsert_fundamental(code, date, data)` | 写入基本面数据 |
+| 基本面 | `query_latest_fundamental(code) -> dict \| None` | 查最新基本面 |
+| 基本面 | `query_fundamentals_overview() -> list[dict]` | 全池基本面概览 |
+| 联表 | `query_all_scores(code, start, end)` | 个股评分序列 |
+| 联表 | `query_close_prices(code, start, end)` | 收盘价序列 |
+| 联表 | `query_price_and_ma(code, ma_col="ma5", start, end)` | 价格 + 指定均线 |
+| 联表 | `query_ema_ribbon_data(code, start, end)` | EMA 飘带全段数据 |
+| 联表 | `query_trading_dates(code, start, end)` | 交易日列表 |
+| 信号 | `insert_top_signal(...)` / `query_top_signals(code, days)` / `query_top_signals_all(days)` | 顶部信号写入与查询 |
+| 信号 | `insert_bottom_signal(...)` / `query_bottom_signals(code, days)` / `query_bottom_signals_all(days)` | 底部信号写入与查询 |
+| 信号 | `insert_livermore_signal(...)` / `query_livermore_signals(...)` / `query_livermore_dates(limit)` / `delete_livermore_signals(code, date)` | 利弗莫尔关键点信号 |
+| 仓位 | `get_position_state(code)` / `upsert_position_state(...)` / `list_active_positions()` / `reset_position_state(code)` | 持仓状态机 |
 
 ---
 
@@ -54,225 +77,168 @@
 - K 线和指标**合并存储**在同一张表（一行 = 一根 K 线 + 该根的所有指标值）
 - 主键 `(code, ktype, date)` 保证数据不重复，`INSERT OR REPLACE` 实现 UPSERT
 - 所有 SQL 集中在 `storage.py`，其他模块不直接写 SQL（未来换存储引擎只改此文件）
+- 数据库路径来自 `config.DB_PATH`，可用环境变量 **`TA_DB_PATH`** 覆盖（默认 `<项目根>/data/indicators.db`）——**注意不是 `DB_PATH` 环境变量**
 - **增量更新关键约束**：不能只用新的 1 根 K 线计算指标，必须拼接历史再算
 
 ---
 
 ## 具体实现方案
 
-### 数据库表结构
+### 数据库表结构（共 9 张表）
 
-**K 线 + 指标表：**
+`storage.py` 中的 `_CREATE_TABLES_SQL` 一次 `executescript` 建全表：
+
+| 表名 | 用途 | 主键/唯一约束 |
+|------|------|--------------|
+| `kline_indicators` | K 线 + 全部技术指标 | PK `(code, ktype, date)` |
+| `score_results` | 个股评分 | PK `(code, date)` |
+| `market_score` | 大盘温度（宽表） | PK `id` 自增，`date` UNIQUE |
+| `market_score_detail` | 大盘温度明细 JSON | PK `id` 自增，`date` UNIQUE |
+| `fundamental_data` | 基本面 + 估值 | PK `(code, date)` |
+| `position_state` | 交易模块持仓状态机 | PK `code` |
+| `top_signal_log` | 顶部预警信号 | PK `id` 自增，**无唯一约束** |
+| `bottom_signal_log` | 底部信号 | PK `id` 自增，**无唯一约束** |
+| `livermore_signal_log` | 利弗莫尔关键点信号 | PK `id` 自增，**有 UNIQUE(code, date, signal_type)** |
+
+> ⚠️ **唯一约束差异是重要坑**：`top/bottom_signal_log` 没有唯一约束，重跑 `scan-signals` 会导致信号翻倍；`livermore_signal_log` 建了 UNIQUE 索引并用 `INSERT OR REPLACE`，重跑幂等。
+
+**K 线 + 指标表（实际 DDL 简化版）：**
 
 ```sql
 CREATE TABLE IF NOT EXISTS kline_indicators (
     code         TEXT NOT NULL,      -- 'HK.00700'
-    ktype        TEXT NOT NULL,      -- '1d' / '1w'
-    date         TEXT NOT NULL,      -- '2026-04-14'
+    ktype        TEXT NOT NULL,      -- '1d' / '1w' / '4h'
+    date         TEXT NOT NULL,      -- '2026-04-14'（4h 为 'YYYY-MM-DD HH:MM:SS'）
     -- 原始 K 线
-    open         REAL,
-    high         REAL,
-    low          REAL,
-    close        REAL,
-    volume       REAL,
-    turnover     REAL,
+    open REAL, high REAL, low REAL, close REAL, volume REAL, turnover REAL,
     -- 均线
-    ma5          REAL,
-    ma10         REAL,
-    ma20         REAL,
-    ma60         REAL,
-    ma120        REAL,
-    ma250        REAL,
-    -- RSI
-    rsi14        REAL,
+    ma5 REAL, ma10 REAL, ma20 REAL, ma60 REAL, ma120 REAL, ma200 REAL, ma250 REAL,
+    -- RSI（三周期，非单一 rsi14）
+    rsi6 REAL, rsi12 REAL, rsi24 REAL,
     -- MACD
-    dif          REAL,
-    dea          REAL,
-    macd         REAL,
+    dif REAL, dea REAL, macd REAL,
     -- 布林带
-    boll_upper   REAL,
-    boll_mid     REAL,
-    boll_lower   REAL,
+    boll_upper REAL, boll_mid REAL, boll_lower REAL,
     -- 成交量均线
-    vol_ma20     REAL,
+    vol_ma20 REAL,
     -- EMA（多空飘带）
-    ema5         REAL,
-    ema10        REAL,
-    ema15        REAL,
-    ema20        REAL,
-    ema25        REAL,
-    ema30        REAL,
+    ema5 REAL, ema10 REAL, ema15 REAL, ema20 REAL, ema25 REAL, ema30 REAL,
     -- ATR（止盈止损基准）
-    atr14        REAL,
-    -- 元数据
+    atr14 REAL,
     updated_at   TEXT,
-
     PRIMARY KEY (code, ktype, date)
 );
 
 CREATE INDEX IF NOT EXISTS idx_code_ktype_date ON kline_indicators(code, ktype, date);
 ```
 
-**评分结果表：**
+**个股评分表：**
 
 ```sql
 CREATE TABLE IF NOT EXISTS score_results (
     code         TEXT NOT NULL,
     date         TEXT NOT NULL,
-    total_score  INTEGER,
+    total_score  INTEGER,            -- 0-100（6 因子加权 + 温度加成）
     signal       TEXT,               -- 'STRONG_BUY' / 'BUY' / 'NO_ACTION'
-    breakdown    TEXT,               -- JSON 字符串
+    breakdown    TEXT,               -- JSON 字符串（各因子得分明细）
     updated_at   TEXT,
-
     PRIMARY KEY (code, date)
 );
 ```
 
+**大盘温度表：** `market_score` 为宽表，含 `composite_score`、`target_position_pct`、`extreme_triggered`、`leverage_tool`、四类子分（`daily_tech_score` / `weekly_tech_score` / `vol_score` / `price_score` / `volume_score` / `safe_haven_score`）、以及 SPY/QQQ/GLD/VIX 的价格与 RSI、MA200 偏离、量比等原始输入列；`market_score_detail` 单独存完整 `detail_json`。
+
+**基本面表：** `fundamental_data` 含估值（PE/PB/PEG/EV-EBITDA）、成长（revenue/earnings growth）、分析师目标价四件套（`target_mean/median/high/low` + `analyst_count` + `recommendation`）、财务健康（流动比/负债率/现金流/利润率/ROE）、市场属性（市值/股息率/beta/做空比），以及 `fundamental_score` + `valuation_signal` + `breakdown`。
+
+**信号表：** 三张信号表结构相似（`code/date/signal_type/strength/detail_json/created_at`）；`livermore_signal_log` 额外有 `pivotal`（关键点价）、`close`、`dist_pct`、`vol_ratio`、`tide`（周线潮汐）、`wave`（日线波浪）、`context`、`rs_60`（相对强度）、`is_leader`、`stop`（止损位）等专有列。
+
+**持仓状态表：** `position_state` 存 `stage`（HOLD/ADD/TRIM/EXIT 等）、`total_qty`、`remaining_qty`、`avg_cost`、`entry_date`、`last_signal`、`last_signal_date`。
+
 ---
 
-### storage.py 接口实现（自实现，纯 Python + sqlite3）
+### storage.py 主要接口实现（自实现，纯 Python + sqlite3）
 
 ```python
-import sqlite3
-import pandas as pd
-import json, os
+from trader_analysis.futu_strategy import config
 
-DB_PATH = os.environ.get('DB_PATH', 'data/indicators.db')
-
-def get_conn():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+def _get_conn() -> sqlite3.Connection:
+    """注意：函数名是 _get_conn（下划线私有），不是 get_conn"""
+    os.makedirs(os.path.dirname(config.DB_PATH), exist_ok=True)
+    conn = sqlite3.connect(config.DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
-def init_db():
-    """建表，幂等操作，可重复调用"""
-    conn = get_conn()
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS kline_indicators (...);  -- 完整 DDL 见上方
-        CREATE TABLE IF NOT EXISTS score_results (...);
-        CREATE INDEX IF NOT EXISTS idx_code_ktype_date ON kline_indicators(code, ktype, date);
-    """)
-    conn.close()
-
-def batch_upsert(code: str, ktype: str, df: pd.DataFrame):
-    """批量写入，主键冲突时覆盖"""
-    conn = get_conn()
-    cols = ['date','open','high','low','close','volume','turnover',
-            'ma5','ma10','ma20','ma60','ma120','ma200','ma250',
-            'rsi6','rsi12','rsi24','dif','dea','macd',
-            'boll_upper','boll_mid','boll_lower','vol_ma20',
-            'ema5','ema10','ema15','ema20','ema25','ema30',
-            'atr14']
-    for _, row in df.iterrows():
-        values = [code, ktype] + [row.get(c) for c in cols] + [pd.Timestamp.now().isoformat()]
-        placeholders = ','.join(['?'] * (len(cols) + 3))
-        conn.execute(f"""
-            INSERT OR REPLACE INTO kline_indicators
-            (code, ktype, {','.join(cols)}, updated_at)
-            VALUES ({placeholders})
-        """, values)
+def init_db() -> None:
+    """建表 + 建索引，幂等操作，可重复调用"""
+    conn = _get_conn()
+    conn.executescript(_CREATE_TABLES_SQL)   # 9 张表 + 全部索引
     conn.commit()
     conn.close()
+
+_KLINE_COLS = [
+    "date", "open", "high", "low", "close", "volume", "turnover",
+    "ma5", "ma10", "ma20", "ma60", "ma120", "ma200", "ma250",
+    "rsi6", "rsi12", "rsi24", "dif", "dea", "macd",
+    "boll_upper", "boll_mid", "boll_lower", "vol_ma20",
+    "ema5", "ema10", "ema15", "ema20", "ema25", "ema30",
+    "atr14",
+]
+
+def batch_upsert(code: str, ktype: str, df: pd.DataFrame) -> int:
+    """批量写入，主键冲突时覆盖；返回实际写入行数"""
+    ...
 
 def query_recent(code: str, ktype: str, limit: int = 250) -> pd.DataFrame:
     """读最近 N 根，返回 DataFrame（日期升序）"""
-    conn = get_conn()
-    rows = conn.execute("""
-        SELECT * FROM kline_indicators
-        WHERE code = ? AND ktype = ?
-        ORDER BY date DESC LIMIT ?
-    """, (code, ktype, limit)).fetchall()
-    conn.close()
-    df = pd.DataFrame([dict(r) for r in reversed(rows)])
-    return df
+    ...
 
 def get_latest_date(code: str, ktype: str) -> str | None:
     """查本地最新日期"""
-    conn = get_conn()
-    row = conn.execute("""
-        SELECT MAX(date) as max_date FROM kline_indicators
-        WHERE code = ? AND ktype = ?
-    """, (code, ktype)).fetchone()
-    conn.close()
-    return row['max_date'] if row else None
+    ...
 
 def query_range(code: str, ktype: str, days: int = 60) -> list[dict]:
-    """按天数查询最近 N 根，返回 list[dict]（日期升序），供 API 层使用"""
-    conn = get_conn()
-    rows = conn.execute("""
-        SELECT date, open, high, low, close, volume,
-               ma5, ma10, ma20, ma60, ma120, ma200, ma250,
-               rsi6, rsi12, rsi24, dif, dea, macd,
-               boll_upper, boll_mid, boll_lower, vol_ma20,
-               ema5, ema10, ema15, ema20, ema25, ema30,
-               atr14
-        FROM kline_indicators
-        WHERE code = ? AND ktype = ?
-        ORDER BY date DESC LIMIT ?
-    """, (code, ktype, days)).fetchall()
-    conn.close()
-    return [dict(r) for r in reversed(rows)]
+    """按根数查询，返回 list[dict]（日期升序），供 API 层使用"""
+    ...
 
 def query_latest(code: str, ktype: str) -> dict:
     """查最新一根"""
-    conn = get_conn()
-    row = conn.execute("""
-        SELECT * FROM kline_indicators
-        WHERE code = ? AND ktype = ?
-        ORDER BY date DESC LIMIT 1
-    """, (code, ktype)).fetchone()
-    conn.close()
-    return dict(row) if row else {}
+    ...
 
 def list_codes() -> list[str]:
     """列出所有已入库标的"""
-    conn = get_conn()
-    rows = conn.execute("SELECT DISTINCT code FROM kline_indicators ORDER BY code").fetchall()
-    conn.close()
-    return [r['code'] for r in rows]
+    ...
 
-def upsert_score(code: str, date: str, result: dict):
-    """写入评分结果"""
-    conn = get_conn()
-    conn.execute("""
-        INSERT OR REPLACE INTO score_results (code, date, total_score, signal, breakdown, updated_at)
-        VALUES (?, ?, ?, ?, ?, datetime('now'))
-    """, (code, date, result['total_score'], result['signal'], json.dumps(result['breakdown'])))
-    conn.commit()
-    conn.close()
+def upsert_score(code: str, date: str, result: dict) -> None:
+    """写入个股评分结果（breakdown 序列化为 JSON）"""
+    ...
 
 def query_latest_score(code: str) -> dict:
-    """查最新评分"""
-    conn = get_conn()
-    row = conn.execute("""
-        SELECT * FROM score_results WHERE code = ? ORDER BY date DESC LIMIT 1
-    """, (code,)).fetchone()
-    conn.close()
-    if row:
-        d = dict(row)
-        d['breakdown'] = json.loads(d['breakdown']) if d.get('breakdown') else {}
-        return d
-    return {}
+    """查最新评分，breakdown 反序列化后返回"""
+    ...
 ```
+
+> 完整函数清单见上文「存储层读写接口」表；其余温度/基本面/信号/仓位函数命名同构（`upsert_*` / `query_*` / `insert_*`）。
 
 ---
 
 ### init_history.py — 历史初始化脚本（自实现）
 
-支持**断点续传**和**频率控制**，40 只标的中途中断后重新运行即可从断点继续。
+支持**断点续传**和**频率控制**，中途中断后重新运行即可从断点继续。
 
 ```
-python -m trader_analysis init                        # 全部 watchlist
-python -m trader_analysis init --codes US.AAPL US.TSLA  # 指定标的
-python -m trader_analysis init --force                 # 强制重拉全部
+python -m trader_analysis.futu_strategy.init_history                  # 全部 watchlist
+python -m trader_analysis.futu_strategy.init_history --codes US.AAPL US.TSLA
+python -m trader_analysis.futu_strategy.init_history --force          # 强制重拉全部
+python -m trader_analysis.futu_strategy.init_history --start 2015-01-01
+
+入口：run_init(codes: list[str], *, force: bool = False, start: str | None = None)
 
 执行流程：
   1. storage.init_db() 建表
-  2. 检查已有数据标的（日线+周线均有则跳过，支持断点续传）
-  3. 检查历史 K 线额度（需 >= 待拉取标的数 × 2）
-  4. for each pending code（每次请求间隔 3 秒，避免触发频率限制）:
-     a. data_fetcher 拉取 1000 根日线 + 200 根周线（API 单次上限）
+  2. 非 --force 时检查已有数据标的（日线+周线均有则跳过，支持断点续传）
+  3. 若全部已有数据 → 提示「如需强制重建请加 --force」并退出
+  4. for each pending code（每请求间 sleep _REQUEST_DELAY，避免触发频率限制）:
+     a. data_fetcher 拉取日线 / 周线
      b. calc_indicators(daily_df, DAILY_INDICATOR_CONFIG)
      c. calc_indicators(weekly_df, WEEKLY_INDICATOR_CONFIG)
      d. storage.batch_upsert(code, '1d', daily_df)
@@ -280,27 +246,38 @@ python -m trader_analysis init --force                 # 强制重拉全部
   5. 输出结果摘要（成功/失败数量），失败的标的重新运行即可
 ```
 
-**--force 参数**：忽略已有数据，强制重新拉取所有标的。用于数据库重建场景。
+**`--force` 参数**：忽略已有数据，强制重新拉取所有标的。用于数据库重建场景。
+**`--start` 参数**：指定历史起点日期（不传则由 provider 默认，受富途单次根数上限约束）。
+
+> ⚠️ 若要拉取超过富途默认 250 根的历史，必须在 `get_kline` 中**显式传 `start`**，否则 `max_count` 会被忽略。
 
 ---
 
 ### daily_update.py — 每日增量更新脚本（自实现）
 
 ```
-python daily_update.py（由定时任务触发）
+python -m trader_analysis.futu_strategy.daily_update
+（也由 runner.py 在评分前调用）
 
 执行流程：
-  1. for each code in config.WATCHLIST:
-     a. last_date = storage.get_latest_date(code, '1d')
-     b. 如果 last_date 为 None → 提示需先运行 init_history.py
-     c. data_fetcher 拉取 last_date 之后的新 K 线
-     d. 如果无新数据 → 跳过
-     e. history_df = storage.query_recent(code, '1d', limit=300)
-     f. 拼接 history_df + new_df
-     g. merged_df = calc_indicators(merged, DAILY_INDICATOR_CONFIG)
-     h. 只取新增行 → storage.batch_upsert(code, '1d', new_rows)
-  2. 周线同理
-  3. 输出更新摘要
+  1. init_db()（幂等）
+  2. for each code in 待更新标的:
+     a. 对每个周期（1d / 1w / 4h）调用 _update_ktype：
+        - last_date = get_latest_date(code, ktype)
+          · last_date 为 None → 警告「请先运行 init_history.py」并跳过本周期
+        - 增量拉取根数 = min(max_count, {'1d': 30, '1w': 10, '4h': 60}[ktype])
+          （只需覆盖约 1 个月缺口，避免浪费富途行情额度）
+        - provider.get_kline(...) → 统一列名为 date（timestamp / time_key 均兼容）
+          · 4h 周期格式化为 'YYYY-MM-DD HH:MM:SS'
+        - 过滤出比 last_date 更新的行；无新增 → 记录日志并跳过
+        - history_df = query_recent(code, ktype, limit=300)
+        - 拼接 history_df + new_df
+        - merged_df = calc_indicators(merged, INDICATOR_CONFIG[ktype])
+        - 只取新增行 → batch_upsert(code, ktype, new_rows)，日志打印新增根数
+  3. Futu API 限频：每 30 秒 60 次，每个标的 3 次请求（1d+1w+4h），代码内留有余量
+  4. 输出更新摘要
 ```
 
-> **关键点**：增量更新时必须读出本地最近 300 根历史数据与新数据拼接后统一计算。MA250 回望 250 根，MA120 回望 120 根，RSI 预热 ~14 根，MACD 预热 ~60 根——只用 1 根新数据计算指标会严重偏差。
+> **关键点**：增量更新时必须读出本地最近 **300 根**历史数据与新数据拼接后统一计算。MA250 回望 250 根、MA120 回望 120 根、RSI 预热 ~24 根、MACD 预热 ~60 根——只用 1 根新数据计算指标会严重偏差。
+>
+> ⚠️ **QFQ 复权断层坑**：provider 传了 `autype=QFQ`，但增量拉取只追加新数据；标的除权/拆股后历史价格基准变化，增量更新会留下"假暴跌"断层（典型：APH 2:1 拆股后 dd60 由 +1.3% 变 −49.3%）。修复需用 `scripts/refetch_klines.py` 全量重拉该标的。
