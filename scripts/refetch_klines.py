@@ -40,6 +40,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from trader_analysis.futu_strategy import config  # noqa: E402
 from trader_analysis.futu_strategy.indicators import calc_indicators  # noqa: E402
+from trader_analysis.futu_strategy.market_clock import filter_closed_bars  # noqa: E402
 from trader_analysis.futu_strategy.storage import batch_upsert, init_db  # noqa: E402
 
 # (ktype, Futu KLType 名称, 指标配置, 拉取根数)
@@ -111,8 +112,10 @@ def fetch_full(quote_ctx, code: str, kl_type, max_count: int) -> pd.DataFrame:
     return out.tail(max_count).reset_index(drop=True)
 
 
-def process_kline_df(df: pd.DataFrame, ktype: str, indicator_config: dict) -> pd.DataFrame:
-    """统一列名、格式化日期、计算指标（与 backfill_klines.py 保持一致）。"""
+def process_kline_df(
+    df: pd.DataFrame, ktype: str, indicator_config: dict, code: str = ""
+) -> pd.DataFrame:
+    """统一列名、格式化日期、丢弃未收盘 K 线、计算指标（与 backfill_klines.py 保持一致）。"""
     if df.empty:
         return df
     if "time_key" in df.columns:
@@ -123,6 +126,8 @@ def process_kline_df(df: pd.DataFrame, ktype: str, indicator_config: dict) -> pd
         df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
     df = df.drop_duplicates(subset=["date"], keep="last")
     df = df.sort_values("date").reset_index(drop=True)
+    # 重拉会先 wipe 再写全量，若在盘中执行会把当天半截 K 线一起写回 → 这里同样拦掉
+    df = filter_closed_bars(df, ktype, code)
     return calc_indicators(df, indicator_config)
 
 
@@ -181,7 +186,7 @@ def main() -> None:
                     time.sleep(REQUEST_DELAY)
                     continue
 
-                df = process_kline_df(raw.copy(), ktype, cfg_getter())
+                df = process_kline_df(raw.copy(), ktype, cfg_getter(), code)
 
                 if args.dry_run:
                     print(

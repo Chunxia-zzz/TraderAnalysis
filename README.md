@@ -74,8 +74,13 @@ Swagger 文档：`http://localhost:8000/docs`
 ### 4. 日常运维
 
 ```bash
-# 每日增量更新（需要 OpenD，建议收盘后定时运行）
+# 每日增量更新（需要 OpenD）
+# ⚠️ 默认「只落已收盘的 K 线」：盘中运行也安全，会自动停在「上一个完整交易日」，
+#    不会把当天进行中的那根写进库（半截 K 线一旦落库永不覆盖，会污染评分/温度/信号）。
+#    逻辑见 src/trader_analysis/futu_strategy/market_clock.py
 trader-analysis update
+trader-analysis update --allow-partial       # 强制写入盘中那根（仅调试/补偿）
+trader-analysis update --codes US.SPY US.QQQ  # 只更新指定标的
 
 # 纯本地评分（不需要 OpenD，从 DB 读指标计算）
 trader-analysis score
@@ -117,7 +122,7 @@ trader-analysis run
 |------|------|:---:|
 | `serve` | 启动 FastAPI 服务 | ✗ |
 | `init` | 拉取历史 K 线并计算指标（支持 `--codes` / `--force` / `--start`） | ✓ |
-| `update` | 增量更新 K 线与指标（每日收盘后） | ✓ |
+| `update` | 增量更新 K 线与指标（**默认只落已收盘 K 线**；`--allow-partial` 强制写盘中止） | ✓ |
 | `run` | 完整策略流程：增量更新 → 评分 → 模拟盘交易 | ✓ |
 | `score` | 纯本地评分：从 DB 读指标计算并写 `score_results`（支持 `--backfill N`） | ✗ |
 | `temperature` | 市场温度评分 + 目标仓位建议（支持 `--backfill N`） | ✗ |

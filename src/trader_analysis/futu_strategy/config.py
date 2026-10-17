@@ -152,6 +152,19 @@ DB_PATH: str = os.environ.get(
     "TA_DB_PATH", os.path.join(_PROJECT_ROOT, "data", "indicators.db")
 )
 
+# ── K 线完整性 ────────────────────────────────────────────────────────────────
+# 是否允许把「当天仍在进行中」的那根 K 线写进库。默认 False（只落已收盘的）。
+# ⚠️ 增量更新是 `date > last_date`（严格大于），半截 K 线一旦写入**永不覆盖**，
+#    会污染评分/温度/信号，只能手工 DELETE 重拉 → 所以这里必须是 False。
+#    判定逻辑见 futu_strategy/market_clock.py（可用环境变量 TA_ALLOW_PARTIAL_BAR 覆盖）。
+ALLOW_PARTIAL_BAR: bool = os.environ.get("TA_ALLOW_PARTIAL_BAR", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+    "y",
+)
+
 # ── 利弗莫尔关键点（独立信号体系）────────────────────────────────────────────
 # ⚠️ 与 scorer.py 的 6 因子均值回归**方向相反**（一个买超卖、一个买突破），
 #    因此本组信号**不并入 total_score**，也不写入 top/bottom_signal_log。

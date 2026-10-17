@@ -18,6 +18,7 @@ import time
 from trader_analysis.futu_strategy import config
 from trader_analysis.futu_strategy.data_fetcher import check_kl_quota
 from trader_analysis.futu_strategy.indicators import calc_indicators
+from trader_analysis.futu_strategy.market_clock import filter_closed_bars
 from trader_analysis.futu_strategy.storage import batch_upsert, get_latest_date, init_db
 
 logger = logging.getLogger(__name__)
@@ -78,20 +79,22 @@ def run_init(codes: list[str], *, force: bool = False, start: str | None = None)
             try:
                 logger.info(f"[{i}/{len(pending)}] 初始化 {code}")
 
-                # 拉取日线
+                # 拉取日线（丢弃盘中未收盘的那根）
                 daily_df = provider.get_daily(
                     quote_ctx, code, count=config.INIT_DAILY_KLINE_COUNT, start=start
                 )
+                daily_df = filter_closed_bars(daily_df, "1d", code)
                 daily_df = calc_indicators(daily_df, config.DAILY_INDICATOR_CONFIG)
                 n_daily = batch_upsert(code, "1d", daily_df)
                 logger.info(f"  日线：{n_daily} 根已写入")
 
                 time.sleep(_REQUEST_DELAY)
 
-                # 拉取周线
+                # 拉取周线（丢弃本周未收盘的那根）
                 weekly_df = provider.get_weekly(
                     quote_ctx, code, count=config.INIT_WEEKLY_KLINE_COUNT, start=start
                 )
+                weekly_df = filter_closed_bars(weekly_df, "1w", code)
                 weekly_df = calc_indicators(weekly_df, config.WEEKLY_INDICATOR_CONFIG)
                 n_weekly = batch_upsert(code, "1w", weekly_df)
                 logger.info(f"  周线：{n_weekly} 根已写入")

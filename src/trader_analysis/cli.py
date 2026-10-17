@@ -42,10 +42,23 @@ def init(
 @app.command()
 def update(
     codes: Optional[list[str]] = typer.Option(None, help="标的代码列表（默认全部 watchlist）"),
+    allow_partial: bool = typer.Option(
+        False,
+        "--allow-partial",
+        help="也写入当天尚未收盘的 K 线（默认不写，盘中运行只落上一个完整交易日）",
+    ),
 ) -> None:
-    """增量更新 K 线和指标（每日收盘后运行）。"""
+    """增量更新 K 线和指标（每日收盘后运行）。
+
+    默认**只落已收盘的 K 线**：盘中跑也安全，会自动停在「上一个完整交易日」，
+    不会把当天进行中的那根写进库（半截 K 线一旦落库永不覆盖，会污染评分）。
+    """
     from trader_analysis.futu_strategy import config
     from trader_analysis.futu_strategy.daily_update import run_update
+
+    if allow_partial:
+        config.ALLOW_PARTIAL_BAR = True
+        typer.echo("⚠️  --allow-partial：将写入当天未收盘的 K 线（仅用于调试/补偿）")
 
     code_list = codes if codes else config.WATCHLIST
     run_update(code_list)

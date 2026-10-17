@@ -269,6 +269,8 @@ python -m trader_analysis.futu_strategy.daily_update
           （只需覆盖约 1 个月缺口，避免浪费富途行情额度）
         - provider.get_kline(...) → 统一列名为 date（timestamp / time_key 均兼容）
           · 4h 周期格式化为 'YYYY-MM-DD HH:MM:SS'
+        - **丢弃尚未收盘的 K 线**：filter_closed_bars(new_df, ktype, code)
+          （规则见 `market_clock.py`：1d 需过本地 16:00、1w 需过周五 16:00、4h 需过其结束时刻）
         - 过滤出比 last_date 更新的行；无新增 → 记录日志并跳过
         - history_df = query_recent(code, ktype, limit=300)
         - 拼接 history_df + new_df
@@ -281,3 +283,6 @@ python -m trader_analysis.futu_strategy.daily_update
 > **关键点**：增量更新时必须读出本地最近 **300 根**历史数据与新数据拼接后统一计算。MA250 回望 250 根、MA120 回望 120 根、RSI 预热 ~24 根、MACD 预热 ~60 根——只用 1 根新数据计算指标会严重偏差。
 >
 > ⚠️ **QFQ 复权断层坑**：provider 传了 `autype=QFQ`，但增量拉取只追加新数据；标的除权/拆股后历史价格基准变化，增量更新会留下"假暴跌"断层（典型：APH 2:1 拆股后 dd60 由 +1.3% 变 −49.3%）。修复需用 `scripts/refetch_klines.py` 全量重拉该标的。
+>
+> ⚠️ **盘中半截 K 线坑（已用代码兜住）**：增量过滤是 `date > last_date`（**严格大于**），写入后**永不覆盖**。在北京时间 21:30 后（= 美东盘中）运行 `update`，Futu 会返回当天进行中的那根；一旦落库，评分/温度/信号全部建立在未收盘数据上，且**再跑 `update` 也修不回来**（日志全是「无新增数据」），只能手工 `DELETE` 再重拉。现由 `market_clock.filter_closed_bars()` 在写入前拦截 —— 盘中跑会自然停在「上一个完整交易日」。需要强制写入时用 `update --allow-partial` 或 `TA_ALLOW_PARTIAL_BAR=1`。
+> 实测对照（2026-10-16）：盘中快照 40.6 分 / 强买 22 只 → 收盘后 36.8 分 / 强买 33 只。

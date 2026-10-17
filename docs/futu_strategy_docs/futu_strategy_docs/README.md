@@ -104,6 +104,7 @@ src/trader_analysis/
     ├── storage.py            # 数据库读写接口（所有 SQL 集中在此）
     ├── init_history.py       # 历史数据初始化（断点续传 + 频率控制）
     ├── daily_update.py       # 每日增量更新脚本
+    ├── market_clock.py       # 交易时钟：判定 K 线是否已收盘（拦截盘中半截 K 线）
     │
     │── Part C: API 服务层 ──────────────────────────
     ├── api_server.py         # FastAPI 服务（38 个路由，含 8 个写端点）

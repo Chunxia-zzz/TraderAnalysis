@@ -90,5 +90,6 @@ ret, quota = quote_ctx.get_history_kl_quota(get_detail=False)
 | 坑 | 说明 | 处理 |
 |---|---|---|
 | **QFQ 复权断层** | 传了 `autype=QFQ`，但 `daily_update` 是增量拉取——QFQ 基准是"最新价"，除权/拆股后全部历史需重算，增量只追加新数据 → 拆股前价格停在旧基准，形成假断层（典型：US.APH 2:1 拆股后 dd60 由 +1.3% 变 −49.3%） | 用 `scripts/refetch_klines.py <code...>` 全量重拉该标的 |
+| **盘中半截 K 线** ✅ 已用代码兜住 | 增量过滤是 `date > last_date`（**严格大于**），所以写入后**永不覆盖**。北京时间 21:30 后（美东盘中）运行会把当天进行中的那根写进库，污染评分/温度/信号，且重跑 `update` 无济于事 | 已由 `market_clock.filter_closed_bars()` 在写入前拦掉（`1d` 需过 16:00、`1w` 需过周五 16:00、`4h` 需过其结束时刻）。确需写入时用 `update --allow-partial` 或 `TA_ALLOW_PARTIAL_BAR=1`。**半日市**（感恩节次日/平安夜）4H 标签是 `13:00` 故准时入库，而 `1d` 仍等 16:00 → 晚 3 小时，方向安全。联网验证脚本：`scripts/verify_market_clock_live.py` |
 | 富途单次上限 250 根 | 见上文「简单模式」 | 显式传 `start` 走分段拉取 |
 | `futu` 启动报 `expected str, not NoneType` | 缺 `APPDATA` 环境变量 | 先 `export APPDATA=...` |

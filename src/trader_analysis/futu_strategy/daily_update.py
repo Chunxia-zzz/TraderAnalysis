@@ -16,6 +16,10 @@ import pandas as pd
 
 from trader_analysis.futu_strategy import config
 from trader_analysis.futu_strategy.indicators import calc_indicators
+from trader_analysis.futu_strategy.market_clock import (
+    dropped_bar_summary,
+    filter_closed_bars,
+)
 from trader_analysis.futu_strategy.storage import (
     batch_upsert,
     get_latest_date,
@@ -37,6 +41,7 @@ def _update_ktype(
     ktype: str,
     indicator_config: dict,
     max_count: int,
+    skip_stats: dict | None = None,
 ) -> int:
     """更新单个标的的单个周期，返回新增行数。"""
     last_date = get_latest_date(code, ktype)
@@ -71,6 +76,19 @@ def _update_ktype(
             new_df["date"] = pd.to_datetime(new_df["date"]).dt.strftime("%Y-%m-%d %H:%M:%S")
         else:
             new_df["date"] = pd.to_datetime(new_df["date"]).dt.strftime("%Y-%m-%d")
+
+        # ⚠️ 先丢掉「尚未收盘」的那根（盘中跑 update 时 Futu 会返回当天进行中的 K 线）。
+        #    增量落库是 `date > last_date`（严格大于），半截 K 线一旦写入**永远不会被覆盖**，
+        #    必须手工 DELETE 重拉 —— 所以在这里硬拦，判定规则见 market_clock.py。
+        _before = new_df
+        new_df = filter_closed_bars(new_df, ktype, code)
+        _skipped = dropped_bar_summary(_before, new_df, ktype)
+        if _skipped:
+            logger.debug(f"  {code}/{ktype} {_skipped}")
+            if skip_stats is not None:
+                skip_stats["count"] = skip_stats.get("count", 0) + (len(_before) - len(new_df))
+                skip_stats["kinds"] = skip_stats.get("kinds", set()) | {ktype}
+
         new_df = new_df[new_df["date"] > last_date]
 
     if new_df.empty:
@@ -119,6 +137,8 @@ def run_update(codes: list[str], quote_ctx=None) -> None:
 
         import time as _time
 
+        skip_stats: dict = {"count": 0, "kinds": set()}
+
         for idx, code in enumerate(codes):
             try:
                 logger.info(f"── 增量更新 {code} ({idx+1}/{len(codes)}) ──")
@@ -130,6 +150,7 @@ def run_update(codes: list[str], quote_ctx=None) -> None:
                     "1d",
                     config.DAILY_INDICATOR_CONFIG,
                     config.DAILY_KLINE_COUNT,
+                    skip_stats,
                 )
                 _update_ktype(
                     quote_ctx,
@@ -138,6 +159,7 @@ def run_update(codes: list[str], quote_ctx=None) -> None:
                     "1w",
                     config.WEEKLY_INDICATOR_CONFIG,
                     config.WEEKLY_KLINE_COUNT,
+                    skip_stats,
                 )
                 _update_ktype(
                     quote_ctx,
@@ -146,6 +168,7 @@ def run_update(codes: list[str], quote_ctx=None) -> None:
                     "4h",
                     config.FOUR_HOUR_INDICATOR_CONFIG,
                     config.INIT_4H_KLINE_COUNT,
+                    skip_stats,
                 )
 
             except Exception as exc:
@@ -154,6 +177,14 @@ def run_update(codes: list[str], quote_ctx=None) -> None:
             # Futu API 限频：每30秒60次，每个标的3次请求（1d+1w+4h），留余量
             if idx < len(codes) - 1:
                 _time.sleep(1.5)
+
+        if skip_stats["count"]:
+            kinds = "/".join(sorted(skip_stats["kinds"]))
+            logger.info(
+                f"⏭  已跳过 {skip_stats['count']} 根**尚未收盘**的 K 线（{kinds}）——"
+                "盘中运行属正常，本次只落已定稿数据；"
+                "如需强制写入，设 API 侧 TA_ALLOW_PARTIAL_BAR=1"
+            )
 
     finally:
         if own_ctx:
