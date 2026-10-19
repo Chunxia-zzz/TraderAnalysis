@@ -316,31 +316,10 @@ def fundamental(
 
 
 @app.command()
-def create_admin(
-    username: str = typer.Option("admin", help="管理员用户名"),
-    password: str = typer.Option(
-        ..., prompt=True, hide_input=True, confirmation_prompt=True, help="管理员密码"
-    ),
-) -> None:
-    """创建管理员账号（首次部署时使用）。"""
-    from trader_analysis.futu_strategy.auth import hash_password
-    from trader_analysis.futu_strategy.auth_storage import create_user, init_users_table, user_exists
-
-    init_users_table()
-    if user_exists(username):
-        typer.echo(f"Error: User '{username}' already exists.", err=True)
-        raise typer.Exit(code=1)
-
-    hashed = hash_password(password)
-    create_user(username, hashed, role="admin")
-    typer.echo(f"Admin account '{username}' created successfully.")
-
-
-@app.command()
 def temperature(
     backfill: int = typer.Option(0, help="回溯天数（从已有K线数据计算历史评分，0=仅计算最新）"),
 ) -> None:
-    """计算市场温度评分（6 维度综合评分 + 目标仓位建议）。"""
+    """计算市场温度评分（三维 50/35/15：日线技术面 / 周线技术面 / 价格位置 + 目标仓位建议）。"""
     from trader_analysis.futu_strategy.market_scorer import (
         backfill_market_temperature,
         calculate_market_temperature,

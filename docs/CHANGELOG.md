@@ -4,6 +4,19 @@
 
 ---
 
+## [2026-10-19]
+
+### 移除 — `create-admin` 命令（清理认证断链）
+
+- **`trader-analysis create-admin` 已删除**。该命令此前 `from ...auth import hash_password` /
+  `from ...auth_storage import create_user`，但这两个模块早在 v2.8+ 随认证系统一并删除，
+  命令一执行即 `ModuleNotFoundError`。
+- **原因**：鉴权功能与管理员体系当前不需要；如需重新引入登录，后续再连同 `auth.py` /
+  `auth_storage.py` / `users` 表一起重建。
+- 相关：全端点本就无需鉴权（认证层 v2.8+ 已彻底移除，见下文 [2026-10-12] 之前的勘误块）。
+
+---
+
 ## [2026-10-17]
 
 ### 新功能 — K 线完整性守卫 `market_clock`（只落已收盘 K 线）

@@ -84,9 +84,10 @@
 
 ## 具体实现方案
 
-### 数据库表结构（共 9 张表）
+### 数据库表结构（`storage.py` 建 9 张核心表；全库共 16 张）
 
-`storage.py` 中的 `_CREATE_TABLES_SQL` 一次 `executescript` 建全表：
+`storage.py` 中的 `_CREATE_TABLES_SQL` 一次 `executescript` 建 9 张核心表。**全库另有 6 张**
+（`watchlist`、`content_templates`、`grid_config`/`grid_orders`/`grid_state`、`users`）由各自模块建表，详见文末「其他表」：
 
 | 表名 | 用途 | 主键/唯一约束 |
 |------|------|--------------|
@@ -99,6 +100,15 @@
 | `top_signal_log` | 顶部预警信号 | PK `id` 自增，**无唯一约束** |
 | `bottom_signal_log` | 底部信号 | PK `id` 自增，**无唯一约束** |
 | `livermore_signal_log` | 利弗莫尔关键点信号 | PK `id` 自增，**有 UNIQUE(code, date, signal_type)** |
+
+#### 其他表（非 `storage.py` 建，全库 16 张的剩余部分）
+
+| 表名 | 建表模块 | 用途 |
+|------|---------|------|
+| `watchlist` | `watchlist_storage.py` | 观察池（195 行，美 192 + 港 3） |
+| `content_templates` | `template_store.py` | 内容生成模板 |
+| `grid_config` / `grid_orders` / `grid_state` | `grid_trader/state_manager.py` | 网格交易配置 / 订单 / 状态 |
+| `users` | `cli.py create-admin`（已删，2026-10-19） | 管理员账号（表仍在，命令已移除） |
 
 > ⚠️ **唯一约束差异是重要坑**：`top/bottom_signal_log` 没有唯一约束，重跑 `scan-signals` 会导致信号翻倍；`livermore_signal_log` 建了 UNIQUE 索引并用 `INSERT OR REPLACE`，重跑幂等。
 
@@ -171,7 +181,7 @@ def _get_conn() -> sqlite3.Connection:
 def init_db() -> None:
     """建表 + 建索引，幂等操作，可重复调用"""
     conn = _get_conn()
-    conn.executescript(_CREATE_TABLES_SQL)   # 9 张表 + 全部索引
+    conn.executescript(_CREATE_TABLES_SQL)   # storage.py 的 9 张核心表 + 全部索引
     conn.commit()
     conn.close()
 
