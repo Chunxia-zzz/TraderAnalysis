@@ -329,7 +329,8 @@ GET /api/scores/latest?code=US.NVDA&date=2026-03-27  → 查看 3月27日的评�
 
 > ⚠️ **勘误（2026-10-12）**：本表此前写作 `≥ 90 / ≥ 70 / < 70`，与 `config.py:99-100` 的 **80 / 60** 不符。
 
-> 另有**大盘温度加成**：`composite < 40` 时最多 `+15` 分（`scorer.py:181-184`），单项得分累加后再加成，总分可略超 100 的直觉上限。
+> 另有**大盘温度加成**：`composite > 60` 时最多 `+15` 分（恐慌加成；2026-10-19 温度口径镜像反转后，
+> 数学上与旧口径 `composite < 40` 逐位等价，`scorer.py:181-186`），单项得分累加后再加成，总分可略超 100 的直觉上限。
 
 **前端渲染建议**
 
@@ -686,6 +687,9 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
 > **v2.3 变更**：维度从 6 个精简为 3 个（移除了波动率/量能/避险维度）。
 > `vol_score`、`volume_score`、`safe_haven_score`、`gld_price`、`vix_value` 字段保留但固定返回 `null`。
 > 前端应只展示非 null 的维度。
+>
+> **2026-10-19 口径反转**：**分数越高 = 越恐慌 = 越值得加仓**（与个股评分 `total_score` 同向）。
+> 分数越低 = 越贪婪 = 应减仓。历史数据已做镜像迁移（`100-x`），全序列口径一致。
 
 **请求参数**：无
 
@@ -693,70 +697,70 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
 
 ```json
 {
-  "date": "2026-05-05",
-  "composite_score": 82.2,
-  "target_position_pct": 24.3,
+  "date": "2026-10-16",
+  "composite_score": 63.2,
+  "target_position_pct": 76.3,
   "extreme_triggered": false,
   "leverage_tool": "none",
-  "daily_tech_score": 76.6,
-  "weekly_tech_score": 86.2,
+  "daily_tech_score": 84.7,
+  "weekly_tech_score": 47.8,
   "vol_score": null,
-  "price_score": 91.2,
+  "price_score": 27.4,
   "volume_score": null,
   "safe_haven_score": null,
-  "spy_price": 718.01,
-  "qqq_price": 672.88,
+  "spy_price": 763.25,
+  "qqq_price": 709.8,
   "gld_price": null,
   "vix_value": null,
-  "spy_daily_rsi": 64.5,
-  "qqq_daily_rsi": 68.2,
-  "spy_weekly_rsi": 72.1,
-  "qqq_weekly_rsi": 75.3,
-  "spy_ma200_dev": 0.0742,
-  "qqq_ma200_dev": 0.1151,
-  "spy_vol_ratio": 0.96,
-  "qqq_vol_ratio": 0.84,
-  "created_at": "2026-05-05 19:43:00",
+  "spy_daily_rsi": 30.5,
+  "qqq_daily_rsi": 15.5,
+  "spy_weekly_rsi": 50.1,
+  "qqq_weekly_rsi": 43.0,
+  "spy_ma200_dev": 0.0535,
+  "qqq_ma200_dev": 0.052,
+  "spy_vol_ratio": 1.53,
+  "qqq_vol_ratio": 1.86,
+  "created_at": "2026-10-19 17:30:00",
   "detail": {
-    "SPY_RSI": 64.5,
-    "SPY_RSI_score": 60.0,
-    "SPY_MACD_score": 88.5,
-    "SPY_BB_pctB": 0.8,
-    "SPY_BB_score": 80.0,
-    "QQQ_RSI": 68.2,
-    "QQQ_RSI_score": 60.0,
-    "QQQ_MACD_score": 91.7,
-    "QQQ_BB_pctB": 0.851,
-    "QQQ_BB_score": 85.1,
-    "SPY_Weekly_RSI": 72.1,
-    "SPY_Weekly_RSI_score": 70.0,
-    "SPY_Weekly_MACD_score": 90.0,
-    "SPY_Weekly_BB_pctB": 0.85,
-    "SPY_Weekly_BB_score": 85.0,
-    "QQQ_Weekly_RSI": 75.3,
-    "QQQ_Weekly_RSI_score": 70.0,
-    "QQQ_Weekly_MACD_score": 92.0,
-    "QQQ_Weekly_BB_pctB": 0.9,
-    "QQQ_Weekly_BB_score": 90.0,
-    "SPY_price": 718.01,
-    "SPY_52w_score": 96.1,
-    "SPY_ATH_drawdown": 0.0095,
-    "SPY_ATH_score": 93.7,
-    "SPY_MA200_dev": 0.0742,
-    "SPY_MA200_score": 74.7,
-    "QQQ_price": 672.88,
-    "QQQ_52w_score": 98.1,
-    "QQQ_ATH_drawdown": 0.0057,
-    "QQQ_ATH_score": 96.2,
-    "QQQ_MA200_dev": 0.1151,
-    "QQQ_MA200_score": 88.4
+    "SPY_RSI": 30.5,
+    "SPY_RSI_score": 70.0,
+    "SPY_MACD_score": 63.1,
+    "SPY_BB_pctB": 0.131,
+    "SPY_BB_score": 86.9,
+    "QQQ_RSI": 15.5,
+    "QQQ_RSI_score": 90.0,
+    "QQQ_MACD_score": 98.0,
+    "QQQ_BB_pctB": -0.24,
+    "QQQ_BB_score": 100.0,
+    "SPY_Weekly_RSI": 50.1,
+    "SPY_Weekly_RSI_score": 50.0,
+    "SPY_Weekly_MACD_score": 50.0,
+    "SPY_Weekly_BB_pctB": 0.642,
+    "SPY_Weekly_BB_score": 35.8,
+    "QQQ_Weekly_RSI": 43.0,
+    "QQQ_Weekly_RSI_score": 60.0,
+    "QQQ_Weekly_MACD_score": 32.7,
+    "QQQ_Weekly_BB_pctB": 0.419,
+    "QQQ_Weekly_BB_score": 58.1,
+    "SPY_price": 763.25,
+    "SPY_52w_score": 12.1,
+    "SPY_ATH_drawdown": 0.0235,
+    "SPY_ATH_score": 15.7,
+    "SPY_MA200_dev": 0.0535,
+    "SPY_MA200_score": 32.2,
+    "QQQ_price": 709.8,
+    "QQQ_52w_score": 25.6,
+    "QQQ_ATH_drawdown": 0.0696,
+    "QQQ_ATH_score": 46.4,
+    "QQQ_MA200_dev": 0.052,
+    "QQQ_MA200_score": 32.7
   }
 }
 ```
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `composite_score` | float | 综合评分 0~100（越高越贪婪） |
+| `composite_score` | float | 综合评分 0~100（**越高越恐慌、越值得加仓**；2026-10-19 反转） |
 | `target_position_pct` | float | 建议仓位 10%~120% |
 | `extreme_triggered` | bool | 是否触发极端层（杠杆区） |
 | `leverage_tool` | string | `none` / `margin` / `margin + OTM_call` |
@@ -781,18 +785,18 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
 {
   "label": "黄金",
   "code": "US.GLD",
-  "composite_score": 24.3,
-  "market_status": "偏悲观",
-  "action_suggestion": "积极加仓",
-  "price": 312.45,
-  "daily_rsi": 38.2,
-  "weekly_rsi": 42.1,
-  "ma200_dev": 0.0612,
-  "ath_drawdown": 0.0381,
-  "pos_52w": 0.712,
-  "daily_tech_score": 22.1,
-  "weekly_tech_score": 28.5,
-  "price_score": 18.6,
+  "composite_score": 59.2,
+  "market_status": "略偏冷",
+  "action_suggestion": "适度加仓",
+  "price": 382.01,
+  "daily_rsi": 50.4,
+  "weekly_rsi": 39.9,
+  "ma200_dev": -0.0795,
+  "ath_drawdown": 0.2505,
+  "pos_52w": 0.146,
+  "daily_tech_score": 49.1,
+  "weekly_tech_score": 62.6,
+  "price_score": 85.1,
   "note": null
 }
 ```
@@ -808,7 +812,7 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
 | `pos_52w` | 52周位置（0=52w低，1=52w高） |
 | `note` | 资产特殊说明（BTC 会提示"IBIT 历史样本有限"） |
 
-> **阈值差异**：黄金 ATH 回撤零分线 25%（正常回调幅度大），MA200 偏离映射区间 ±20%；BTC 零分线 50%，映射区间 ±60%。
+> **阈值差异**：黄金 ATH 回撤满分线 25%（回撤 25% → 100 分，正常回调幅度大），MA200 偏离映射区间 ±20%；BTC 满分线 50%，映射区间 ±60%。方向均为「回撤越深/偏离越负 → 分越高」。
 
 **无数据时（HTTP 200）**：`{"data": null, "message": "暂无市场温度数据，请先运行 trader-analysis temperature 命令"}`
 
@@ -833,9 +837,9 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
 {
   "asset": "GLD",
   "history": [
-    {"date": "2026-04-10", "composite_score": 31.2},
-    {"date": "2026-04-11", "composite_score": 28.4},
-    {"date": "2026-04-14", "composite_score": 22.7}
+    {"date": "2026-04-10", "composite_score": 68.8},
+    {"date": "2026-04-11", "composite_score": 71.6},
+    {"date": "2026-04-14", "composite_score": 77.3}
   ]
 }
 ```
@@ -854,18 +858,18 @@ export const getAssetTemperatureHistory = (asset, days = 60) =>
 
 前端不做计算，只根据 `composite_score` 做查表映射：
 
-**评分 → 市场状态 / 颜色 / 操作建议：**
+**评分 → 市场状态 / 颜色 / 操作建议**（2026-10-19 镜像反转：高分=恐慌=加仓机会，蓝；低分=贪婪，红）：
 
 | 评分区间 | 市场状态 | 颜色 | 背景色 | 操作建议 |
 |---------|---------|------|--------|---------|
-| 0 ~ 5 | 极端恐慌 | `#1a237e` | `#e8eaf6` | 融资+期权超配 |
-| 5 ~ 15 | 极度恐慌 | `#1a5fb4` | `#d0e4f5` | 重仓逆势买入 |
-| 15 ~ 30 | 偏悲观 | `#3584e4` | `#dbeafe` | 积极加仓 |
-| 30 ~ 45 | 略偏冷 | `#62a0ea` | `#e0f2fe` | 适度加仓 |
+| 95 ~ 100 | 极端恐慌 | `#1a237e` | `#e8eaf6` | 融资+期权超配 |
+| 85 ~ 95 | 极度恐慌 | `#1a5fb4` | `#d0e4f5` | 重仓逆势买入 |
+| 70 ~ 85 | 偏悲观 | `#3584e4` | `#dbeafe` | 积极加仓 |
+| 55 ~ 70 | 略偏冷 | `#62a0ea` | `#e0f2fe` | 适度加仓 |
 | 45 ~ 55 | 中性 | `#9a9996` | `#f5f5f5` | 维持仓位 |
-| 55 ~ 70 | 略偏热 | `#ff7800` | `#fff3e0` | 适度减仓 |
-| 70 ~ 85 | 偏贪婪 | `#e66100` | `#fbe9e7` | 积极减仓 |
-| 85 ~ 100 | 极度贪婪 | `#c01c28` | `#ffebee` | 大幅减仓 |
+| 30 ~ 45 | 略偏热 | `#ff7800` | `#fff3e0` | 适度减仓 |
+| 15 ~ 30 | 偏贪婪 | `#e66100` | `#fbe9e7` | 积极减仓 |
+| 0 ~ 15 | 极度贪婪 | `#c01c28` | `#ffebee` | 大幅减仓 |
 
 **杠杆工具文案映射：**
 
@@ -1714,18 +1718,19 @@ export function getMarketTemperatureHistory(days = 30) {
 2. 根据 `composite_score` 查映射表得到颜色/文案
 3. 渲染 UI
 
-### 完整映射代码参考（JS — v2.3）
+### 完整映射代码参考（JS — 2026-10-19 口径反转后）
 
 ```javascript
+// 高分=恐慌=加仓机会（min 制，score >= l.min 匹配）
 const TEMPERATURE_LEVELS = [
-  { max: 5,   label: '极端恐慌', color: '#1a237e', bg: '#e8eaf6', action: '融资+期权超配' },
-  { max: 15,  label: '极度恐慌', color: '#1a5fb4', bg: '#d0e4f5', action: '重仓逆势买入' },
-  { max: 30,  label: '偏悲观',   color: '#3584e4', bg: '#dbeafe', action: '积极加仓' },
-  { max: 45,  label: '略偏冷',   color: '#62a0ea', bg: '#e0f2fe', action: '适度加仓' },
-  { max: 55,  label: '中性',     color: '#9a9996', bg: '#f5f5f5', action: '维持仓位' },
-  { max: 70,  label: '略偏热',   color: '#ff7800', bg: '#fff3e0', action: '适度减仓' },
-  { max: 85,  label: '偏贪婪',   color: '#e66100', bg: '#fbe9e7', action: '积极减仓' },
-  { max: 100, label: '极度贪婪', color: '#c01c28', bg: '#ffebee', action: '大幅减仓' },
+  { min: 95,  label: '极端恐慌', color: '#1a237e', bg: '#e8eaf6', action: '融资+期权超配' },
+  { min: 85,  label: '极度恐慌', color: '#1a5fb4', bg: '#d0e4f5', action: '重仓逆势买入' },
+  { min: 70,  label: '偏悲观',   color: '#3584e4', bg: '#dbeafe', action: '积极加仓' },
+  { min: 55,  label: '略偏冷',   color: '#62a0ea', bg: '#e0f2fe', action: '适度加仓' },
+  { min: 45,  label: '中性',     color: '#9a9996', bg: '#f5f5f5', action: '维持仓位' },
+  { min: 30,  label: '略偏热',   color: '#ff7800', bg: '#fff3e0', action: '适度减仓' },
+  { min: 15,  label: '偏贪婪',   color: '#e66100', bg: '#fbe9e7', action: '积极减仓' },
+  { min: 0,   label: '极度贪婪', color: '#c01c28', bg: '#ffebee', action: '大幅减仓' },
 ]
 
 // v2.3: 只有 3 个维度，按此顺序展示

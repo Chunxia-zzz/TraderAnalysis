@@ -6,6 +6,36 @@
 
 ## [2026-10-19]
 
+### 变更 — 市场温度分数口径镜像反转（高分=恐慌=加仓，与个股评分同向）
+
+- **动机**：个股评分 `total_score` 是「高分=跌得狠=值得加仓」，而市场温度 `composite`
+  旧口径是「低分=恐慌=值得加仓」，两者方向相反，每次看都要做心理换算。
+  温度作为**决策工具**（映射仓位 30%~120%、极端层杠杆、个股恐慌加成），应与人性直觉及个股评分同向。
+- **新口径**：**分数越高 = 越恐慌 = 越值得加仓；分数越低 = 越贪婪 = 应减仓**。
+  - `market_scorer.py` 全部 9 个子项镜像（大盘 6 项 + GLD/BTC 单资产共享 3 项）：
+    RSI 分档 `100-int(rsi/10)*10`、MACD `(1-百分位)*100`、布林 `(1-%B)*100`、
+    52w 位置 `(1-pos)*100`、ATH 回撤 `dd/满分线*100`（回撤深=高分）、MA200 `(下限-dev)/带宽*100`
+  - `_STATUS_LEVELS` 阈值镜像（≥95 极端恐慌 … ≤5 极度贪婪），`_map_status` 改 `>=` 匹配
+  - 极端层：`heavy: composite≥85 且日/周 RSI<30`、`light: composite≥75`
+  - 仓位映射抽为纯函数 `_map_position()`：0→75 → 30→85%，75→85 → 85→100%，85→100 → 100→120%
+  - `scorer.py` 温度加成触发条件 `<40` → `>60`
+- **数学等价性（零决策漂移）**：所有子项对指标均为线性映射 → `composite_new = 100 - composite_old`，
+  故仓位映射 `(c_new-60)/40*15` ≡ 旧 `(40-c_old)/40*15` 等完全一致，
+  **个股 total_score、信号、建议仓位、极端标记逐位不变**。
+  - 单测实证：`TestMirrorEquivalence`（新旧 composite/dimension 镜像）、
+    `TestMapPosition.test_mirror_equivalence_with_legacy`、`TestMarketBonus.test_mirror_equivalence_with_legacy`
+- **历史数据迁移**：`market_score` 表有 940 天历史（2022-09-30 起），重跑 backfill 会新旧断裂，
+  故采用**镜像迁移**（与全量重算严格等价）：`scripts/migrate_market_score_flip.py` 一次性执行，
+  4+3 个 `*_score` 列 + `detail_json` 内全部 `*_score` 键做 `100-x`。
+  迁移验证：940 行 composite 镜像误差 0，仓位/极端标记不一致 0，detail 各项 sum=100。
+  迁移后新代码对 2026-10-16 重算 = 63.2 / 76.3%，与迁移值完全一致。
+- **前端** `MarketTemperature.vue`：`TEMPERATURE_LEVELS` 改 min 制、`getLevel`/`pillStyle`/`dimColor`
+  镜像（高分=蓝=机会，低分=红=贪婪）、ECharts markArea 机会区移到 70-100、
+  hero 区新增口径说明「分数越高 = 越恐慌 = 越值得加仓」
+- **备份**：`data/indicators.db.bak-20261019-preTempFlip`（迁移前快照）
+- **测试**：`tests/test_market_scorer.py` 更新为新口径并新增镜像等价性/极端层/单资产/温度加成
+  4 组测试，全量 90 passed
+
 ### 移除 — `create-admin` 命令（清理认证断链）
 
 - **`trader-analysis create-admin` 已删除**。该命令此前 `from ...auth import hash_password` /

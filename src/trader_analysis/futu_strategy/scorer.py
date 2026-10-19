@@ -13,7 +13,7 @@
   C5  周线 MACD 百分位    10  —— 1 - percentile_rank(52)
   C6  60日回撤           15  —— (drawdown - 0.05) / 0.20
 
-大盘温度加成：composite < 40 时最多 +15 分。
+大盘温度加成：composite > 60（恐慌口径，2026-10-19 反转）时最多 +15 分。
 """
 
 from __future__ import annotations
@@ -178,10 +178,12 @@ def calculate_score(
 
     base_score = round(sum(v["score"] for v in breakdown.values()), 1)
 
-    # 大盘温度加成：composite < 40 时最多加 15 分
+    # 大盘温度加成：composite > 60（恐慌，2026-10-19 口径反转）时最多加 15 分
+    # 数学等价性：镜像反转 composite_new = 100 - composite_old 后，
+    # (composite_new - 60) / 40 ≡ (40 - composite_old) / 40，加成值逐位不变
     market_bonus = 0.0
-    if market_composite is not None and market_composite < 40:
-        market_bonus = round(_clamp((40 - market_composite) / 40) * 15, 1)
+    if market_composite is not None and market_composite > 60:
+        market_bonus = round(_clamp((market_composite - 60) / 40) * 15, 1)
 
     total_score = min(100.0, round(base_score + market_bonus, 1))
 

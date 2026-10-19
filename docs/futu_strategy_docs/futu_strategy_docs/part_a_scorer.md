@@ -15,7 +15,7 @@
 | F4 | 布林带 %B | 15 分 | `1 - %B`（%B = (close - lower) / (upper - lower)） | `kline_indicators`（日线） |
 | F5 | 60 日回撤 | **15 分** | 回撤 5%~25% 线性映射（替代旧 MA250偏离） | `kline_indicators`（日线） |
 | F6 | 周线 MACD 百分位 | 10 分 | `1 - percentile_rank(52)`（最近 52 周柱线百分位） | `kline_indicators`（周线） |
-| + | 大盘温度加成 | 最多 +15 分 | `market composite < 40` 时线性加分，极端恐慌补偿 | `market_score` 表 |
+| + | 大盘温度加成 | 最多 +15 分 | `market composite > 60` 时线性加分，极端恐慌补偿（2026-10-19 温度口径反转，与旧 `composite < 40` 数学等价） | `market_score` 表 |
 
 > 权重合计 **100**，来源 `scorer.py:28-35` 的 `WEIGHTS`。
 >
@@ -28,7 +28,7 @@
 
 - scorer.py **不做任何指标计算**，只从 DB 读取预计算好的指标值做连续映射
 - 每个维度独立计算 [0, 1] 的得分，再乘以对应权重，最终加权求和
-- 大盘温度加成：从 `market_score` 表读取最新综合评分，`composite < 40` 时最多额外 +15 分
+- 大盘温度加成：从 `market_score` 表读取最新综合评分，`composite > 60`（恐慌，2026-10-19 口径反转）时最多额外 +15 分
 - `--backfill N` 模式：滑窗逐日计算历史评分，不覆盖已有数据
 
 ---

@@ -31,7 +31,7 @@
 | 环境变量 `TA_DB_PATH`、私有 `_get_conn()` | `config.py:151`、`storage.py:224` | ✅ |
 | 晨星 `ms_discount_pct = (fv−现价)/现价×100`（上涨空间%） | `api_server.py:146`、`allocation.py:159` | ✅ |
 | 观察池 195 只（美股 192 + 港股 3：00700/01211/03690），26 分类 | `watchlist` 表 195 行，HK 恰 3 只，26 分类 | ✅ |
-| 温度加成 `composite<40 时最多 +15 分` | `scorer.py:182-184` | ✅ |
+| 温度加成 `composite<40 时最多 +15 分` | `scorer.py:182-184` | ✅（当日审计快照；**同日稍后口径反转**为 `composite>60` 触发，数学等价，见 CHANGELOG 2026-10-19） |
 | 三份设计文档核对表合计 ✅42/⚠️36/❌12 | 29+23+38=90 项，✅6+11+25=42、⚠️36、❌12 | ✅ |
 | 网格 `order_handler.py` 不存在（部分实现） | `grid_trader/` 8 个文件，无 `order_handler` | ✅ |
 | `run_backtest -> dict`，`Trade.entry_score` 而非 `total_score` | `backtest.py:519`、`Trade.entry_score` | ✅ |

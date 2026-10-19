@@ -5,6 +5,11 @@
 > 最近核对：2026-10-12（对照 `market_scorer.py` / `config.py` 逐条核对；本文档描述的策略框架为主，实际生效口径以代码为准）
 >
 > **⚠️ 重要说明**：本文档最初按「六维度」设计。截至 2026-10-12，**实际代码已简化为三维度**（日线技术面 50% + 周线技术面 35% + 价格位置 15%），**波动率(VIX)、量能确认、避险信号(GLD) 三个维度已从市场温度评分中移除**（相关章节保留原设计构想并加标注）。此外，黄金/比特币已拆分为**独立的单资产温度**（见第 4.7 节）。
+>
+> **⚠️ 口径反转（2026-10-19）**：市场温度分数已**镜像反转**——新口径为「**市场越恐慌 → 综合评分越高 → 仓位越高**」，
+> 与个股评分 `total_score`（高分=值得加仓）同向。本文档正文中所有「评分越低=恐慌」的方向描述均为旧口径，
+> 阈值区间也已镜像（极端层 85/75、状态表 95/85/70/55/45/30/15），以 `market_scorer.py` / `docs/api.md` 为准；
+> 仓位映射与个股温度加成与旧口径**数学等价**（决策输出逐位不变）。
 
 ---
 
@@ -17,9 +22,11 @@
 ### 1.2 核心逻辑
 
 ```
-市场越恐慌 → 综合评分越低 → 仓位越高（逆势加仓）
-市场越贪婪 → 综合评分越高 → 仓位越低（纪律减仓）
+市场越恐慌 → 综合评分越高 → 仓位越高（逆势加仓）    ← 2026-10-19 口径反转后
+市场越贪婪 → 综合评分越低 → 仓位越低（纪律减仓）
 ```
+
+> 旧口径（≤2026-10-19 前）为「评分越低=恐慌」，已镜像反转；阈值区间同步镜像（极端层 85/75，状态表 95/85/70/55/45/30/15），仓位映射数学等价。
 
 ### 1.3 适用范围
 
@@ -632,11 +639,11 @@ target_position(%) = 100 + (15 - composite) × (20 / 15)
 
 | # | 条件 | 理由 |
 |---|------|------|
-| 1 | 综合评分 ≤ 15 | 系统已确认极度恐慌 |
+| 1 | 综合评分 ≥ 85 | 系统已确认极度恐慌（2026-10-19 口径反转：高分=恐慌） |
 | 2 | SPY **周线** RSI(6) < 30 | 周级别超卖确认，非日内噪音 |
 | 3 | SPY **日线** RSI(6) < 30 | 日级别深度超卖 |
 
-> 核对：与 `market_scorer.py:269-273` 一致（`heavy_extreme = composite <= 15 and spy_daily_rsi < 30 and spy_weekly_rsi < 30`，RSI 取 `rsi6`）。**注意：代码中重度极端不再要求 VIX 条件**（旧 v1.0 曾含 `vix_current > 35`，现已移除）。
+> 核对：与 `market_scorer.py:287-292` 一致（`heavy_extreme = composite >= 85 and spy_daily_rsi < 30 and spy_weekly_rsi < 30`，`light_extreme = composite >= 75`，RSI 取 `rsi6`；2026-10-19 口径反转，与旧 `<=15/<=25` 镜像等价）。**注意：代码中重度极端不再要求 VIX 条件**（旧 v1.0 曾含 `vix_current > 35`，现已移除）。
 
 **极端层内部分级：**
 
@@ -644,7 +651,7 @@ target_position(%) = 100 + (15 - composite) × (20 / 15)
 |---------|------|---------|
 | 85% ~ 100% | 轻度极端 | 现金满仓买入 ETF |
 | 100% ~ 110% | 重度极端 | **融资买入** + 轻度 OTM Call |
-| 110% ~ 120% | 重度极端（composite接近0） | 融资满额 + 加大期权仓位 |
+| 110% ~ 120% | 重度极端（composite接近100） | 融资满额 + 加大期权仓位 |
 
 ### 5.4 底部确认辅助信号（不参与公式计算，人工参考）
 
@@ -1042,19 +1049,19 @@ def calc_composite_score(spy_closes, qqq_closes, gld_closes, vix_closes,
     composite = (daily_tech_score * 0.50 + weekly_tech_score * 0.35 +
                  price_score * 0.15)
 
-    # === 极端层判断（两级）===
-    # 已更新：heavy 不再要求 VIX；RSI 阈值为 30（market_scorer.py:269-276）
-    heavy_extreme = (composite <= 15 and spy_rsi < 30 and spy_weekly_rsi < 30)
-    light_extreme = composite <= 25 and not heavy_extreme
+    # === 极端层判断（两级，2026-10-19 口径反转：高分=恐慌）===
+    # 已更新：heavy 不再要求 VIX；RSI 阈值为 30（market_scorer.py:287-292）
+    heavy_extreme = (composite >= 85 and spy_rsi < 30 and spy_weekly_rsi < 30)
+    light_extreme = composite >= 75 and not heavy_extreme
     extreme_triggered = heavy_extreme or light_extreme
 
-    # 已更新：三段映射（market_scorer.py:279-287）
+    # 已更新：三段映射（market_scorer.py _map_position；2026-10-19 口径反转，与旧公式逐位等价）
     if heavy_extreme:
-        target_position = clamp(100 + (15 - composite) * (20.0 / 15), 100, 120)
+        target_position = clamp(100 + (composite - 85) * (20.0 / 15), 100, 120)
     elif light_extreme:
-        target_position = clamp(85 + (25 - composite) * (15.0 / 10), 85, 100)
+        target_position = clamp(85 + (composite - 75) * (15.0 / 10), 85, 100)
     else:
-        target_position = clamp(85 - (composite - 25) * (55.0 / 75), 30, 85)
+        target_position = clamp(30 + composite * (55.0 / 75), 30, 85)
 
     # === 杠杆工具建议 ===
     leverage_tool = 'none'
@@ -1523,11 +1530,11 @@ function formatPositionAdvice(data) {
 #### C.4.4 维度评分条颜色映射
 
 ```javascript
-// 每个维度的评分条颜色（评分越低=越恐慌=蓝色，越高=越贪婪=红色）
+// 每个维度的评分条颜色（2026-10-19 口径反转后：评分越高=越恐慌=蓝色，越低=越贪婪=红色）
 function getDimensionColor(score) {
-  if (score <= 20) return "#1565c0";  // 深蓝
-  if (score <= 40) return "#42a5f5";  // 浅蓝
-  if (score <= 60) return "#9e9e9e";  // 灰色
+  if (score >= 80) return "#1565c0";  // 深蓝
+  if (score >= 60) return "#42a5f5";  // 浅蓝
+  if (score >= 40) return "#9e9e9e";  // 灰色
   if (score <= 80) return "#ff9800";  // 橙色
   return "#d32f2f";                    // 红色
 }

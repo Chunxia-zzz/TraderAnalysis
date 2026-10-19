@@ -229,7 +229,7 @@ def get_watchlist() -> list[str]:
 │           │     ├─ C4 日线 RSI6        (20) (80 - rsi) / 60
 │           │     ├─ C5 周线 MACD 百分位 (10) 1 - percentile_rank(52)
 │           │     ├─ C6 60 日回撤        (15) (drawdown - 0.05) / 0.20
-│           │     └─ 大盘温度加成：composite < 40 时最多 +15
+│           │     └─ 大盘温度加成：composite > 60（恐慌口径，2026-10-19 反转）时最多 +15
 │           │
 │           ├─ [storage] 写入评分结果
 │           ├─ [logger] 写评分日志

@@ -1,7 +1,8 @@
 """市场温度评分模块。
 
 通过 3 个维度加权评估市场情绪冷热程度，输出综合评分（0~100）及目标仓位建议。
-评分越低=越恐慌=应加仓，评分越高=越贪婪=应减仓。
+评分越高=越恐慌=越值得加仓，评分越低=越贪婪=应减仓。
+（2026-10-19 镜像反转：与个股评分 total_score 同向，高分=机会，子项均为「越恐慌分越高」）
 
 维度：日线技术面(50%) + 周线技术面(35%) + 价格位置(15%)
 数据来源：完全从 storage 读取已入库的 K 线 + 指标，不调用 Futu API。
@@ -19,16 +20,16 @@ from trader_analysis.futu_strategy import config, storage
 
 logger = logging.getLogger(__name__)
 
-# ── 状态文案映射 ──────────────────────────────────────────────────────────────
+# ── 状态文案映射（高分=恐慌=加仓，2026-10-19 镜像反转）────────────────────────
 _STATUS_LEVELS: list[tuple[float, str, str]] = [
-    (5, "极端恐慌", "融资+期权超配"),
-    (15, "极度恐慌", "重仓逆势买入"),
-    (30, "偏悲观", "积极加仓"),
-    (45, "略偏冷", "适度加仓"),
-    (55, "中性", "维持仓位"),
-    (70, "略偏热", "适度减仓"),
-    (85, "偏贪婪", "积极减仓"),
-    (100, "极度贪婪", "大幅减仓"),
+    (95, "极端恐慌", "融资+期权超配"),
+    (85, "极度恐慌", "重仓逆势买入"),
+    (70, "偏悲观", "积极加仓"),
+    (55, "略偏冷", "适度加仓"),
+    (45, "中性", "维持仓位"),
+    (30, "略偏热", "适度减仓"),
+    (15, "偏贪婪", "积极减仓"),
+    (0, "极度贪婪", "大幅减仓"),
 ]
 
 NEUTRAL_SCORE = 50.0
@@ -57,11 +58,29 @@ def _calc_pct_b(close: float, upper: float, lower: float) -> float:
 
 
 def _map_status(composite: float) -> tuple[str, str]:
-    """综合评分 → (市场状态文案, 操作建议)。"""
+    """综合评分 → (市场状态文案, 操作建议)。高分=恐慌=加仓方向。"""
     for threshold, label, action in _STATUS_LEVELS:
-        if composite <= threshold:
+        if composite >= threshold:
             return label, action
     return "极度贪婪", "大幅减仓"
+
+
+def _map_position(composite: float, heavy_extreme: bool, light_extreme: bool) -> float:
+    """仓位映射纯函数: 30% ~ 120%（高分=恐慌=高仓位）。
+
+    与 2026-10-19 反转前旧口径逐位等价（composite_new = 100 - composite_old）：
+      heavy: 旧 100+(15-c_old)*20/15 ≡ 新 100+(c_new-85)*20/15
+      light: 旧 85+(25-c_old)*1.5  ≡ 新 85+(c_new-75)*1.5
+      normal: 旧 85-(c_old-25)*55/75 ≡ 新 30+c_new*55/75
+    """
+    if heavy_extreme:
+        # composite 85->100 映射到 100->120%
+        return _clamp(100 + (composite - 85) * (20.0 / 15), 100, 120)
+    if light_extreme:
+        # composite 75->85 映射到 85->100%
+        return _clamp(85 + (composite - 75) * (15.0 / 10), 85, 100)
+    # 正常区: composite 0->75 映射到 30->85%
+    return _clamp(30 + composite * (55.0 / 75), 30, 85)
 
 
 # ── 维度 1：日线技术面 (50%) ──────────────────────────────────────────────────
@@ -70,34 +89,34 @@ def _map_status(composite: float) -> tuple[str, str]:
 def _score_daily_tech(spy_df: pd.DataFrame, qqq_df: pd.DataFrame) -> dict:
     """
     SPY + QQQ 各 3 项：RSI score + MACD percentile + BB %B score。
-    取 6 项算术平均。
+    取 6 项算术平均。方向：越恐慌（RSI 低/MACD 低/%B 低）分越高。
     """
     scores = []
     breakdown = {}
 
     for label, df in [("SPY", spy_df), ("QQQ", qqq_df)]:
         last = df.iloc[-1]
-        # RSI score: 分档制，每 10 点一档（<10→0, 10-20→10, ..., >90→100）
+        # RSI score: 分档制镜像，每 10 点一档（<10→100, 10-20→90, ..., >90→0）
         rsi = float(last.get("rsi6", 50))
-        rsi_score = _clamp(int(rsi / 10) * 10.0)
+        rsi_score = _clamp(100 - int(rsi / 10) * 10.0)
         scores.append(rsi_score)
         breakdown[f"{label}_RSI"] = round(rsi, 1)
         breakdown[f"{label}_RSI_score"] = round(rsi_score, 1)
 
-        # MACD histogram percentile (lookback=252)
+        # MACD histogram percentile (lookback=252)：百分位越低（越弱）分越高
         macd_series = df["macd"].dropna()
         macd_current = float(last.get("macd", 0))
         macd_pct = _percentile_rank(macd_series, macd_current, 252)
-        macd_score = macd_pct * 100
+        macd_score = (1 - macd_pct) * 100
         scores.append(macd_score)
         breakdown[f"{label}_MACD_score"] = round(macd_score, 1)
 
-        # Bollinger %B score: clamp(%B * 100)
+        # Bollinger %B score: 越靠近下轨分越高
         close = float(last.get("close", 0))
         upper = float(last.get("boll_upper", 0))
         lower = float(last.get("boll_lower", 0))
         pct_b = _calc_pct_b(close, upper, lower)
-        bb_score = _clamp(pct_b * 100)
+        bb_score = _clamp((1 - pct_b) * 100)
         scores.append(bb_score)
         breakdown[f"{label}_BB_pctB"] = round(pct_b, 3)
         breakdown[f"{label}_BB_score"] = round(bb_score, 1)
@@ -112,34 +131,34 @@ def _score_daily_tech(spy_df: pd.DataFrame, qqq_df: pd.DataFrame) -> dict:
 def _score_weekly_tech(spy_weekly: pd.DataFrame, qqq_weekly: pd.DataFrame) -> dict:
     """
     SPY + QQQ 各 3 项：周线 RSI score + 周线 MACD percentile + 周线 BB %B。
-    取 6 项算术平均。
+    取 6 项算术平均。方向：越恐慌分越高。
     """
     scores = []
     breakdown = {}
 
     for label, df in [("SPY", spy_weekly), ("QQQ", qqq_weekly)]:
         last = df.iloc[-1]
-        # Weekly RSI score: 分档制，每 10 点一档（<10→0, 10-20→10, ..., >90→100）
+        # Weekly RSI score: 分档制镜像（<10→100, 10-20→90, ..., >90→0）
         rsi = float(last.get("rsi6", 50))
-        rsi_score = _clamp(int(rsi / 10) * 10.0)
+        rsi_score = _clamp(100 - int(rsi / 10) * 10.0)
         scores.append(rsi_score)
         breakdown[f"{label}_Weekly_RSI"] = round(rsi, 1)
         breakdown[f"{label}_Weekly_RSI_score"] = round(rsi_score, 1)
 
-        # Weekly MACD histogram percentile (lookback=52)
+        # Weekly MACD histogram percentile (lookback=52)：百分位越低分越高
         macd_series = df["macd"].dropna()
         macd_current = float(last.get("macd", 0))
         macd_pct = _percentile_rank(macd_series, macd_current, 52)
-        macd_score = macd_pct * 100
+        macd_score = (1 - macd_pct) * 100
         scores.append(macd_score)
         breakdown[f"{label}_Weekly_MACD_score"] = round(macd_score, 1)
 
-        # Weekly Bollinger %B score: clamp(%B * 100)
+        # Weekly Bollinger %B score: 越靠近下轨分越高
         close = float(last.get("close", 0))
         upper = float(last.get("boll_upper", 0))
         lower = float(last.get("boll_lower", 0))
         pct_b = _calc_pct_b(close, upper, lower)
-        bb_score = _clamp(pct_b * 100)
+        bb_score = _clamp((1 - pct_b) * 100)
         scores.append(bb_score)
         breakdown[f"{label}_Weekly_BB_pctB"] = round(pct_b, 3)
         breakdown[f"{label}_Weekly_BB_score"] = round(bb_score, 1)
@@ -154,7 +173,7 @@ def _score_weekly_tech(spy_weekly: pd.DataFrame, qqq_weekly: pd.DataFrame) -> di
 def _score_price_position(spy_df: pd.DataFrame, qqq_df: pd.DataFrame) -> dict:
     """
     SPY + QQQ 各 3 项：52w 位置 + ATH 回撤 + MA200 偏离度。
-    取 6 项算术平均。
+    取 6 项算术平均。方向：价格越低（52w 位置低/回撤深/偏离 MA200 为负）分越高。
     """
     scores = []
     breakdown = {}
@@ -163,7 +182,7 @@ def _score_price_position(spy_df: pd.DataFrame, qqq_df: pd.DataFrame) -> dict:
         current_price = float(df.iloc[-1]["close"])
         breakdown[f"{label}_price"] = round(current_price, 2)
 
-        # 52-week position: from last 252 bars
+        # 52-week position: from last 252 bars（位置越低分越高）
         recent_252 = df.tail(252)
         high_52w = float(recent_252["high"].max())
         low_52w = float(recent_252["low"].min())
@@ -171,21 +190,21 @@ def _score_price_position(spy_df: pd.DataFrame, qqq_df: pd.DataFrame) -> dict:
             pos_52w = (current_price - low_52w) / (high_52w - low_52w)
         else:
             pos_52w = 0.5
-        score_52w = _clamp(pos_52w * 100)
+        score_52w = _clamp((1 - pos_52w) * 100)
         scores.append(score_52w)
         breakdown[f"{label}_52w_score"] = round(score_52w, 1)
 
         # ATH drawdown: max(high) across ALL stored bars
-        # 零分线 15%：大盘回撤 15% 即为极端恐慌（SPY 正常回调 5-10%）
+        # 满分线 15%：大盘回撤 15% 即满分恐慌（SPY 正常回调 5-10%）
         ath = float(df["high"].max())
         drawdown = (ath - current_price) / ath if ath > 0 else 0
-        ath_score = _clamp((1 - drawdown / 0.15) * 100)
+        ath_score = _clamp(drawdown / 0.15 * 100)
         scores.append(ath_score)
         breakdown[f"{label}_ATH_drawdown"] = round(drawdown, 4)
         breakdown[f"{label}_ATH_score"] = round(ath_score, 1)
 
         # MA200 deviation
-        # 映射区间 [-15%, +15%] → [0, 100]：大盘偏离 MA200 超过 15% 即为极端
+        # 映射区间 [-15%, +15%] → [100, 0]：偏离 MA200 达 -15% 满分，+15% 零分
         closes = df["close"].dropna()
         if len(closes) >= 200:
             ma200 = float(closes.tail(200).mean())
@@ -193,7 +212,7 @@ def _score_price_position(spy_df: pd.DataFrame, qqq_df: pd.DataFrame) -> dict:
         else:
             ma200 = float(closes.mean())
             deviation = 0.0
-        ma200_score = _clamp((deviation + 0.15) / 0.30 * 100)
+        ma200_score = _clamp((0.15 - deviation) / 0.30 * 100)
         scores.append(ma200_score)
         breakdown[f"{label}_MA200_dev"] = round(deviation, 4)
         breakdown[f"{label}_MA200_score"] = round(ma200_score, 1)
@@ -261,30 +280,21 @@ def _compute_score(
         + price_pos["score"] * weights["price_pos"]
     )
 
-    # 极端层判断
+    # 极端层判断（两级，高分=恐慌）
     spy_daily_rsi = float(spy_daily.iloc[-1].get("rsi6", 50)) if has_spy else 50
     spy_weekly_rsi = float(spy_weekly.iloc[-1].get("rsi6", 50)) if has_spy_w else 50
 
-    # 极端层判断（两级）
     heavy_extreme = (
-        composite <= 15
+        composite >= 85
         and spy_daily_rsi < 30
         and spy_weekly_rsi < 30
     )
-    light_extreme = composite <= 25 and not heavy_extreme
+    light_extreme = composite >= 75 and not heavy_extreme
 
     extreme_triggered = heavy_extreme or light_extreme
 
-    # 仓位映射: 30% ~ 120%
-    if heavy_extreme:
-        # composite 15->0 映射到 100->120%
-        target_position = _clamp(100 + (15 - composite) * (20.0 / 15), 100, 120)
-    elif light_extreme:
-        # composite 25->15 映射到 85->100%
-        target_position = _clamp(85 + (25 - composite) * (15.0 / 10), 85, 100)
-    else:
-        # 正常区: composite 25->100 映射到 85->30%
-        target_position = _clamp(85 - (composite - 25) * (55.0 / 75), 30, 85)
+    # 仓位映射: 30% ~ 120%（高分=恐慌=高仓位；与旧口径镜像等价）
+    target_position = _map_position(composite, heavy_extreme, light_extreme)
 
     # 杠杆工具建议
     leverage_tool = "none"
@@ -416,19 +426,19 @@ _ASSET_CONFIGS: dict[str, dict] = {
 
 
 def _score_asset_daily(df: pd.DataFrame, cfg: dict) -> dict:
-    """单资产日线技术面：RSI + MACD 百分位 + 布林 %B，三项平均。"""
+    """单资产日线技术面：RSI + MACD 百分位 + 布林 %B，三项平均。越恐慌分越高。"""
     last = df.iloc[-1]
     scores, breakdown = [], {}
 
     rsi = float(last.get("rsi6", 50))
-    rsi_score = _clamp(int(rsi / 10) * 10.0)
+    rsi_score = _clamp(100 - int(rsi / 10) * 10.0)
     scores.append(rsi_score)
     breakdown["daily_rsi"] = round(rsi, 1)
     breakdown["daily_rsi_score"] = round(rsi_score, 1)
 
     macd_current = float(last.get("macd", 0))
     macd_pct = _percentile_rank(df["macd"].dropna(), macd_current, 252)
-    macd_score = macd_pct * 100
+    macd_score = (1 - macd_pct) * 100
     scores.append(macd_score)
     breakdown["daily_macd_score"] = round(macd_score, 1)
 
@@ -437,7 +447,7 @@ def _score_asset_daily(df: pd.DataFrame, cfg: dict) -> dict:
         float(last.get("boll_upper", 0)),
         float(last.get("boll_lower", 0)),
     )
-    bb_score = _clamp(pct_b * 100)
+    bb_score = _clamp((1 - pct_b) * 100)
     scores.append(bb_score)
     breakdown["daily_bb_pctB"] = round(pct_b, 3)
     breakdown["daily_bb_score"] = round(bb_score, 1)
@@ -446,19 +456,19 @@ def _score_asset_daily(df: pd.DataFrame, cfg: dict) -> dict:
 
 
 def _score_asset_weekly(df: pd.DataFrame, cfg: dict) -> dict:
-    """单资产周线技术面：RSI + MACD 百分位 + 布林 %B，三项平均。"""
+    """单资产周线技术面：RSI + MACD 百分位 + 布林 %B，三项平均。越恐慌分越高。"""
     last = df.iloc[-1]
     scores, breakdown = [], {}
 
     rsi = float(last.get("rsi6", 50))
-    rsi_score = _clamp(int(rsi / 10) * 10.0)
+    rsi_score = _clamp(100 - int(rsi / 10) * 10.0)
     scores.append(rsi_score)
     breakdown["weekly_rsi"] = round(rsi, 1)
     breakdown["weekly_rsi_score"] = round(rsi_score, 1)
 
     macd_current = float(last.get("macd", 0))
     macd_pct = _percentile_rank(df["macd"].dropna(), macd_current, 52)
-    macd_score = macd_pct * 100
+    macd_score = (1 - macd_pct) * 100
     scores.append(macd_score)
     breakdown["weekly_macd_score"] = round(macd_score, 1)
 
@@ -467,7 +477,7 @@ def _score_asset_weekly(df: pd.DataFrame, cfg: dict) -> dict:
         float(last.get("boll_upper", 0)),
         float(last.get("boll_lower", 0)),
     )
-    bb_score = _clamp(pct_b * 100)
+    bb_score = _clamp((1 - pct_b) * 100)
     scores.append(bb_score)
     breakdown["weekly_bb_pctB"] = round(pct_b, 3)
     breakdown["weekly_bb_score"] = round(bb_score, 1)
@@ -476,30 +486,30 @@ def _score_asset_weekly(df: pd.DataFrame, cfg: dict) -> dict:
 
 
 def _score_asset_price_position(df: pd.DataFrame, cfg: dict) -> dict:
-    """单资产价格位置：52w 高低位 + ATH 回撤 + MA200 偏离，三项平均。"""
+    """单资产价格位置：52w 高低位 + ATH 回撤 + MA200 偏离，三项平均。越恐慌分越高。"""
     scores, breakdown = [], {}
     current_price = float(df.iloc[-1]["close"])
 
-    # 52 周位置
+    # 52 周位置（位置越低分越高）
     recent_252 = df.tail(252)
     high_52w = float(recent_252["high"].max())
     low_52w  = float(recent_252["low"].min())
     pos_52w  = (current_price - low_52w) / (high_52w - low_52w) if high_52w > low_52w else 0.5
-    score_52w = _clamp(pos_52w * 100)
+    score_52w = _clamp((1 - pos_52w) * 100)
     scores.append(score_52w)
     breakdown["pos_52w"]   = round(pos_52w, 3)
     breakdown["score_52w"] = round(score_52w, 1)
 
-    # ATH 回撤（阈值按资产类型调整）
+    # ATH 回撤（回撤越深分越高；满分线按资产类型调整）
     ath = float(df["high"].max())
     drawdown  = (ath - current_price) / ath if ath > 0 else 0
     ath_zero  = cfg["ath_drawdown_zero"]
-    ath_score = _clamp((1 - drawdown / ath_zero) * 100)
+    ath_score = _clamp(drawdown / ath_zero * 100)
     scores.append(ath_score)
     breakdown["ath_drawdown"] = round(drawdown, 4)
     breakdown["ath_score"]    = round(ath_score, 1)
 
-    # MA200 偏离（映射区间按资产类型调整）
+    # MA200 偏离（偏离越负分越高；映射区间按资产类型调整）
     closes   = df["close"].dropna()
     ma_range = cfg["ma200_range"]
     if len(closes) >= 200:
@@ -508,7 +518,7 @@ def _score_asset_price_position(df: pd.DataFrame, cfg: dict) -> dict:
     else:
         ma200     = float(closes.mean())
         deviation = 0.0
-    ma200_score = _clamp((deviation + ma_range) / (2 * ma_range) * 100)
+    ma200_score = _clamp((ma_range - deviation) / (2 * ma_range) * 100)
     scores.append(ma200_score)
     breakdown["ma200_dev"]   = round(deviation, 4)
     breakdown["ma200_score"] = round(ma200_score, 1)
