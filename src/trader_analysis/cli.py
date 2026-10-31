@@ -85,6 +85,7 @@ def score(
     from datetime import date, timedelta
 
     from trader_analysis.futu_strategy import config
+    from trader_analysis.futu_strategy.market_clock import filter_week_closed
     from trader_analysis.futu_strategy.scorer import calculate_score
     from trader_analysis.futu_strategy.storage import (
         init_db,
@@ -118,7 +119,7 @@ def score(
                 end_idx = total_rows - i + 1
                 daily_slice = daily_all.iloc[:end_idx]
                 score_date = str(daily_slice.iloc[-1].get("date", ""))
-                weekly_slice = weekly_all[weekly_all["date"] <= score_date]
+                weekly_slice = filter_week_closed(weekly_all, score_date)
                 if weekly_slice.empty:
                     continue
                 try:
@@ -156,7 +157,7 @@ def score(
 
             for score_date in pending_dates:
                 daily_slice = daily_all[daily_all["date"] <= score_date]
-                weekly_slice = weekly_all[weekly_all["date"] <= score_date]
+                weekly_slice = filter_week_closed(weekly_all, score_date)
                 if weekly_slice.empty:
                     continue
                 try:

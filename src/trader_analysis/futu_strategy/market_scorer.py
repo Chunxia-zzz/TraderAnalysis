@@ -16,7 +16,7 @@ from datetime import date as dt_date
 import numpy as np
 import pandas as pd
 
-from trader_analysis.futu_strategy import config, storage
+from trader_analysis.futu_strategy import config, market_clock, storage
 
 logger = logging.getLogger(__name__)
 
@@ -620,10 +620,8 @@ def compute_asset_temperature_history(asset_key: str, days: int = 60) -> list[di
         daily_df = daily_all.iloc[:end_idx].copy()
         current_date = str(daily_df.iloc[-1].get("date", ""))
 
-        if not weekly_all.empty:
-            weekly_df = weekly_all[weekly_all["date"] <= current_date].copy()
-        else:
-            weekly_df = pd.DataFrame()
+        # 周线在 as_of 当日是否已定稿（周线 date 记周一，周五收盘才成立）
+        weekly_df = market_clock.filter_week_closed(weekly_all, current_date)
 
         try:
             dt = _safe_score(_score_asset_daily, daily_df, cfg, dimension_name="")
@@ -689,10 +687,10 @@ def backfill_market_temperature(days: int = 60) -> int:
         spy_daily = spy_daily_all.iloc[:end_idx].copy()
         qqq_daily = qqq_daily_all.iloc[:min(end_idx, len(qqq_daily_all))].copy()
 
-        # 周线：找到日期 <= 当天的周线
+        # 周线：只取当天已定稿的周线（周五收盘才成立，避免前视偏差）
         current_date = spy_daily.iloc[-1].get("date", "")
-        spy_weekly = spy_weekly_all[spy_weekly_all["date"] <= current_date].copy()
-        qqq_weekly = qqq_weekly_all[qqq_weekly_all["date"] <= current_date].copy()
+        spy_weekly = market_clock.filter_week_closed(spy_weekly_all, current_date)
+        qqq_weekly = market_clock.filter_week_closed(qqq_weekly_all, current_date)
 
         score_date = str(current_date)
 

@@ -12,8 +12,10 @@ import pandas as pd
 
 from trader_analysis.futu_strategy.market_clock import (
     filter_closed_bars,
+    filter_week_closed,
     is_bar_closed,
     market_tz,
+    weekly_bar_usable,
 )
 
 ET = ZoneInfo("America/New_York")
@@ -102,6 +104,48 @@ def test_weekly_date_not_monday_still_normalized():
 
 
 # ── 4H（date 是 K 线结束时刻） ─────────────────────────────────────────────
+
+
+def test_weekly_bar_usable_before_friday():
+    """回填切片：周一~周四都还没这根周线（2026-10-31 修的前视偏差）。"""
+    for day in ("2026-10-26", "2026-10-27", "2026-10-28", "2026-10-29"):
+        assert weekly_bar_usable("2026-10-26", day) is False
+
+
+def test_weekly_bar_usable_from_friday():
+    """周五当天收盘后才算成立，之后一直可用。"""
+    assert weekly_bar_usable("2026-10-26", "2026-10-30") is True
+    assert weekly_bar_usable("2026-10-26", "2026-11-02") is True
+    assert weekly_bar_usable("2026-10-19", "2026-10-23") is True
+
+
+def test_weekly_bar_usable_normalizes_weekday():
+    """非周一的 date 也先归一化到该周周一，再算周五。"""
+    assert weekly_bar_usable("2026-10-28", "2026-10-29") is False
+    assert weekly_bar_usable("2026-10-28", "2026-10-30") is True
+
+
+def test_weekly_bar_usable_unparsable_passes():
+    assert weekly_bar_usable(None, "2026-10-30") is True
+    assert weekly_bar_usable("2026-10-26", "not-a-date") is True
+
+
+def test_filter_week_closed_excludes_current_week_midweek():
+    """核心回归：补算 10/27~10/29 时只能看到上一周那根，不能看到本周那根。"""
+    df = pd.DataFrame({"date": ["2026-10-19", "2026-10-26"], "close": [1.0, 2.0]})
+
+    for day in ("2026-10-26", "2026-10-27", "2026-10-28", "2026-10-29"):
+        assert list(filter_week_closed(df, day)["date"]) == ["2026-10-19"]
+
+    assert list(filter_week_closed(df, "2026-10-30")["date"]) == ["2026-10-19", "2026-10-26"]
+
+
+def test_filter_week_closed_empty_and_missing_column():
+    empty = pd.DataFrame({"date": [], "close": []})
+    assert filter_week_closed(empty, "2026-10-30") is empty
+    no_date = pd.DataFrame({"close": [1.0]})
+    assert filter_week_closed(no_date, "2026-10-30") is no_date
+    assert filter_week_closed(None, "2026-10-30") is None
 
 
 def test_4h_bar_dropped_while_running():

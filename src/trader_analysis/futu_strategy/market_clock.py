@@ -55,9 +55,11 @@ __all__ = [
     "CLOSE_HOUR",
     "allow_partial_bar",
     "filter_closed_bars",
+    "filter_week_closed",
     "is_bar_closed",
     "market_tz",
     "now_in_market",
+    "weekly_bar_usable",
 ]
 
 #: 各市场收盘时刻（本地时间整点）。美股与港股都是 16:00。
@@ -203,6 +205,41 @@ def filter_closed_bars(
         return df
 
     mask = df[column].map(lambda v: is_bar_closed(ktype, v, code, now))
+    return df[mask.fillna(True).astype(bool)]
+
+
+def weekly_bar_usable(bar_value: object, as_of: object) -> bool:
+    """回填用：`as_of` 这一日收盘后，该周线是否已经定稿可用。
+
+    周线 `date` 记的是该周**周一**，整周聚合要等**周五收盘**才成立。
+    因此周一的周线在周二、周三、周四都还不存在，不能拿来算那几天的温度/评分
+    （否则就是用「周五才知道的整周数据」去算周二的分数 = 前视偏差）。
+
+    这里只做**日粒度**比较（`as_of` 视为当日已收盘），与 `is_bar_closed`
+    的「时刻粒度」判断互补：后者用于入库前拦截盘中半截 K 线，前者用于
+    逐日回填/补算历史时切片。两者共用「周一 + 4 天」这条规则。
+
+    解析失败时**放行**（返回 True），与 `is_bar_closed` 的安全默认一致。
+    """
+    bar_date = _to_date(bar_value)
+    as_of_date = _to_date(as_of)
+    if bar_date is None or as_of_date is None:
+        return True
+    # 先归一化到周一再 +4 天，任何 weekday 都能算出正确的周五
+    monday = bar_date - timedelta(days=bar_date.weekday())
+    return as_of_date >= monday + timedelta(days=4)
+
+
+def filter_week_closed(df, as_of: object, column: str = "date"):
+    """只保留在 `as_of` 当日已收盘定稿的周线，返回新 DataFrame。
+
+    用于 `temperature --backfill` / `score --backfill` 等逐日切片场景；
+    不做盘中判断（历史日期一律视为已收盘），也不受 `TA_ALLOW_PARTIAL_BAR` 影响。
+    """
+    if df is None or getattr(df, "empty", True) or column not in df.columns:
+        return df
+
+    mask = df[column].map(lambda v: weekly_bar_usable(v, as_of))
     return df[mask.fillna(True).astype(bool)]
 
 
