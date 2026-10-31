@@ -1,6 +1,11 @@
 # 标的池管理模块 技术设计文档
 
 > 最后更新：2026-08-20 | 版本：v1.1 | 状态：P0+P1+P2 已实现
+>
+> ⚠️ **勘误（2026-11-01）**：`data/watchlist.json` **已删除**，JSON 回退路径、`migrate-watchlist` 命令、
+> `watchlist_storage.migrate_from_json()` 均已移除；标的池唯一数据源为 SQLite `watchlist` 表。
+> 下文涉及「JSON 回退 / 一次性迁移验收（49 条）」的段落属于**历史设计记录**，
+> 保留以说明演进过程，**不再代表当前实现**。
 
 ---
 
@@ -224,7 +229,7 @@ GET /api/watchlist
 }
 ```
 
-> 注：列表端点在 DB 记录基础上附加派生字段——`has_data`（该股票在 `kline_indicators` 中是否有数据）、`latest_close`（最新日线收盘价）、`ms_discount_pct`（晨星折价率 `(morningstar_fair_value - latest_close) / latest_close * 100`，ETF 类或数据缺失时为 `null`）。`categories` 直接来自 `config.WATCHLIST_CATEGORIES`（从 watchlist.json 读取）。
+> 注：列表端点在 DB 记录基础上附加派生字段——`has_data`（该股票在 `kline_indicators` 中是否有数据）、`latest_close`（最新日线收盘价）、`ms_discount_pct`（晨星折价率 `(morningstar_fair_value - latest_close) / latest_close * 100`，ETF 类或数据缺失时为 `null`）。`categories` 由 `config.get_categories()` 从 `watchlist` 表实际分类聚合（标签见 `config._CATEGORY_LABELS`；未登记分类回退为 key）。
 
 ---
 

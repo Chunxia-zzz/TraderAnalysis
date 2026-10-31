@@ -1,87 +1,128 @@
 """策略配置。
 
 修改此文件以自定义标的列表、仓位大小、评分阈值、OpenD 连接参数等。
+
+⚠️ 标的池（watchlist）的唯一权威数据源是 SQLite `watchlist` 表，
+本文件不读取任何 JSON 文件；新增/删除标的请走 API 或 watchlist_storage。
 """
 
 from __future__ import annotations
 
-import json
+import logging
 import os
+import sqlite3
+
+logger = logging.getLogger(__name__)
 
 # ── OpenD 连接 ────────────────────────────────────────────────────────────────
 OPEND_HOST: str = "127.0.0.1"
 OPEND_PORT: int = 11111
 
 # ── 监控标的列表 ──────────────────────────────────────────────────────────────
-_PROJECT_ROOT_CFG = os.path.normpath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..")
-)
-WATCHLIST_JSON_PATH: str = os.path.join(_PROJECT_ROOT_CFG, "data", "watchlist.json")
+# 唯一权威数据源：SQLite `watchlist` 表（见 watchlist_storage.py）。
+# 历史上曾从 data/watchlist.json 读取；该文件已于 2026-11-01 删除，
+# 代码中不再保留任何 JSON 回退路径。
+_CATEGORY_LABELS: dict[str, str] = {
+    # 以下 11 个沿用旧 watchlist.json 的中文标签，保持前端文案不变
+    "mag7": "MAG7",
+    "semiconductor": "强势半导体",
+    "storage": "存储",
+    "optical": "光通信",
+    "cloud": "云",
+    "space": "太空",
+    "crypto": "加密",
+    "china_adr": "中概",
+    "defensive_consumer": "防守消费股",
+    "emerging_market": "新兴市场",
+    "market_gold_btc": "大盘黄金比特币",
+    # 标的池扩充后新增的分类（按行业语义直译，未知分类回退为 key 本身）
+    "tech": "科技",
+    "software": "软件",
+    "ai_infra": "AI 基建",
+    "financials": "金融",
+    "healthcare": "医疗",
+    "consumer": "消费",
+    "industrials": "工业",
+    "cyclical": "周期",
+    "energy": "能源",
+    "commodity": "大宗商品",
+    "utilities": "公用事业",
+    "defensive": "防守",
+    "sector_etf": "行业 ETF",
+    "hk_stock": "港股",
+}
 
 
-def _load_watchlist() -> tuple[list[dict], dict[str, str]]:
-    """从 watchlist.json 加载标的池，返回 (items, categories)。"""
-    with open(WATCHLIST_JSON_PATH, encoding="utf-8") as f:
-        data = json.load(f)
-    categories = data.get("categories", {})
-    items = data.get("watchlist", [])
-    return items, categories
-
-
-def _to_futu_code(item: dict) -> str:
-    """将 JSON 条目转为 Futu 格式代码，如 US.SNDK、HK.07709。"""
-    market = item["market"]
-    ticker = item["ticker"]
-    return f"{market}.{ticker}"
-
-
-_WATCHLIST_ITEMS, WATCHLIST_CATEGORIES = _load_watchlist()
-
-# JSON 回退列表（用于 watchlist 表为空时）
-_WATCHLIST_FROM_JSON: list[str] = [_to_futu_code(item) for item in _WATCHLIST_ITEMS]
-_WATCHLIST_DETAIL_FROM_JSON: list[dict] = [
-    {**item, "futu_code": _to_futu_code(item)} for item in _WATCHLIST_ITEMS
-]
+def _db_ready() -> bool:
+    """数据库文件存在才查表，避免在全新环境里意外创建空库。"""
+    return os.path.exists(DB_PATH)
 
 
 def get_watchlist() -> list[str]:
-    """从 SQLite 读取活跃标的列表。表为空时回退到 JSON。"""
+    """从 SQLite 读取活跃标的代码（唯一数据源）。表为空时返回 []。"""
+    if not _db_ready():
+        logger.warning("数据库不存在（%s），标的池为空", DB_PATH)
+        return []
+    from trader_analysis.futu_strategy.watchlist_storage import get_all_codes
+
     try:
-        from trader_analysis.futu_strategy.watchlist_storage import get_all_codes, watchlist_count
-        if watchlist_count() > 0:
-            return get_all_codes()
-    except Exception:
-        pass
-    return _WATCHLIST_FROM_JSON
+        return get_all_codes()
+    except sqlite3.OperationalError:
+        logger.warning("watchlist 表尚未创建，标的池为空")
+        return []
 
 
 def get_watchlist_detail() -> list[dict]:
-    """从 SQLite 读取完整标的信息。表为空时回退到 JSON。"""
+    """从 SQLite 读取完整标的信息（唯一数据源）。表为空时返回 []。"""
+    if not _db_ready():
+        logger.warning("数据库不存在（%s），标的池为空", DB_PATH)
+        return []
+    from trader_analysis.futu_strategy.watchlist_storage import (
+        get_watchlist_detail as _get_detail,
+    )
+
     try:
-        from trader_analysis.futu_strategy.watchlist_storage import get_watchlist_detail as _get_detail, watchlist_count
-        if watchlist_count() > 0:
-            return _get_detail()
-    except Exception:
-        pass
-    return _WATCHLIST_DETAIL_FROM_JSON
+        return _get_detail()
+    except sqlite3.OperationalError:
+        logger.warning("watchlist 表尚未创建，标的池为空")
+        return []
+
+
+def get_categories() -> dict[str, str]:
+    """从 SQLite 读取实际存在的分类，返回 {key: 中文标签}。
+
+    标签取自 _CATEGORY_LABELS；未知分类直接以 key 作标签，不臆造文案。
+    """
+    if not _db_ready():
+        return {}
+    from trader_analysis.futu_strategy.watchlist_storage import list_categories
+
+    try:
+        keys = list_categories()
+    except sqlite3.OperationalError:
+        return {}
+    return {k: _CATEGORY_LABELS.get(k, k) for k in keys}
 
 
 # 兼容属性：供现有模块继续使用 config.WATCHLIST
 # 注意：这是动态属性，每次访问时从 DB 读取
 class _WatchlistProxy(list):
     """透明代理，访问时动态读取 DB。"""
+
     def __iter__(self):
         return iter(get_watchlist())
+
     def __len__(self):
         return len(get_watchlist())
+
     def __getitem__(self, idx):
         return get_watchlist()[idx]
+
     def __bool__(self):
         return bool(get_watchlist())
 
 
 WATCHLIST = _WatchlistProxy()
-WATCHLIST_DETAIL = _WATCHLIST_DETAIL_FROM_JSON  # API 层已改为从 DB 读，此处仅兼容
 
 # ── 仓位配置 ───────────────────────────────────────────────────────────────────
 POSITION_CONFIG: dict = {

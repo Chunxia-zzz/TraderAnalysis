@@ -54,7 +54,7 @@ Swagger UI：`http://localhost:8000/docs`
 | K 线 + 指标 (`/api/indicators`) | 每日收盘后更新一次（美东 16:00 / 北京 04:00） | 缓存至次日凌晨 |
 | 个股评分 (`/api/scores/latest`) | 跟随 `trader-analysis run` 执行 | 同上 |
 | 市场温度 (`/api/market-temperature`) | 跟随 `trader-analysis temperature` 执行 | 同上 |
-| 标的池 (`/api/watchlist`) | **通过标的管理页/API 增删改后变化**（存 SQLite `watchlist` 表；`data/watchlist.json` 只在表为空时作回退） | 可长期缓存 |
+| 标的池 (`/api/watchlist`) | **通过标的管理页/API 增删改后变化**（存 SQLite `watchlist` 表，**唯一数据源**；JSON 回退路径已于 2026-11-01 移除） | 可长期缓存 |
 
 > **注意**：周末/节假日不产生新数据，API 返回最近一个交易日的结果。
 
@@ -514,6 +514,10 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
   ]
 }
 ```
+
+> **`categories` 字段（2026-11-01 起）**：由 `config.get_categories()` 从 `watchlist` 表**实际存在的分类**聚合
+> （按标的数降序，排除空分类与 `exited` 标的），标签取 `config._CATEGORY_LABELS`，未登记的分类直接回退为 key 本身。
+> 此前该字段读自 `data/watchlist.json`（已删除），只包含 11 个过时分类。
 
 **`recommended_strategy` 字段说明（v3.1+）：**
 
@@ -2125,5 +2129,9 @@ supports/resistances 每个元素新增三个字段，用于前端在 K 线图�
 **请求体**：与 GET 返回的 `groups` 结构一致（含 subgroups、short_bottom/short_top、calib 字段）。
 
 **校验**：各子类权重 = 组权重、各组总和 = 100，不满足返回 400。配置存 `data/target_allocation.json`。
+
+> **定位（2026-11-01 明确）**：该文件是**运行时缓存**（cache），页面可随时改写，**不入库、不跟踪变化**。
+> 文件缺失时回退到 `allocation.DEFAULT_ALLOCATION` 并记 warning —— 内置默认值与当前意图可能不一致，
+> 缓存丢失后请在页面上重新保存一次以重建。
 
 

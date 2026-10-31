@@ -4,6 +4,46 @@
 
 ---
 
+## [2026-11-01]
+
+### 重构 — 标的池数据源收敛为 SQLite 单一真相，删除 `data/watchlist.json`
+
+- **问题**：标的池存在**两个同时在服役的数据源**。`data/watchlist.json`（49 条，`last_updated` 停在 2026-06-18）已入库，
+  而真实数据是 SQLite `watchlist` 表 **195 条**。`config.py` 在**模块导入时**读 JSON，
+  `GET /api/watchlist` 的 `categories` 直接取该 JSON 的 11 个分类 → **前端筛选器比实际数据少了 15 个分类**，
+  且 git 里那份因「已入库」而显得权威，实际是废的。
+- **变更**：
+  - `config.py`：删除 `WATCHLIST_JSON_PATH` / `_load_watchlist()` / `_to_futu_code()` /
+    `_WATCHLIST_FROM_JSON` / `_WATCHLIST_DETAIL_FROM_JSON` / `WATCHLIST_DETAIL` / `WATCHLIST_CATEGORIES`；
+    `get_watchlist()` 与 `get_watchlist_detail()` 改为**只读 DB**（不再 `try/except` 回退）；
+    新增 `get_categories()`（从表内实际分类聚合）+ `_CATEGORY_LABELS`（26 个分类的中文标签，其中 11 个沿用旧文案）
+  - `watchlist_storage.py`：新增 `list_categories()`；删除 `migrate_from_json()`
+  - `api_server.py`：`categories` 改取 `config.get_categories()`（分类数 11 → **25**，排除空分类）
+  - `cli.py`：删除 `migrate-watchlist` 命令（一次性迁移早已完成，JSON 删除后无输入源）
+  - `config.py` 新增 `_db_ready()`：DB 文件不存在时直接返回空集并记 warning，避免在全新环境里**意外创建空库文件**
+  - 3 处 help 文案（`init_history` / `runner` / `daily_update`）不再提 JSON
+  - 删除 `data/watchlist.json`（git rm）
+- **行为变化（需注意）**：
+  - DB 不存在或表为空时，标的池为**空**并记 warning（旧实现会回退到 49 条静态列表）→ 全新 clone 需先导入标的池
+  - `GET /api/watchlist` 的 `categories` 从 11 个变为 25 个，且顺序按标的数降序
+  - `tests/test_config.py` 数据类断言改为「表为空则 skip」，`test_smoke.py` 只断言导入类型（便于 CI 无库运行）
+- **删除前校验**：JSON 49 条 vs DB 195 条，交集 45，**4 个仅存在于 JSON**：
+  `HK.07709` / `US.EUV` / `US.FOTO` / `US.SOXL`。四者在 `watchlist` 表均无记录（早已移出标的池），
+  但其历史 K 线仍保留在 `kline_indicators`（775 / 255 / 204 / 800 根），**未被本次删除影响**；
+  如需重新纳入，走 `POST /api/watchlist`。
+- **验证**：`pytest` **97 passed**；API 实测 `/api/watchlist` → `total=195`、`categories=25`、首条 `HK.00700`；
+  `config.get_watchlist()` / `get_watchlist_detail()` 均 195 条；全仓 `grep` 确认代码中无 JSON 引用残留。
+
+### 明确 — 目标仓位配置定位为运行时缓存（cache）
+
+- `data/target_allocation.json` **不进版本控制**，页面可随时改写、无需跟踪变化；`.gitignore` 显式登记（此前只是「未跟踪」，容易误提交）。
+- `allocation.load_allocation()` 在**缓存文件不存在**时新增 warning（原先静默回退）：
+  `DEFAULT_ALLOCATION` 的 BTC 段是 IBIT 10 / MSTR 6 / CRCL 4，与当前缓存里的 4 / 8 / 8 **不一致**，
+  静默回退会算出与实际意图不同的加仓建议。缓存丢失后请在页面上重新保存一次以重建。
+- 相关文档（`docs/api.md`、`docs/futu_strategy_docs/.../README.md`）同步标注「运行时缓存」定位。
+
+---
+
 ## [2026-10-31]
 
 ### 修复 — `temperature` / `score` 回填的周线前视偏差

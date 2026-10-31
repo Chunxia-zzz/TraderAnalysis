@@ -173,7 +173,7 @@ def main() -> None:
         nargs="+",
         default=config.WATCHLIST,
         metavar="CODE",
-        help="标的代码列表（默认使用 config.WATCHLIST）",
+        help="标的代码列表（默认使用数据库标的池）",
     )
     args = parser.parse_args()
     run_strategy(args.codes)

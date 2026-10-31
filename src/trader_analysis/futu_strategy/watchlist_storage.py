@@ -292,7 +292,7 @@ def get_all_codes(exclude_exited: bool = True) -> list[str]:
 
 
 def get_watchlist_detail() -> list[dict]:
-    """获取完整标的列表（用于替代 config.WATCHLIST_DETAIL）。"""
+    """获取完整标的列表（标的池唯一读取入口，供 API 与 CLI 使用）。"""
     conn = _get_conn()
     try:
         rows = conn.execute(
@@ -318,42 +318,15 @@ def watchlist_count() -> int:
         conn.close()
 
 
-def migrate_from_json(items: list[dict], categories: dict) -> int:
-    """从 watchlist.json 格式批量导入。返回导入数量。"""
-    count = 0
-    for item in items:
-        market = item["market"]
-        ticker = item["ticker"]
-        code = f"{market}.{ticker}"
-
-        if get_stock(code):
-            continue
-
-        tags_str = json.dumps(item.get("tags", []), ensure_ascii=False)
-
-        conn = _get_conn()
-        try:
-            conn.execute(
-                """INSERT OR IGNORE INTO watchlist
-                   (code, ticker, name, market, category, status, tags,
-                    target_price, stop_loss, thesis, notes)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    code,
-                    ticker,
-                    item.get("name", ticker),
-                    market,
-                    item.get("category", ""),
-                    item.get("status", "watching"),
-                    tags_str,
-                    item.get("target_price"),
-                    item.get("stop_loss"),
-                    item.get("thesis", ""),
-                    item.get("notes", ""),
-                ),
-            )
-            conn.commit()
-            count += 1
-        finally:
-            conn.close()
-    return count
+def list_categories() -> list[str]:
+    """返回表中实际存在的分类（按标的数降序，排除空分类与已退出标的）。"""
+    conn = _get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT category, COUNT(*) AS cnt FROM watchlist "
+            "WHERE status != 'exited' AND category != '' "
+            "GROUP BY category ORDER BY cnt DESC, category"
+        ).fetchall()
+        return [r["category"] for r in rows]
+    finally:
+        conn.close()

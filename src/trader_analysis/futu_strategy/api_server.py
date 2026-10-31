@@ -150,7 +150,7 @@ def get_watchlist(
 
     return {
         "total": len(items),
-        "categories": config.WATCHLIST_CATEGORIES,
+        "categories": config.get_categories(),
         "watchlist": items,
     }
 

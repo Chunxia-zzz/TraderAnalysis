@@ -9,7 +9,6 @@ def test_import_package():
 def test_import_futu_strategy():
     from trader_analysis.futu_strategy import config
     assert isinstance(config.WATCHLIST, list)
-    assert len(config.WATCHLIST) > 0
 
 
 def test_import_providers():

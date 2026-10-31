@@ -54,7 +54,7 @@ trader-analysis init
 trader-analysis init --start 2022-06-01 --force
 ```
 
-- 标的池由 **SQLite `watchlist` 表**提供（当前 **195 只**）；`data/watchlist.json`（49 条）只作**表为空时的回退**
+- 标的池由 **SQLite `watchlist` 表**提供（当前 **195 只**），是**唯一数据源**；`data/watchlist.json` 已删除，代码中不存在任何 JSON 回退路径
 - 支持断点续传：中断后重新运行，已完成的标的会自动跳过
 - 可选参数：`--codes US.AAPL US.TSLA`（指定标的）、`--force`（强制重拉）
 
@@ -131,7 +131,6 @@ trader-analysis run
 | `livermore` | 利弗莫尔关键点扫描（`--top` / `--all` / `--date` / `--persist` / `--backfill N`） | ✗ |
 | `backtest` | 信号回测（5 种模式：`hold` / `swing` / `trend` / `ribbon_long` / `ribbon_short`） | ✗ |
 | `fundamental` | 拉取基本面数据并评分（数据源 yfinance） | ✗ |
-| `migrate-watchlist` | `watchlist.json` → SQLite 一次性迁移 | ✗ |
 | `refresh-snapshot` | 刷新标的池静态快照字段（`trailing_pe` / `market_cap` 等） | ✓ |
 | `grid-create` / `grid-start` / `grid-stop` / `grid-status` | 网格交易引擎四件套 | ✓ |
 | `create-admin` | ⚠️ **当前不可用**：内部 `from ...auth import hash_password` / `...auth_storage import create_user`，而 `auth.py`、`auth_storage.py` **已随认证体系一并从仓库移除** → 执行会 `ImportError` | — |

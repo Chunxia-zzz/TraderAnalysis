@@ -71,13 +71,19 @@ DEFAULT_ALLOCATION: dict = {
 
 
 def load_allocation() -> dict:
-    """读目标配置，文件不存在或损坏时回退默认。"""
+    """读目标配置（运行时缓存），文件不存在或损坏时回退默认。"""
     if os.path.exists(ALLOCATION_PATH):
         try:
             with open(ALLOCATION_PATH, encoding="utf-8") as f:
                 return json.load(f)
         except Exception as exc:
             logger.warning(f"读取目标配置失败，使用默认: {exc}")
+    else:
+        logger.warning(
+            "目标仓位缓存不存在（%s），本次按内置 DEFAULT_ALLOCATION 计算；"
+            "内置默认值与当前意图可能不一致，请在页面上重新保存一次以重建缓存。",
+            ALLOCATION_PATH,
+        )
     return json.loads(json.dumps(DEFAULT_ALLOCATION))
 
 

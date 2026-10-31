@@ -125,7 +125,7 @@ def main() -> None:
         nargs="+",
         default=config.WATCHLIST,
         metavar="CODE",
-        help="标的代码列表（默认使用 watchlist.json 全部标的）",
+        help="标的代码列表（默认使用数据库标的池全部标的）",
     )
     parser.add_argument(
         "--force",

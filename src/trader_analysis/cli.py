@@ -173,39 +173,6 @@ def score(
 
 
 @app.command()
-def migrate_watchlist(
-    dry: bool = typer.Option(False, help="预览模式，不实际写入"),
-) -> None:
-    """从 watchlist.json 迁移到 SQLite（一次性操作）。"""
-    from trader_analysis.futu_strategy import config
-    from trader_analysis.futu_strategy.watchlist_storage import (
-        init_watchlist_table,
-        migrate_from_json,
-        watchlist_count,
-    )
-
-    init_watchlist_table()
-    existing = watchlist_count()
-    if existing > 0:
-        typer.echo(f"watchlist 表已有 {existing} 条记录。")
-        typer.echo("如需重新导入，请先清空表或手动删除相关记录。")
-        return
-
-    items, categories = config._load_watchlist()
-    typer.echo(f"从 watchlist.json 读取 {len(items)} 条记录")
-
-    if dry:
-        for item in items:
-            code = f"{item['market']}.{item['ticker']}"
-            typer.echo(f"  [DRY] {code} — {item['name']} ({item['category']})")
-        typer.echo(f"\n预览完成，共 {len(items)} 条。去掉 --dry 执行实际导入。")
-        return
-
-    count = migrate_from_json(items, categories)
-    typer.echo(f"迁移完成，写入 {count} 条记录。")
-
-
-@app.command()
 def refresh_snapshot(
     codes: Optional[list[str]] = typer.Option(None, help="指定代码，不传则全部刷新"),
 ) -> None:

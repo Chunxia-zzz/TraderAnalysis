@@ -135,8 +135,7 @@ scripts/                      # 运维脚本
 └── backfill_klines.py        # K 线回填
 
 data/
-├── watchlist.json            # 49 条回退列表（表为空时才用；**不是**主数据源）
-├── target_allocation.json    # 永久组合目标配置（页面可编辑，故意不入库）
+├── target_allocation.json    # 永久组合目标配置（**运行时缓存**：页面可编辑、随时更新、不入库）
 └── indicators.db             # SQLite 数据库（gitignored，运行时自动生成）
 
 logs/
@@ -157,8 +156,11 @@ logs/
 
 > ⚠️ **勘误（2026-10-12）**：本节此前写「标的池通过 `data/watchlist.json` 统一管理…新增或删除标的只需编辑 json，无需改代码」——
 > **这个说法已过时**。标的主数据源现在是 **SQLite `watchlist` 表**（195 行，26 个分类），
-> 通过标的管理页或 `POST/PATCH/DELETE /api/watchlist` 增删改；
-> `data/watchlist.json`（49 条）**只在表为空时作回退**。
+> 通过标的管理页或 `POST/PATCH/DELETE /api/watchlist` 增删改。
+>
+> ⚠️ **勘误（2026-11-01）**：`data/watchlist.json` **已删除**，代码中不再有 JSON 回退路径，
+> `migrate-watchlist` 命令与 `watchlist_storage.migrate_from_json()` 一并移除。
+> DB 为空的场景（全新 clone）下标的池为空并记 warning，不再回退到静态文件。
 
 标的池由 SQLite `watchlist` 表管理，`config.py` 通过**动态属性**暴露（每次访问都查库，所以改完无需重启）：
 
