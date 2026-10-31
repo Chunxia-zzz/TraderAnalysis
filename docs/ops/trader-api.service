@@ -1,0 +1,14 @@
+[Unit]
+Description=TraderAnalysis API
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/opt/trader-analysis
+EnvironmentFile=/opt/trader-analysis/.env
+ExecStart=/opt/trader-analysis/.venv/bin/python -m trader_analysis serve
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

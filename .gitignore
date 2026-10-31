@@ -141,4 +141,5 @@ data/*.db-journal
 data/target_allocation.json
 # DB 备份（每个 ~70MB，仅本地留存，禁止入库）
 data/*.db.bak-*
+data/_backup/
 logs/

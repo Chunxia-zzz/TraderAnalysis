@@ -133,10 +133,12 @@ def main():
             if c:
                 s += f"   上涨空间 DB口径={space_db:7.1f}%  API口径={space_api:7.1f}%  现价={c}"
             print(s)
-        with open(os.path.join(ROOT, 'logs', 'morningstar_audit.json'), 'w', encoding='utf-8') as f:
+        audit_dir = os.path.join(ROOT, 'logs', 'reports')
+        os.makedirs(audit_dir, exist_ok=True)
+        with open(os.path.join(audit_dir, 'morningstar_audit.json'), 'w', encoding='utf-8') as f:
             json.dump([{'code': t, 'db_fv': d, 'api_fv': a, 'diff_pct': round(p, 2), 'close': c}
                        for t, d, a, p, c in mismatch], f, ensure_ascii=False, indent=2)
-        print(f"\n差异明细已写入 logs/morningstar_audit.json")
+        print("\n差异明细已写入 logs/reports/morningstar_audit.json")
     else:
         print("全部一致（差异 ≤1%）")
 

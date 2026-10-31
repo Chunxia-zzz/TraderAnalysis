@@ -42,6 +42,26 @@
   静默回退会算出与实际意图不同的加仓建议。缓存丢失后请在页面上重新保存一次以重建。
 - 相关文档（`docs/api.md`、`docs/futu_strategy_docs/.../README.md`）同步标注「运行时缓存」定位。
 
+### 运维与清理 — P0 收尾（快照归档 / logs 分目录 / 服务器配置入库）
+
+- **数据库快照归档**：4 个 `data/indicators.db.bak-*`（合计 286 MB）移入 `data/_backup/`，**只移动不删除**。
+  `.gitignore` 补 `data/_backup/` —— 原规则 `data/*.db.bak-*` 只匹配一层，**子目录会漏网**。
+- **`logs/` 按用途分目录**（根目录不再堆文件）：
+  - `logs/reports/` 报告类：日更日报、晨星核对明细
+  - `logs/scratch/` 一次性排查物：图表截图、临时 json、诊断文本（13 个）
+  - `logs/serve/` 进程输出：`api_server.log` / `be_*.log` / `fe_*.log` / `local_cron.log`（11 个）
+  - 根目录只保留代码固定写入的 `score_log.jsonl`（`config.SCORE_LOG_FILE`）与 `trade_log.jsonl`
+- **两处写日志的路径同步**（否则下次运行又会在根目录生成）：
+  - `scripts/daily_sync.bat`：输出改到 `logs\serve\local_cron.log`，并加一行 `mkdir` 保证目录存在
+  - `scripts/audit_morningstar.py`：输出改到 `logs/reports/morningstar_audit.json`，写入前 `os.makedirs`
+- **服务器配置入库 `docs/ops/`**（此前只存在于服务器，重装即失传）：
+  `trader-api.service`、`nginx-trader.conf`、`nginx-gzip.conf` + `README.md`
+  （抓取命令、部署链路、以及「核验部署要看文件内容，别信服务器 `git log`」这个坑）
+- **`docs/reports/INDEX.md`**：日报索引。**正文不入库**（含账户 ID 与总资产），只登记位置与云端链接；
+  同时写明 `logs/` 的新目录约定与「确需入库必须先脱敏」的红线。
+- **校验**：三份配置与服务器 `diff` **逐字节一致**；`py_compile` 通过；`git check-ignore` 确认
+  `data/_backup/`、`logs/`、`data/target_allocation.json` 均已忽略。
+
 ---
 
 ## [2026-10-31]
