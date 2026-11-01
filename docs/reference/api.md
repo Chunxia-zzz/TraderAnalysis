@@ -1628,6 +1628,51 @@ assert stats["breakouts"] == len(breakouts)  # 各分组计数与 stats 一致
 
 ---
 
+## 附录：端点分组与实现说明
+
+**按分组统计**（合计 **37 个业务端点 + 1 个健康检查 = 38 条路由**，其中 **8 个写端点**）
+
+| 分组 | 端点数 | 说明 |
+|------|--------|------|
+| 健康检查 | 1 | `GET /health` |
+| 指标 | 2 | `/api/indicators`、`/api/indicators/latest` |
+| 个股评分 | 2 | `/api/scores/latest`、`/api/scores/overview` |
+| 标的池 CRUD | 7 | `GET/POST /api/watchlist`、`GET/PATCH/DELETE /api/watchlist/{code}`、`batch`、`refresh-snapshot` |
+| 市场温度 | 3 | `/api/market-temperature`、`/market-temperature/history`、`/asset-temperature/history` |
+| 信号 | 6 | `top-signals`、`bottom-signals`、`ema-cross-signals`、`trade-signals`、`livermore/signals`、`livermore/detail` |
+| 复盘与文案 | 7 | `analysis`、`daily-picks`、`content-generator`、`review`、`content-templates`、`PUT/DELETE content-templates/{key}` |
+| 交易执行 | 5 | `position-states`、`sell-log`、`tp-sl`、`grid/status`、`grid/orders` |
+| 回测 | 1 | `backtest/run` |
+| 持仓与配置 | 3 | `position`、`GET/PUT allocation` |
+| 基本面 | 1 | `fundamental` |
+
+**实现要点**
+
+- FastAPI 应用，自带 Swagger（`/docs`）
+- 启动钩子 `@app.on_event("startup")` 依次执行 `storage.init_db()`、`watchlist_storage.init_watchlist_table()`、
+  `template_store.init_templates_table()`，**幂等建表，无需手工初始化**
+- 除 `/api/position`、`/api/allocation` 外**不连 OpenD**，可脱离后端进程独立跑
+- CORS 全开放（`allow_origins/methods/headers` 均为 `*`），**不是仅 GET**
+- **无鉴权，全开放** —— 不要直接暴露到公网
+
+## 附录：API 层历史沿革（v2.0 设计 → 现状）
+
+> 旧文档里「只有 4 个端点 / 纯只读 / 无数据返 404」等说法，都来自 v2.0 初版设计，**早已不成立**。
+
+| 维度 | v2.0 初版设计 | 当前实现 |
+|------|--------------|---------|
+| 端点数 | 4 个 | 37 业务端点 + 1 健康检查 |
+| 无数据响应 | HTTP 404 + message | HTTP 200 + `{data: null, message}` |
+| `breakdown` 结构 | `{score, triggered}` | `{score, raw, ratio}` |
+| 标的池存储 | `watchlist.json` / `config.WATCHLIST_DETAIL` | SQLite `watchlist` 表（2026-11-01 起 JSON 已删） |
+| CORS | 仅 `GET` | 全方法 + 全 header |
+| 指标列 | `rsi14` | `rsi6` / `rsi12` / `rsi24` |
+| `ktype` | `1d` / `1w` | `1d` / `4h` / `1w` |
+| 只读保证 | 全部只读 | `/api/position`、`/api/allocation` 依赖本机 OpenD |
+| 鉴权 | 无 | 无（仍全开放） |
+
+---
+
 ## 附录：市场温度字段速查
 
 ### 顶层字段

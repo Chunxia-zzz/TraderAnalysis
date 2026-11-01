@@ -645,36 +645,11 @@ src/trader_analysis/
 
 ---
 
-## 8. 兼容性与迁移策略
+## 8. 兼容性与迁移策略（已完成，作废）
 
-### 8.1 迁移步骤
-
-```
-1. 新建 watchlist 表（`watchlist_storage.py` 的 `init_watchlist_table()`，建表 SQL 常量 `_CREATE_WATCHLIST_TABLE_SQL`，由 `api_server.py` 的 startup 钩子调用）
-2. 运行 migrate-watchlist 命令导入 JSON 数据
-3. config.py 中 WATCHLIST 改为 get_watchlist() 动态读取
-4. 验证所有依赖模块正常（init/update/score/run）
-5. watchlist.json 保留：DB 为主数据源，JSON 作为**分类来源 + 空表回退**
-```
-
-### 8.2 向后兼容
-
-| 模块 | 影响 | 适配方式 |
-|------|------|---------|
-| `init_history.py` | 使用 `config.WATCHLIST` | 无需改动（WATCHLIST 接口不变） |
-| `daily_update.py` | 同上 | 无需改动 |
-| `scorer.py` | 同上 | 无需改动 |
-| `runner.py` | 同上 | 无需改动 |
-| `api_server.py:/api/watchlist` | 迁移前返回 `config.WATCHLIST_DETAIL` | ✅ **已完成**：现由 `watchlist_storage.list_watchlist()` 从 DB 查询 |
-
-### 8.3 categories 管理
-
-现有 `watchlist.json` 中的 `categories` 字典处理方案：
-- **v1 简化方案：** `config.WATCHLIST_CATEGORIES` 由 `config._load_watchlist()` 在导入时**从 `watchlist.json` 动态读取**（并非硬编码常量），`GET /api/watchlist` 的 `categories` 字段即取自此；变动极低频，暂不落库
-- **v2 扩展：** 可加 `watchlist_categories` 表
-
----
-
+> 原为 JSON → SQLite 的迁移步骤、向后兼容方案与 `categories` 管理策略。
+> 迁移已完成，`watchlist.json` 已删除，`migrate-watchlist` 命令与
+> `watchlist_storage.migrate_from_json()` 一并移除，本节不再适用。
 ## 9. 边界情况
 
 | 场景 | 处理 |
@@ -715,13 +690,7 @@ src/trader_analysis/
 
 ---
 
-## 12. 验收标准（P0）
+## 12. 验收标准（已作废）
 
-- [ ] `trader-analysis migrate-watchlist` 成功导入 49 条记录（watchlist.json 全部条目）
-- [ ] `GET /api/watchlist` 返回结构与现有兼容（前端无感切换）
-- [ ] `POST /api/watchlist` 可新增标的（OpenD 离线时降级正常）
-- [ ] `PATCH /api/watchlist/US.AAPL` 可修改 notes/forward_pe 等
-- [ ] `PATCH` 尝试修改 trailing_pe/market_cap 时返回 200（body 含 `Fields not editable`）
-- [ ] `DELETE /api/watchlist/US.XXXX` 删除后不影响历史评分数据
-- [ ] `trader-analysis score` / `update` / `run` 功能不受影响
-- [ ] 单条 CRUD 响应时间 < 50ms
+> 原为 P0 迁移的验收清单（49 条导入、分类一致等）。迁移早已完成，
+> `data/watchlist.json` 已于 2026-11-01 删除，本节不再适用。

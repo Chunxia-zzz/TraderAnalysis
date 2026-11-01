@@ -6,6 +6,39 @@
 
 ## [2026-11-01]
 
+### 文档重构 — 按用途分层，合并重复，删未实现章节
+
+旧结构是「开发顺序」：`docs/` 根下 20 个文件平铺，`part_a~part_f` 是当年的施工编号，
+外加 `futu_strategy_docs/futu_strategy_docs/` 双层同名目录。找文档得先猜它属于哪个阶段。
+
+- **分层**（全部 `git mv`，历史可追溯）：
+  `overview/`（刚接手）· `guides/`（动手：troubleshooting / ops / reports-index）·
+  `reference/`（查询：api / storage）· `modules/`（改功能：9 份模块文档）·
+  `history/`（CHANGELOG / audits）· `archive/`（过时留证，附规则说明）
+- **新增 `docs/README.md` 总索引**：按「我现在要做什么」导航，而不是按目录猜
+- **合并删除 `modules/api-server.md`**：与 `reference/api.md` 重复（端点清单、通用约定、响应示例）。
+  保留唯一价值——**端点分组统计表**与**历史沿革（v2.0 设计 → 现状）**——并入 `api.md` 两个新附录，原文件删除
+- **`modules/market-temperature.md` 精简 1721 → 1241 行**：
+  - 删 §4.3 波动率(VIX) / §4.5 量能 / §4.6 避险 三节正文（代码从未实现，`vol_score`/`volume_score` 恒为 `None`），
+    保留编号与 3 行说明，避免下文引用错位
+  - 删 §8「指标计算代码参考」（约 320 行 v1.0 示例，文内自述与当前代码不一致，且与 `indicators.md` 重复），
+    改为指向 `indicators.md` 与本文 §4.0
+- **`modules/watchlist.md`**：`§8 兼容性与迁移策略`、`§12 验收标准` 标记作废（迁移早已完成，JSON 已删）
+- **`overview/architecture.md`**：
+  - 「本文档是历史设计稿，部分内容已与代码不符」→ 改为「架构与分层仍有效，实现细节已拆分到 modules」，
+    避免作为入口文件却先声明自己不可信
+  - 模块索引表全部指向新文件名；CLI 命令数 18 → **16**（实测）
+- **`history/audits/2026-10-19-consistency.md`**：加「已归档，结论不保证正确」声明，
+  点名两处已失效结论（16 张表、create-admin 断链）
+- **引用同步**：`AGENTS.md`（§3 目录表 / §6 文档规则 / §9 索引）、`README.md`（5 处）、
+  `docs/guides/ops/README.md`、`docs/reference/api.md`、`skills/trader-daily-update/SKILL.md`
+
+**验证**：24 个 markdown、35 条相对链接，**断链 0**（脚本逐条解析，非目测）；
+`pytest` 97 passed（未动代码）。
+
+> 遗留：`CHANGELOG.md` 内的历史条目仍指向旧路径（如 `part_b_storage.md`），
+> 按「不改写历史」原则保留，新增一条说明即可。
+
 ### 文档修复 — 示例脱敏 + 补齐温度/信号/关键点口径 + 新增排坑手册
 
 以「`docs/` 为唯一权威来源」做了一轮审计（对照本地记忆与资料库），按审计结论逐条修。**只改文档，不动代码。**

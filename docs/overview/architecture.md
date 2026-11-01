@@ -198,7 +198,7 @@ def get_watchlist() -> list[str]:
 | 评分系统 | [scoring.md](../modules/scoring.md) | **6 因子连续映射**，输出 0~100 分 + 信号（阈值 80 / 60） |
 | 交易执行 | [trade-executor.md](../modules/trade-executor.md) | 根据评分信号执行模拟盘买入，含仓位规则和调度机制 |
 | 持久化存储 | [storage.md](../reference/storage.md) | SQLite 数据库设计、storage.py 接口、初始化和增量更新脚本 |
-| API 服务 | [api-server.md](../modules/api-server.md) | ⚠️ **v2.0 初始设计稿，已过期** —— 现状请看 [`../reference/api.md`](../reference/api.md) |
+| API 服务 | [`reference/api.md`](../reference/api.md) | FastAPI 应用；端点清单、字段说明、实现要点与历史沿革都在那里（原 `api-server.md` 已合并删除） |
 | 标的池管理 | [watchlist.md](../modules/watchlist.md) | watchlist 表结构、CRUD API、导入流程 |
 | 基本面分析 | [fundamental.md](../modules/fundamental.md) | yfinance 采集 + 5 因子基本面评分 |
 | 仓位策略 | [market-temperature.md](../modules/market-temperature.md) | ⚠️ **含大量已废弃的 6 维度 / VIX 内容**，现状见 `market_scorer.py` |
@@ -345,7 +345,7 @@ pip install -e ".[dev]"
 
 ## CLI 命令
 
-共 **18 个命令**，完整清单与「是否需 OpenD」见根目录 [`README.md`](../../README.md) 的「全部 CLI 命令」表。常用：
+共 **16 个命令**，完整清单与「是否需 OpenD」见根目录 [`README.md`](../../README.md) 的「全部 CLI 命令」表。常用：
 
 ```bash
 # 启动 API 服务

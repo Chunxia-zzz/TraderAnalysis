@@ -69,3 +69,11 @@ docs/
 
 本次把文档从「按开发阶段平铺」（`docs/` 根下 20 个文件 + `futu_strategy_docs/` 双层同名目录）
 重组为按用途分层。**早期文档里的相对链接可能失效**，以本页路径为准。
+
+同批完成的内容精简（合计约 880 行）：
+
+- `modules/api-server.md` **合并进 `reference/api.md` 后删除**（端点分组统计与历史沿革并入附录）
+- `modules/market-temperature.md`：删除未实现的 §4.3(VIX) / §4.5(量能) / §4.6(避险) 正文，
+  以及 §8 与 `modules/indicators.md` 重复的示例代码（1721 → 1241 行）
+- `modules/watchlist.md`：`§8 兼容性与迁移策略`、`§12 验收标准` 标记作废（迁移已完成、JSON 已删）
+- `history/audits/` 的核对报告加「结论已过时」声明
