@@ -64,6 +64,9 @@ python scripts/agent/fetch_futu_skills.py  # 可选：需要富途行情/交易�
 7. **红线：以下内容一律不入库** —— 富途 `acc_id`、账户资产金额与持仓明细、`.env` 内容、私钥、任何 token。
    投递前自查：`git diff --cached | grep -iE "acc_id|token|password|secret|BEGIN .*PRIVATE"`。
 8. **派生物不入库**：`data/*.db`、`data/_backup/`、`logs/`、`.venv/`、`__pycache__/`。仓库只放能重建它们的东西。
+9. **仓位意图不入文档**：目标权重、现货标定区间、分批比例、加仓闸门这类「随时会变的个人想法」，
+   属于**可丢弃的运行期状态**，只看 `data/target_allocation.json` 与 `GET /api/allocation`。
+   **不要写进 README / `docs/`，做文档审计时也不要把它列为「文档缺失」去补。**
 
 ## 6. 文档与提交规则
 
