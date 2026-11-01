@@ -34,9 +34,9 @@ Futu（富途）量化评分与模拟盘交易系统。核心链路：**Futu Ope
 | `data/indicators.db` | SQLite 主库（15 张表；K 线 / 评分 / 信号 / 标的池）**不入库** |
 | `data/target_allocation.json` | 目标仓位配置，**运行时缓存**，页面可改、不入库 |
 | `data/_backup/` | 数据库快照，不入库 |
-| `docs/` | `CHANGELOG.md`（必读）、`api.md`、`futu_strategy_docs/`（设计文档） |
-| `docs/ops/` | 线上 systemd + nginx 配置副本（**改服务器必须回写这里**） |
-| `docs/reports/INDEX.md` | 日报索引（正文含账户信息，不入库） |
+| `docs/` | 文档总入口是 **`docs/README.md`**（按「我要干什么」导航）；分层：`overview/` `guides/` `reference/` `modules/` `history/` |
+| `docs/guides/ops/` | 线上 systemd + nginx 配置副本（**改服务器必须回写这里**） |
+| `docs/guides/reports-index.md` | 日报索引（正文含账户信息，不入库） |
 | `skills/` | 技能唯一真相源，见 §7 |
 | `scripts/` | 运维与一次性脚本；`scripts/agent/` 是 agent 相关工具 |
 | `tests/` | pytest，当前 **97 项** |
@@ -70,10 +70,10 @@ python scripts/agent/fetch_futu_skills.py  # 可选：需要富途行情/交易�
 
 ## 6. 文档与提交规则
 
-- 每次开发结束**统一更新** `docs/CHANGELOG.md`、`docs/api.md`、`README.md`，且必须与当前代码**完全一致**；
+- 每次开发结束**统一更新** `docs/history/CHANGELOG.md`、`docs/reference/api.md`、`README.md`，且必须与当前代码**完全一致**；
   不一致就如实标注或修正，不允许"文档先写着"。
-- 历史段落不要删改：保留原文 + 加一行 `> ⚠️ 勘误（日期）：…`。项目里已有先例（`docs/futu_strategy_docs/.../README.md`）。
-- 线上配置改完，把 `docs/ops/` 里的副本同步改掉。
+- 历史段落不要删改：保留原文 + 加一行 `> ⚠️ 勘误（日期）：…`。项目里已有先例（`docs/modules/watchlist.md` 顶部、`docs/overview/architecture.md` 顶部）。
+- 线上配置改完，把 `docs/guides/ops/` 里的副本同步改掉。
 - 提交信息用 `feat:` / `fix:` / `docs:` / `chore:` / `refactor:` 前缀。
 
 ## 7. 技能索引
@@ -116,12 +116,14 @@ python scripts/agent/fetch_futu_skills.py  # 可选：需要富途行情/交易�
 
 | 想知道 | 去 |
 |---|---|
-| 改了哪些东西、为什么改 | `docs/CHANGELOG.md`（最新在最上） |
-| 某个接口的入参出参 | `docs/api.md` |
-| 评分/指标/存储的设计 | `docs/futu_strategy_docs/futu_strategy_docs/` |
-| **遇到报错 / 数据不对 / 部署没生效** | **`docs/troubleshooting.md`**（18 条症状→原因→解法） |
-| 线上怎么部署、怎么核验 | `docs/ops/README.md` |
-| 日报在哪 | `docs/reports/INDEX.md` |
+| 不知道去哪找 | **`docs/README.md`**（按目的导航的索引） |
+| 改了哪些东西、为什么改 | `docs/history/CHANGELOG.md`（最新在最上） |
+| 某个接口的入参出参 | `docs/reference/api.md` |
+| 数据库表结构 | `docs/reference/storage.md` |
+| 评分/指标/温度/标的池等模块的设计 | `docs/modules/`（文件名即模块名） |
+| **遇到报错 / 数据不对 / 部署没生效** | **`docs/guides/troubleshooting.md`**（18 条症状→原因→解法） |
+| 线上怎么部署、怎么核验 | `docs/guides/ops/README.md` |
+| 日报在哪 | `docs/guides/reports-index.md` |
 | 日更怎么做 | `skills/trader-daily-update/SKILL.md` |
 | 标的池怎么管 | `README.md` + `src/trader_analysis/futu_strategy/watchlist_storage.py` |
 

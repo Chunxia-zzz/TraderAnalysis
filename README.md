@@ -27,7 +27,7 @@ Futu 量化评分与模拟盘交易系统。基于 195 只核心观察标的，�
 > `POST /api/watchlist`（调 `fetch_stock_info` 补全快照）、`POST /api/watchlist/refresh-snapshot`（调 `fetch_snapshot_batch`）、
 > `GET /api/position`、`GET /api/allocation`。**只读的只是评分/指标/信号那一大类。**
 
-详细技术方案见 [`docs/futu_strategy_docs/futu_strategy_docs/README.md`](docs/futu_strategy_docs/futu_strategy_docs/README.md)
+详细技术方案见 [`docs/overview/architecture.md`](docs/overview/architecture.md)；文档总索引见 [`docs/README.md`](docs/README.md)
 
 ## 前置条件
 
@@ -138,11 +138,11 @@ trader-analysis run
 | `refresh-snapshot` | 刷新标的池静态快照字段（`trailing_pe` / `market_cap` 等） | ✓ |
 | `grid-create` / `grid-start` / `grid-stop` / `grid-status` | 网格交易引擎四件套 | ✓ |
 
-> `create-admin` 命令已于 2026-10-19 随认证层清理一并删除（见 `docs/CHANGELOG.md`），CLI 中不再存在。
+> `create-admin` 命令已于 2026-10-19 随认证层清理一并删除（见 `docs/history/CHANGELOG.md`），CLI 中不再存在。
 
 ## API 接口
 
-共 **38 个路由**（只读 30 + 写 8，2026-10-12 核对；完整参数与响应见 [`docs/api.md`](docs/api.md)）。
+共 **38 个路由**（只读 30 + 写 8，2026-10-12 核对；完整参数与响应见 [`docs/reference/api.md`](docs/reference/api.md)）。
 
 **只读（30）**
 
@@ -194,7 +194,7 @@ trader-analysis run
 
 所有接口无数据时返回 **HTTP 200 + `{data: null, message: "提示文案"}`**（不是 404）。
 
-详细接口文档见 [`docs/api.md`](docs/api.md)
+详细接口文档见 [`docs/reference/api.md`](docs/reference/api.md)
 
 ## 标的池
 
@@ -202,7 +202,7 @@ trader-analysis run
 
 大盘/黄金/BTC、存储、光通信、MAG7、加密、半导体、太空、云、中概、防守消费、AI 基建、金融、医疗、能源、工业等。
 
-**加入规则**（详见 [`docs/futu_strategy_docs/futu_strategy_docs/part_e_watchlist_management.md`](docs/futu_strategy_docs/futu_strategy_docs/part_e_watchlist_management.md)）：
+**加入规则**（详见 [`docs/modules/watchlist.md`](docs/modules/watchlist.md)）：
 - 纳入：大市值龙头（≥ $50B）、覆盖主要行业、可估值（有晨星/分析师目标价）
 - 排除：杠杆/反向 ETF、重复的行业 ETF、无法估值的股票
 

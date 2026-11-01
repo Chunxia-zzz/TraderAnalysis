@@ -1,7 +1,8 @@
 # TraderAnalysis 项目技术方案总览
 
-> ⚠️ **本文档是 2026-05 的历史设计稿（v2.3），部分内容已与当前代码不符。**
-> **现状请以根目录 [`README.md`](../../../README.md) 与 [`docs/api.md`](../../api.md) 为准。**
+> **分层架构、目录结构与执行流程仍然有效**；逐模块的实现细节已拆分到 [`../modules/`](../modules/)。
+> 现状以根目录 [`README.md`](../../README.md)、[`../reference/api.md`](../reference/api.md) 与代码为准。
+> （本文写于 2026-05，v2.3；2026-10-12 与 2026-11-01 各做过一次勘误，见文中 `⚠️ 勘误`。）
 >
 > 2026-10-12 全量审计已就地更正的项（见文中 `⚠️ 勘误` 标注）：
 > 标的池数据源与数量、Part D 认证层（已删除）、`external_data.py`（不存在）、
@@ -192,19 +193,19 @@ def get_watchlist() -> list[str]:
 
 | 模块 | 文档 | 一句话摘要 |
 |------|------|-----------|
-| 数据获取 | [part_a_data_fetcher.md](part_a_data_fetcher.md) | 从 Futu API 拉 K 线 |
-| 指标计算 | [part_a_indicators.md](part_a_indicators.md) | 通用函数 `calc_indicators(df, config)`，不感知标的/周期，只追加数值列 |
-| 评分系统 | [part_a_scorer.md](part_a_scorer.md) | **6 因子连续映射**，输出 0~100 分 + 信号（阈值 80 / 60） |
-| 交易执行 | [part_a_trade_executor.md](part_a_trade_executor.md) | 根据评分信号执行模拟盘买入，含仓位规则和调度机制 |
-| 持久化存储 | [part_b_storage.md](part_b_storage.md) | SQLite 数据库设计、storage.py 接口、初始化和增量更新脚本 |
-| API 服务 | [part_c_api.md](part_c_api.md) | ⚠️ **v2.0 初始设计稿，已过期** —— 现状请看 [`docs/api.md`](../../api.md) |
-| 标的池管理 | [part_e_watchlist_management.md](part_e_watchlist_management.md) | watchlist 表结构、CRUD API、导入流程 |
-| 基本面分析 | [part_f_fundamental.md](part_f_fundamental.md) | yfinance 采集 + 5 因子基本面评分 |
-| 仓位策略 | [position-sizing-strategy.md](position-sizing-strategy.md) | ⚠️ **含大量已废弃的 6 维度 / VIX 内容**，现状见 `market_scorer.py` |
+| 数据获取 | [data-fetcher.md](../modules/data-fetcher.md) | 从 Futu API 拉 K 线 |
+| 指标计算 | [indicators.md](../modules/indicators.md) | 通用函数 `calc_indicators(df, config)`，不感知标的/周期，只追加数值列 |
+| 评分系统 | [scoring.md](../modules/scoring.md) | **6 因子连续映射**，输出 0~100 分 + 信号（阈值 80 / 60） |
+| 交易执行 | [trade-executor.md](../modules/trade-executor.md) | 根据评分信号执行模拟盘买入，含仓位规则和调度机制 |
+| 持久化存储 | [storage.md](../reference/storage.md) | SQLite 数据库设计、storage.py 接口、初始化和增量更新脚本 |
+| API 服务 | [api-server.md](../modules/api-server.md) | ⚠️ **v2.0 初始设计稿，已过期** —— 现状请看 [`../reference/api.md`](../reference/api.md) |
+| 标的池管理 | [watchlist.md](../modules/watchlist.md) | watchlist 表结构、CRUD API、导入流程 |
+| 基本面分析 | [fundamental.md](../modules/fundamental.md) | yfinance 采集 + 5 因子基本面评分 |
+| 仓位策略 | [market-temperature.md](../modules/market-temperature.md) | ⚠️ **含大量已废弃的 6 维度 / VIX 内容**，现状见 `market_scorer.py` |
 
 > ⚠️ **勘误（2026-10-12）**：① 指标/评分两行的「9 项加权评分」已改为 **6 因子**；
 > ② 此前缺失的 part_e / part_f / position-sizing 三份文档已补入索引；
-> ③ `CHANGELOG.md` 中曾引用 `part_d_auth.md`，**该文件不存在**（认证层已删除），勿再引用。---
+> ③ `CHANGELOG.md` 中曾引用 `part_d_auth.md`，**该文件不存在**（认证层已删除），勿再引用。
 
 ## 完整执行流程图
 
@@ -344,7 +345,7 @@ pip install -e ".[dev]"
 
 ## CLI 命令
 
-共 **18 个命令**，完整清单与「是否需 OpenD」见根目录 [`README.md`](../../../README.md) 的「全部 CLI 命令」表。常用：
+共 **18 个命令**，完整清单与「是否需 OpenD」见根目录 [`README.md`](../../README.md) 的「全部 CLI 命令」表。常用：
 
 ```bash
 # 启动 API 服务

@@ -27,7 +27,7 @@ description: TraderAnalysis 量化系统的「更新行情」日常流程。当�
 
 > 📌 **路径口径**：上表是本机（Windows）的绝对路径。**仓库内引用一律以仓库根为基准**
 > （如 `skills/…`、`data/indicators.db`、`.venv/Scripts/python.exe`），换机器时只改上表，正文不动。
-> 运维配置副本见 `docs/ops/`。
+> 运维配置副本见 `docs/guides/ops/`。
 
 ## 前置检查（每次必做）
 

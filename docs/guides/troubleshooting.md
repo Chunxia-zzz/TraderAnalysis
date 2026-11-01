@@ -2,7 +2,7 @@
 
 > 只收**已经真实踩过**的坑，每条都标明「怎么验证好了」。
 > 新增条目请按同一格式：**症状 / 原因 / 解法 / 验证**，并写清适用平台。
-> 相关：`docs/ops/README.md`（部署拓扑）、`skills/trader-daily-update/SKILL.md`（日更流程）。
+> 相关：`docs/guides/ops/README.md`（部署拓扑）、`skills/trader-daily-update/SKILL.md`（日更流程）。
 
 ## 速查
 

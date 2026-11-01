@@ -53,7 +53,7 @@ data_fetcher.py  →  indicators.py  →  scorer.py
 > **那是示意代码，不是本项目的实现** —— 项目既没有 `pandas-ta` 依赖，实际算法也与之不同
 > （例如 MACD 柱线要 ×2 对齐富途口径、ATR 用 Wilder EWM）。**为避免继续误导，示例代码已删除。**
 >
-> **真实实现**请看 [`src/trader_analysis/futu_strategy/indicators.py`](../../../src/trader_analysis/futu_strategy/indicators.py)
+> **真实实现**请看 [`src/trader_analysis/futu_strategy/indicators.py`](../../src/trader_analysis/futu_strategy/indicators.py)
 > 的 `calc_indicators()`；函数签名与配置结构如下（这部分与代码一致）：
 
 ```python

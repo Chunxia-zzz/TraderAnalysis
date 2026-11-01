@@ -21,9 +21,9 @@
 ## 重新抓取（以服务器为准）
 
 ```bash
-ssh root@47.106.175.84 "cat /etc/systemd/system/trader-api.service"                        > docs/ops/trader-api.service
-ssh root@47.106.175.84 "cat /etc/nginx/conf.d/trader.conf"                                 > docs/ops/nginx-trader.conf
-ssh root@47.106.175.84 "cat /etc/nginx/conf.d/gzip.conf"                                   > docs/ops/nginx-gzip.conf
+ssh root@47.106.175.84 "cat /etc/systemd/system/trader-api.service"                        > docs/guides/ops/trader-api.service
+ssh root@47.106.175.84 "cat /etc/nginx/conf.d/trader.conf"                                 > docs/guides/ops/nginx-trader.conf
+ssh root@47.106.175.84 "cat /etc/nginx/conf.d/gzip.conf"                                   > docs/guides/ops/nginx-gzip.conf
 ```
 
 抓完 `git diff` 应无输出；有输出说明线上被手改过，需判断是回写还是回滚。
@@ -59,4 +59,4 @@ curl -s http://47.106.175.84/api/... | head
 1. 先改本目录文件并提交
 2. `scp` 到服务器对应路径（或直接在服务器改完立刻回写本目录）
 3. `systemctl daemon-reload && systemctl restart trader-api`（systemd）／`nginx -t && systemctl reload nginx`（nginx）
-4. 用上面的核验方式确认生效，把结果记进 `docs/CHANGELOG.md`
+4. 用上面的核验方式确认生效，把结果记进 `docs/history/CHANGELOG.md`

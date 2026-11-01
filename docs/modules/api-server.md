@@ -5,7 +5,7 @@
 > **⚠️ 例外**：`/api/position`（持仓查询）与 `/api/allocation`（目标仓位，含 `PUT` 保存）依赖**本机 Futu OpenD（127.0.0.1:11111）** 实时查询，不能脱离后端环境。
 >
 > 源码位置：`src/trader_analysis/futu_strategy/api_server.py`
-> **完整端点清单、请求参数、响应样例请以 [`docs/api.md`](../../../api.md) 为准**（本文档只讲架构与通用约定，不再逐条复制）。
+> **完整端点清单、请求参数、响应样例请以 [`docs/reference/api.md`](../reference/api.md) 为准**（本文档只讲架构与通用约定，不再逐条复制）。
 
 ---
 

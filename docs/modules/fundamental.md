@@ -638,7 +638,7 @@ pip install yfinance>=0.2.36
 7. `api_server.py` 加端点
 8. 实现 watchlist 同步（第 17 节）
 9. 补测试
-10. 更新 `docs/api.md` 和 `CHANGELOG.md`
+10. 更新 `docs/reference/api.md` 和 `docs/history/CHANGELOG.md`
 
 ---
 

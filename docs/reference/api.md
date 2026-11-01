@@ -465,7 +465,7 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
 - 徽章语义：**绿 3/3** / **黄 2/3** / **灰 0~1**
 - 三项**同时**满足才叫「3/3 全通过」，是本系统最严格的一档筛子；`3/3` 的标的数量是日报固定字段
 - 与「强买（STRONG_BUY）」的区别：强买只看 ③（评分≥80），3/3 还要求 ① 回撤可接受 + ② 有估值安全垫
-- ⚠️ 高分可能来自单日暴跌（如财报暴雷），3/3 通过也不等于可以无脑买，需结合消息面打折（见 `docs/troubleshooting.md` 第 16 条）
+- ⚠️ 高分可能来自单日暴跌（如财报暴雷），3/3 通过也不等于可以无脑买，需结合消息面打折（见 `docs/guides/troubleshooting.md` 第 16 条）
 
 **前端展示建议：**
 
@@ -1478,7 +1478,7 @@ assert stats["breakouts"] == len(breakouts)  # 各分组计数与 stats 一致
 
 > 这三条不是「风格建议」，是**回归红线**：改动 detector 后先在本地跑一遍 `/api/livermore/signals`
 > 再取数。另外 uvicorn 不带 `--reload` 时不会加载非入口文件，**改完必须按进程树重启后端**，
-> 否则你看到的还是旧代码的输出（详见 `docs/troubleshooting.md`）。
+> 否则你看到的还是旧代码的输出（详见 `docs/guides/troubleshooting.md`）。
 
 ### GET `/api/livermore/detail`
 
