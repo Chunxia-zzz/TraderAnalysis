@@ -4,6 +4,14 @@
 # WorkBuddy local files
 .workbuddy/
 
+# Codex / 其他 agent 的技能目录（由 scripts/agent/sync_skills.py 生成，勿入库）
+.agents/
+
+# 第三方技能（富途官方包，无再分发授权；用 scripts/agent/fetch_futu_skills.py 按需拉取）
+skills/futuapi/
+skills/install-opend/
+skills/LEGAL_Futu_api_cn.md
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

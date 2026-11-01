@@ -72,12 +72,12 @@
 src/trader_analysis/
 ├── __init__.py              # 版本号 0.2.0
 ├── __main__.py              # → cli:app
-├── cli.py                   # CLI 入口（18 个命令，见「CLI 命令」节）
+├── cli.py                   # CLI 入口（16 个命令，见「CLI 命令」节）
 │
 └── futu_strategy/           # 完整的三层架构代码
     │
     │── Part A: 后端核心层 ──────────────────────────
-    ├── config.py             # 全局配置（标的池从 SQLite watchlist 表动态读取，JSON 仅作回退）
+    ├── config.py             # 全局配置（标的池从 SQLite watchlist 表读取；JSON 回退已于 2026-11-01 移除）
     ├── providers.py          # OHLCV Schema + FutuLiveDataProvider + 数据归一化
     ├── data_fetcher.py       # 富途 K 线数据获取 + 额度预检
     ├── indicators.py         # 技术指标计算（纯函数，不感知标的/周期）
@@ -127,6 +127,14 @@ src/trader_analysis/
     ├── position_state.py     # 持仓状态机
     ├── __main__.py           # python -m trader_analysis.futu_strategy 入口
     └── __init__.py
+
+AGENTS.md                     # 跨 agent 唯一入口（目录地图 / 硬性约定 / 技能索引 / 环境坑）
+CLAUDE.md / GEMINI.md         # 分别指向 AGENTS.md 的桥接（Claude Code / Gemini CLI 不自动读 AGENTS.md）
+
+skills/                       # 技能唯一真相源（纯 markdown，任何 agent 可按路径读取）
+├── trader-daily-update/SKILL.md       # 更新行情六步流程（24.9 KB，实测踩坑）
+├── doc-code-consistency-audit/SKILL.md # 文档/代码一致性审计
+└── README.md                 # 技能维护规则；futuapi/install-opend 为第三方，按需拉取不入库
 
 scripts/                      # 运维脚本
 ├── audit_morningstar.py      # 晨星公允价值全量核对

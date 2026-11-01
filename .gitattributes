@@ -1,0 +1,6 @@
+# 技能与文档统一 LF，避免 Windows 换行把 diff 搞脏
+skills/**  text eol=lf
+docs/**    text eol=lf
+AGENTS.md  text eol=lf
+CLAUDE.md  text eol=lf
+GEMINI.md  text eol=lf

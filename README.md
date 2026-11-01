@@ -1,5 +1,9 @@
 # TraderAnalysis
 
+> **给 agent / 模型**：本项目的唯一入口是 [`AGENTS.md`](AGENTS.md)——目录地图、硬性约定、技能索引、环境坑都在那里。
+> Claude Code 走 [`CLAUDE.md`](CLAUDE.md)、Gemini CLI 走 [`GEMINI.md`](GEMINI.md)，两者都只是指向 `AGENTS.md` 的桥接。
+> 技能正文在 [`skills/`](skills/)，是唯一真相源；各 agent 原生目录由 `scripts/agent/sync_skills.py` 生成，勿手改。
+
 Futu 量化评分与模拟盘交易系统。基于 195 只核心观察标的，通过 6 因子连续映射评分、道氏理论三层趋势分析、晨星公允价值估值，自动识别高置信度做多机会。
 
 > **两套并行的信号体系**（刻意不合并）：

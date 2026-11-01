@@ -6,6 +6,41 @@
 
 ## [2026-11-01]
 
+### 可移植性 P1 — 建立跨 agent 入口，技能迁入仓库
+
+**背景**：技能与项目记忆此前只存在于 agent 私有目录（`~/.workbuddy/skills/`、`.claude/skills/`），
+这些目录被 gitignore，换 agent / 换机器即归零。本次把「可执行流程」迁进仓库，并建立唯一入口。
+
+- **`AGENTS.md`（新增，140 行）**：项目定位、三条易错约束（双信号体系不合并 / 支撑压力位≠利弗莫尔关键点 /
+  温度分数越高=越恐慌）、目录地图、clone 后四步、8 条硬性约定、文档与提交规则、技能索引表、Windows 环境坑、索引表。
+  **只放指针不抄正文**——正文复制两份必然漂移。
+- **`CLAUDE.md` / `GEMINI.md`（新增）**：Claude Code 与 Gemini CLI 默认不读 `AGENTS.md`，故各放一个桥接。
+  `CLAUDE.md` 首行用 Anthropic 官方的 `@AGENTS.md` **导入语法**（机制），而不是「请先读取」这类祈使句。
+- **`skills/`（新增，技能唯一真相源）**：`trader-daily-update`（24.9 KB）、`doc-code-consistency-audit` 逐字迁入。
+  - 删除 frontmatter 的 `agent_created` 字段：开放规范只有 6 个字段（name/description/license/compatibility/metadata/allowed-tools），
+    其余字段在严格客户端上是 **hard error 而非忽略**。
+  - **3 处路径修正**（唯一允许动正文的地方）：
+    1. 富途脚本路径 `C:\Users\...\.claude\skills\futuapi\scripts\quote\` → `skills/futuapi/scripts/quote/`
+    2. PATH 修复不再写死 PortableGit 版本号（原文写死 `1.2.0`，实际已升级到 `1.3.0`，**该路径早已失效**），
+       改为 `ls -d .../versions/*/usr/bin | tail -1` 自适应
+    3. 关键路径表下补「路径口径」注记：仓库内引用一律以仓库根为基准
+- **`scripts/agent/sync_skills.py`（新增）**：把 `skills/` 物化到 `.claude/skills/`、`.agents/skills/`、`.workbuddy/skills/`。
+  默认**目录联结点**（Windows `mklink /J`，无需管理员）/ symlink（POSIX），使「改副本 = 改源文件」，
+  从根上消除两份不同步；`--copy` 兜底，`--check` 逐文件 sha256 比对，`--dry-run` 预览。
+- **`scripts/agent/fetch_futu_skills.py`（新增）**：`futuapi` / `install-opend` 是富途官方包（58 文件 / 420 KB），
+  随包只有免责声明、**无再分发授权**，故不入库，改按官方 URL 拉取。
+- **`.gitattributes`（新增）**：`skills/**`、`docs/**` 统一 `eol=lf`，避免 Windows 换行污染 diff。
+- **`.gitignore`**：新增 `.agents/`（sync 生成物）与第三方技能目录。
+- **用户级同名技能改为「占位入口」**：`~/.workbuddy/skills/<name>/SKILL.md` 只留 4 行指针。
+  原因是产品优先级 **enterprise > personal > project**，**同名时个人级覆盖项目级**——
+  个人级若留着完整旧正文，改仓库那份也不会生效，旧副本会静默胜出。原件归档在 `~/.workbuddy/_skills-archive-20261101/`。
+- **文档同步**：`README.md` 顶部加 agent 入口指引；`docs/futu_strategy_docs/.../README.md` 的文件树补
+  `AGENTS.md`/`skills/`，并修正两处过期表述（CLI 命令数 18 → **16**；`config.py`「JSON 仅作回退」→ 已移除）。
+
+**验证**：`sync_skills.py` 生成 6 项（2 技能 × 3 目录）；`--check` 通过（退出码 0）；重复执行 0 改动（幂等）；
+人为把某副本改成普通目录并改动内容 → `--check` 报「1 个文件内容不同」并退出码 1，重跑 sync 后恢复；
+经联结点读取 `SKILL.md` 正常且 `os.path.samefile()` 为真；`.claude/skills/futuapi` 58 个文件未被触碰。
+
 ### 重构 — 标的池数据源收敛为 SQLite 单一真相，删除 `data/watchlist.json`
 
 - **问题**：标的池存在**两个同时在服役的数据源**。`data/watchlist.json`（49 条，`last_updated` 停在 2026-06-18）已入库，
