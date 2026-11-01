@@ -449,8 +449,23 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
 | `ribbon_flip` | `"to_bull"`\|`"to_bear"`\|null | 近5日内飘带翻转：空转多 / 多转空 / 无翻转 |
 | `dd60_pct` | float\|null | 60日跌幅%（从60日高点回撤），**<30 视为通过"过滤烂票"检查** |
 | `dd60_ok` | bool\|null | 60日跌幅是否 <30% |
-| `ms_discount_pct` | float\|null | 晨星折价率：正值=低估（价低于公允价值），负值=溢价 |
+| `ms_discount_pct` | float\|null | 相对晨星公允价值的**上涨空间%** = `(fv − close) / close × 100`。正值=现价低于公允价值。**注意不是"折价率"**：58.2 表示"还有 58% 上行空间"，不是"比公允价值低 58%" |
 | `ms_undervalued` | bool\|null | 是否晨星低估（close < morningstar_fair_value） |
+
+**「3/3 全通过」的三项检查（2026-10-12 起）**
+
+`GET /api/scores/overview` 与交易信号页对每只标的做三项独立检查，徽章显示通过数：
+
+| # | 检查 | 判定字段 | 通过条件 |
+|---|---|---|---|
+| ① | 过滤烂票 | `dd60_ok` | 60 日跌幅 **< 30%**（跌太深的不碰） |
+| ② | 晨星低估 | `ms_undervalued` | `close < morningstar_fair_value` |
+| ③ | 评分确认 | `signal` | `total_score ≥ 80`（`STRONG_BUY`） |
+
+- 徽章语义：**绿 3/3** / **黄 2/3** / **灰 0~1**
+- 三项**同时**满足才叫「3/3 全通过」，是本系统最严格的一档筛子；`3/3` 的标的数量是日报固定字段
+- 与「强买（STRONG_BUY）」的区别：强买只看 ③（评分≥80），3/3 还要求 ① 回撤可接受 + ② 有估值安全垫
+- ⚠️ 高分可能来自单日暴跌（如财报暴雷），3/3 通过也不等于可以无脑买，需结合消息面打折（见 `docs/troubleshooting.md` 第 16 条）
 
 **前端展示建议：**
 
@@ -1444,6 +1459,27 @@ range_high / range_high_bars / range_high_dist_pct / high_250 / has_250_bars`
 **幂等性**：`livermore_signal_log` 带 `UNIQUE(code, date, signal_type)`，落库用 `INSERT OR REPLACE`，
 重复跑 `scan-signals` 不会翻倍（不同于 `top/bottom_signal_log`）。
 
+#### 三个反直觉的坑（改 `livermore_detector.py` 前必读）
+
+| # | 坑 | 为什么容易改错 |
+|---|---|---|
+| 1 | **止损位只在「突破之后」才有意义** | 未突破时价格天然低于止损位（止损 = 关键点 − 0.5×ATR）。若用「价格 < 止损」去否决 `NEAR_PIVOT`，会把所有逼近信号全部误杀 |
+| 2 | **假突破 / 跌破止损必须先判定，并否决逼近名单** | 同一只票可能既满足「逼近关键点」又已 `STOP_TRIGGERED`。判定顺序错了，它就会同时出现在「预备买入」和「危险」两个名单里 |
+| 3 | **危险信号必须按 `code` 去重** | 一只票可能同时触发 `FAILED_BREAKOUT` + `CLIMAX_WARNING`，不去重会让 `dangers` 长度虚高、`stats` 对不上 |
+
+#### 改完必验的三条自洽不变量
+
+```python
+assert len(breakouts) + len(near_pivots) + len(above_pivot) + len(dangers) == 四分组实际长度
+assert len(dangers) == len({d["code"] for d in dangers})        # 按 code 无重复
+assert not ({p["code"] for p in near_pivots} & {d["code"] for d in dangers})  # 两集合不相交
+assert stats["breakouts"] == len(breakouts)  # 各分组计数与 stats 一致
+```
+
+> 这三条不是「风格建议」，是**回归红线**：改动 detector 后先在本地跑一遍 `/api/livermore/signals`
+> 再取数。另外 uvicorn 不带 `--reload` 时不会加载非入口文件，**改完必须按进程树重启后端**，
+> 否则你看到的还是旧代码的输出（详见 `docs/troubleshooting.md`）。
+
 ### GET `/api/livermore/detail`
 
 单只标的的关键点全景，供 K 线图直接画线与抽屉展示。
@@ -2049,23 +2085,25 @@ supports/resistances 每个元素新增三个字段，用于前端在 K 线图�
 
 **响应**（`data` 字段）
 
+> ⚠️ **示例数据为虚构值**，账户号、金额、持仓数量均非真实。任何情况下不要把真实 `acc_id` / 资产金额写进仓库。
+
 ```json
 {
   "env": "REAL",
-  "acc_id": 281756479684587643,
+  "acc_id": 123456789012345678,
   "base_currency": "HKD",
   "display_currency": "USD",
   "usd_hkd_rate": 7.8,
-  "cash": 38075.07,
-  "total_assets": 49198.79,
-  "cash_pct": 77.4,
-  "position_pct": 22.6,
-  "position_count": 10,
+  "cash": 47487.91,
+  "total_assets": 50000.0,
+  "cash_pct": 95.0,
+  "position_pct": 5.0,
+  "position_count": 1,
   "positions": [
     {
       "code": "US.AVGO", "name": "博通", "qty": 7,
-      "cost_price": 361.61, "price": 358.87,
-      "market_value": 2506.82, "weight_pct": 5.1, "pl_pct": -0.8
+      "cost_price": 300.0, "price": 358.87,
+      "market_value": 2512.09, "weight_pct": 5.0, "pl_pct": 19.6
     }
   ]
 }
@@ -2088,13 +2126,13 @@ supports/resistances 每个元素新增三个字段，用于前端在 K 线图�
 ```json
 {
   "env": "REAL", "currency": "USD",
-  "total_assets": 49198.79,
+  "total_assets": 50000.0,
   "groups": [
     {
       "key": "stock", "label": "美股", "weight": 70,
-      "target_value": 34439.15, "actual_value": 5782.98, "gap": 28656.17,
+      "target_value": 35000.0, "actual_value": 2512.09, "gap": 32487.91,
       "subgroups": [
-        {"label": "大科技", "weight": 28, "target_value": 13775.66, "actual_value": 1048.5, "items": [...]}
+        {"label": "大科技", "weight": 28, "target_value": 14000.0, "actual_value": 2512.09, "items": [...]}
       ],
       "items": [...],
       "batch_plan": {

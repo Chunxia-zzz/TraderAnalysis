@@ -84,10 +84,14 @@
 
 ## 具体实现方案
 
-### 数据库表结构（`storage.py` 建 9 张核心表；全库共 16 张）
+### 数据库表结构（`storage.py` 建 9 张核心表；全库共 15 张业务表）
 
 `storage.py` 中的 `_CREATE_TABLES_SQL` 一次 `executescript` 建 9 张核心表。**全库另有 6 张**
-（`watchlist`、`content_templates`、`grid_config`/`grid_orders`/`grid_state`、`users`）由各自模块建表，详见文末「其他表」：
+（`watchlist`、`content_templates`、`grid_config`/`grid_orders`/`grid_state`、`users`）由各自模块建表，详见文末「其他表」。
+（SQLite 自动维护的 `sqlite_sequence` 属系统表，不计入 15 张。）
+
+> 勘误（2026-11-01）：此前写「全库共 16 张」，实测 `sqlite_master` 中非系统表为 **15 张**，
+> 16 是把 `sqlite_sequence` 也算进去了。9 + 6 = 15。
 
 | 表名 | 用途 | 主键/唯一约束 |
 |------|------|--------------|

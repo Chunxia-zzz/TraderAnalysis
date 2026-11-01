@@ -116,6 +116,7 @@ python scripts/agent/fetch_futu_skills.py  # 可选：需要富途行情/交易�
 | 改了哪些东西、为什么改 | `docs/CHANGELOG.md`（最新在最上） |
 | 某个接口的入参出参 | `docs/api.md` |
 | 评分/指标/存储的设计 | `docs/futu_strategy_docs/futu_strategy_docs/` |
+| **遇到报错 / 数据不对 / 部署没生效** | **`docs/troubleshooting.md`**（18 条症状→原因→解法） |
 | 线上怎么部署、怎么核验 | `docs/ops/README.md` |
 | 日报在哪 | `docs/reports/INDEX.md` |
 | 日更怎么做 | `skills/trader-daily-update/SKILL.md` |

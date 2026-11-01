@@ -137,7 +137,8 @@ trader-analysis run
 | `fundamental` | 拉取基本面数据并评分（数据源 yfinance） | ✗ |
 | `refresh-snapshot` | 刷新标的池静态快照字段（`trailing_pe` / `market_cap` 等） | ✓ |
 | `grid-create` / `grid-start` / `grid-stop` / `grid-status` | 网格交易引擎四件套 | ✓ |
-| `create-admin` | ⚠️ **当前不可用**：内部 `from ...auth import hash_password` / `...auth_storage import create_user`，而 `auth.py`、`auth_storage.py` **已随认证体系一并从仓库移除** → 执行会 `ImportError` | — |
+
+> `create-admin` 命令已于 2026-10-19 随认证层清理一并删除（见 `docs/CHANGELOG.md`），CLI 中不再存在。
 
 ## API 接口
 
