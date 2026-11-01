@@ -91,10 +91,10 @@ Swagger UI：`http://localhost:8000/docs`
 | GET | `/api/asset-temperature/history` | 单资产（GLD/BTC）历史温度评分序列（实时计算） | **MarketTemperature.vue（黄金/比特币视图）** |
 | GET | `/api/tp-sl` | 止盈止损自动计算（ATR+支撑/阻力） | ScoresOverview.vue |
 | GET | `/api/backtest/run` | 信号回测（5 种策略模式） | **Backtest.vue** |
-| GET | `/api/position` | 实时持仓（**需 OpenD**） | Position.vue |
+| GET | `/api/position` | 实时持仓（**需 OpenD**） | ⚠️ 当前无页面引用（2026-11-02 前端下线） |
 | GET | `/api/position-states` | 持仓状态（不传 `code` 返回所有非 EMPTY 持仓） | ⚠️ 当前无页面引用 |
-| GET | `/api/allocation` | 目标仓位配置 + 偏离 + 加仓建议（**需 OpenD**） | Allocation.vue |
-| PUT | `/api/allocation` | 保存目标仓位配置 | Allocation.vue |
+| GET | `/api/allocation` | 目标仓位配置 + 偏离 + 加仓建议（**需 OpenD**） | ⚠️ 当前无页面引用（**日更技能第 6 步仍直接调用**） |
+| PUT | `/api/allocation` | 保存目标仓位配置 | ⚠️ 当前无页面引用（改配置走接口或手改 JSON） |
 | GET | `/api/sell-log` | 卖出日志（读 `trade_log.jsonl` 的 SELL 记录） | ⚠️ 当前无页面引用 |
 | GET | `/api/review` | 日/周复盘报告 | Review.vue |
 | GET | `/api/content-generator` | 自媒体文案生成 | Review.vue |
