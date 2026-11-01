@@ -9,6 +9,8 @@
 | 目的 | 去哪 |
 |---|---|
 | 刚接手，先搞懂这是什么 | [`overview/architecture.md`](overview/architecture.md) |
+| **什么能做什么不能做** | 根目录 [`.specify/memory/constitution.md`](../.specify/memory/constitution.md)（原则层，冲突时以它为准） |
+| 打算做什么 / 当初要做什么 | [`../specs/`](../specs/)（事前意图；约定见 `specs/README.md`） |
 | 起服务 / 跑日更 | 根目录 [`AGENTS.md`](../AGENTS.md) + `skills/trader-daily-update/SKILL.md` |
 | 出问题了（报错、数据不对、部署没生效） | [`guides/troubleshooting.md`](guides/troubleshooting.md) |
 | 线上怎么部署、怎么核验 | [`guides/ops/README.md`](guides/ops/README.md) |

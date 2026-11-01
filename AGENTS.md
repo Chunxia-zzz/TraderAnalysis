@@ -2,7 +2,30 @@
 
 > **本文件是跨 agent 的唯一入口。** 任何模型（Codex / Claude Code / Cursor / Gemini / 其他）接手这个仓库，
 > 先读完这一份再动手，不要靠猜。
+>
+> **本文件是操作层** —— 命令、路径、环境坑、目录地图。
+> **原则层在 `.specify/memory/constitution.md`**（6 条原则 + 安全边界 + 优先级）。
+> 两者冲突时**以 constitution 为准**，并同步修正本文件，不让两份长期打架。
+>
 > 最后更新：2026-11-01
+
+---
+
+## 0. 开工前 30 秒（命中即执行，不要跳过）
+
+动手改代码前先回答一个问题：**这是缺陷，还是新能力？**
+
+| 情况 | 走哪条 | 产物 |
+|---|---|---|
+| 行为不对但本该对（报错、数字错、文案错、页面空白） | **bug 三件套** `assess → fix → test` | `.specify/bugs/<slug>/` |
+| 要新增能力 / 改数据模型 / 改 API 契约 / 改评分·温度·信号口径 | **SDD 六步** `specify → plan → tasks → implement → converge` | `specs/NNN-<slug>/` |
+| 命中豁免清单（文案更正 / 单行 bug / 版本号 / 注释 / 纯文档措辞） | 直接改 | CHANGELOG 记一行 |
+
+- **判断不了就问用户，不要自己选。** 选错流程比不做更糟：5 行改动用完整 SDD 跑过一遍，规格与规模严重不匹配（2026-11-01 教训）。
+- **推荐做法**：直接调用 **`spec-kit-entry` 技能**（`skills/spec-kit-entry/SKILL.md`）—— 它会自动做三层体检 + 分流，
+  比人记命令可靠。本节的表是它的判定依据摘要，不重复其步骤。
+- **跳过这一步的代价**：需求只留在对话里，事后无法核对「当初打算做什么」，也就无法判断实现有没有跑偏。
+- 命令是助手技能而非终端命令，用法见 §7。**命令层不入库，换机器要重跑 `specify init` + `specify extension add bug`**，否则命令静默消失。
 
 ---
 
@@ -37,6 +60,8 @@ Futu（富途）量化评分与模拟盘交易系统。核心链路：**Futu Ope
 | `docs/` | 文档总入口是 **`docs/README.md`**（按「我要干什么」导航）；分层：`overview/` `guides/` `reference/` `modules/` `history/` |
 | `docs/guides/ops/` | 线上 systemd + nginx 配置副本（**改服务器必须回写这里**） |
 | `docs/guides/reports-index.md` | 日报索引（正文含账户信息，不入库） |
+| `.specify/` | SDD 配置：`memory/constitution.md`（**原则层**）/ `templates/` / `scripts/` |
+| `specs/` | **事前意图**：每个 feature 一个 `NNN-<ascii-slug>/`（spec / plan / tasks），见 `specs/README.md` |
 | `skills/` | 技能唯一真相源，见 §7 |
 | `scripts/` | 运维与一次性脚本；`scripts/agent/` 是 agent 相关工具 |
 | `tests/` | pytest，当前 **97 项** |
@@ -48,7 +73,14 @@ python -m venv .venv && .venv/Scripts/pip install -r requirements.txt   # POSIX:
 cp .env.example .env                     # 按需填；.env 永不入库
 python scripts/agent/sync_skills.py      # 把 skills/ 物化成各 agent 原生目录，必跑
 python scripts/agent/fetch_futu_skills.py  # 可选：需要富途行情/交易脚本时
+python -m pip install specify-cli          # 可选：要用 /speckit-* 才装
+specify init --here --force --non-interactive --integration claude --script sh   # 重建 speckit 命令层
+specify extension add bug                  # 重建缺陷三件套命令（assess / fix / test）
 ```
+
+`/speckit-*` 命令层落在 `.claude/skills/speckit-*`，**不入库**（第三方生成物，与 `skills/futuapi/` 同类）。
+新机器上跑一次上面两条 `specify ...` 即可重建；**入库的是 `.specify/`（含 `extensions/bug/` 配置）与 `specs/`**。
+漏跑 `specify extension add bug` 的直接后果：`/speckit-bug-*` 命令消失，而且**不会报错**。
 
 数据库不在仓库里（81 MB 二进制）。空库也能起服务，但标的池会是空的。
 重建：装好 OpenD 后 `trader-analysis init --start 2022-06-01`。
@@ -66,7 +98,10 @@ python scripts/agent/fetch_futu_skills.py  # 可选：需要富途行情/交易�
 8. **派生物不入库**：`data/*.db`、`data/_backup/`、`logs/`、`.venv/`、`__pycache__/`。仓库只放能重建它们的东西。
 9. **仓位意图不入文档**：目标权重、现货标定区间、分批比例、加仓闸门这类「随时会变的个人想法」，
    属于**可丢弃的运行期状态**，只看 `data/target_allocation.json` 与 `GET /api/allocation`。
-   **不要写进 README / `docs/`，做文档审计时也不要把它列为「文档缺失」去补。**
+   **不要写进 README / `docs/` / `specs/`，做文档审计时也不要把它列为「文档缺失」去补。**
+10. **非平凡变更先写 spec**：新增功能 / 改数据模型 / 改 API 契约 / 跨模块重构 / 改评分·温度·信号口径
+    → 先落 `specs/NNN-<ascii-slug>/spec.md`，再让 `plan.md` 过一遍 Constitution Check。
+    豁免清单与小 bug 路径见 `specs/README.md`；目录名用 `--short-name` 保持 ASCII（中文会生成中文目录名）。
 
 ## 6. 文档与提交规则
 
@@ -82,6 +117,7 @@ python scripts/agent/fetch_futu_skills.py  # 可选：需要富途行情/交易�
 
 | 触发词 | 文件 | 前置检查 |
 |---|---|---|
+| **开发 / 加功能 / 改需求 / 修 bug / 这个不对 / 帮我改一下** | **`skills/spec-kit-entry/SKILL.md`** | — （技能内含三层体检） |
 | 更新行情 / 更新数据 / 跑日更 / 补某天的数据 | `skills/trader-daily-update/SKILL.md` | ✅ 两条 `export`（PATH、APPDATA）+ 确认 OpenD `11111` |
 | 检查文档有没有要更新的 / 文档和代码对不上 / XX 文档还准吗 | `skills/doc-code-consistency-audit/SKILL.md` | — |
 
@@ -89,6 +125,36 @@ python scripts/agent/fetch_futu_skills.py  # 可选：需要富途行情/交易�
 - 它包含 9 个子流程：六步日更、归档到资料库、停服务、晨星核对、复权断层核对。
 - 技能正文纯 markdown，**不依赖任何产品的技能机制**——读文件即可执行。
 - 原生目录（`.claude/skills/` 等）是 `skills/` 的生成物，别改那里。
+- **例外**：`.claude/skills/speckit-*` 不是本仓库技能，是 `specify init` 生成的第三方命令层，不入库、不要改。
+
+### Spec-Driven Development 命令（`/speckit-*`）
+
+由 `specify init` 生成，**不属于 `skills/` 体系**。流程与硬约束见 `specs/README.md`，原则见 constitution。
+
+| 命令 | 作用 | 产出 |
+|---|---|---|
+| `/speckit-specify` | 建 feature 目录 + 写规范 | `specs/NNN-<slug>/spec.md` |
+| `/speckit-clarify` | 需求有歧义时消歧（可选） | 更新 `spec.md` |
+| `/speckit-plan` | 技术方案 + **Constitution Check** | `plan.md` |
+| `/speckit-tasks` | 拆成可执行任务 | `tasks.md` |
+| `/speckit-implement` | 写代码 | 代码 + 勾选 tasks |
+| `/speckit-converge` | 找代码与规范的剩余差距 | 追加 tasks，反复到 Converged |
+| `/speckit-analyze` / `/speckit-checklist` | 可选质量门 | 报告 |
+
+**缺陷修复走另一条路（bug 扩展，已安装）** —— 修 bug **不要**套上面 6 步：
+
+| 命令 | 作用 | 产出 |
+|---|---|---|
+| `/speckit-bug-assess` | 评估缺陷（粘贴文本或 issue URL），定位可疑代码、判定严重性 | `.specify/bugs/<slug>/assessment.md` |
+| `/speckit-bug-fix` | 按评估结论修复并记录改了什么 | 代码改动 |
+| `/speckit-bug-test` | 验证缺陷是否真的解决 | 验证报告，结论为 `verified` / `partial` / `failed` |
+
+**判定**：行为不对但本该对 → 缺陷，走 bug 三件套；要新增能力 → 走 SDD。**缺少验证不算修好。**
+
+**触发词**：写 spec / 规划某个功能 / 这个改动要不要先写规范 / 检查实现符不符合规范。
+
+> 注意：constitution 是**原则层**，本文件是操作层。改 constitution 必须在 CHANGELOG 记一行并说明**理由** ——
+> 它会参与后续每一次 `plan` 的判定，随手改一句等于悄悄放宽了所有未来的约束。
 
 ## 8. Windows 环境坑
 
@@ -124,6 +190,9 @@ python scripts/agent/fetch_futu_skills.py  # 可选：需要富途行情/交易�
 | **遇到报错 / 数据不对 / 部署没生效** | **`docs/guides/troubleshooting.md`**（18 条症状→原因→解法） |
 | 线上怎么部署、怎么核验 | `docs/guides/ops/README.md` |
 | 日报在哪 | `docs/guides/reports-index.md` |
+| **什么能做什么不能做** | **`.specify/memory/constitution.md`**（原则层；与本文件冲突时以它为准） |
+| 某个功能当初要做什么 | `specs/<NNN-slug>/spec.md`（事前意图）——现状仍看 `docs/` |
+| 新功能该怎么走流程 | `specs/README.md` + §7 的 `/speckit-*` 表 |
 | 日更怎么做 | `skills/trader-daily-update/SKILL.md` |
 | 标的池怎么管 | `README.md` + `src/trader_analysis/futu_strategy/watchlist_storage.py` |
 

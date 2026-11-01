@@ -6,6 +6,28 @@
 
 ## [2026-11-01]
 
+### 引入 Spec-Driven Development — 建立原则层与事前规格层
+
+此前的开发都是「口头描述 → 直接写代码」，需求只活在对话里：事后无法判定「当初打算做什么」，
+也就无从核对实现是否跑偏。本次引入 GitHub Spec Kit（`specify-cli` 1.2.5）补齐**事前**那一段。
+
+- **初始化**：`specify init --here --force --non-interactive --integration claude --script sh`，
+  只新增 `.specify/`，**未改动任何已跟踪文件**（`AGENTS.md` 执行前后 sha256 一致）。
+- **`.specify/memory/constitution.md`**：6 条原则，**全部从既有 `AGENTS.md` 硬约定提炼，未新造标准**。
+  每条带「判定」（可执行检查）——做不到可判定的规则不写入，否则只会产生噪音。
+  含冲突优先级：constitution > `AGENTS.md` > `docs/` > `specs/<feature>/` > 单次对话。
+- **`specs/README.md`**：三件套边界（`spec.md` 只写做什么、`plan.md` 才写怎么做、`tasks.md` 每条可独立验证）、
+  目录命名（`NNN-<ascii-slug>`；**实测中文描述会生成中文目录名**，故要求 `--short-name`）、生命周期（不删除，下线加横幅）。
+- **`AGENTS.md`**：§5.10 新增「非平凡变更先写 spec」（含豁免清单）、§7 新增 `/speckit-*` 命令表、
+  §3/§9 目录与索引条目、§4 clone 后重建命令层的步骤；**§5.9「仓位意图不入文档」延伸到 `specs/`**。
+- **`.claude/skills/speckit-*`（10 个）不入库**：第三方生成物，与 `skills/futuapi/` 同类，`specify init` 可重建。
+
+**验证**：`git status` 仅 `M AGENTS.md` / `?? .specify/` / `?? specs/`；`pytest --collect-only` **97 项**（未动代码）；
+`create-new-feature.sh --dry-run` 在 Git Bash 下中英文均正常产出编号与路径；`specify init` 未触碰
+`.claude/settings.local.json`（已预先备份并比对）。
+
+> 未改 `docs/reference/api.md`：本次没有任何接口变更，无需修改。
+
 ### 文档重构 — 按用途分层，合并重复，删未实现章节
 
 旧结构是「开发顺序」：`docs/` 根下 20 个文件平铺，`part_a~part_f` 是当年的施工编号，

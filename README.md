@@ -221,6 +221,17 @@ pytest tests/ -v
 ruff check src/ tests/
 ```
 
+### 规范与约束
+
+三层分工，不要混：
+
+- **原则层** `.specify/memory/constitution.md` —— 什么不能做、冲突时谁优先。改它必须在 CHANGELOG 说明理由。
+- **操作层** `AGENTS.md` —— 命令、路径、环境坑、目录地图。
+- **事前意图** `specs/<NNN-slug>/` —— 每个 feature 的 spec / plan / tasks，约定见 `specs/README.md`。
+
+**非平凡变更先写 spec 再写代码**（新增功能 / 改数据模型 / 改 API 契约 / 跨模块重构）。
+豁免清单与判断标准见 constitution §一.VI。
+
 ---
 
 ## 日常更新线上服务
