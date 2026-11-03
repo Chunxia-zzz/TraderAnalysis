@@ -4,6 +4,32 @@
 
 ---
 
+## [2026-11-03]
+
+### 接入 GitHub Actions CI（L1 检查流水线 + L2 安全扫描）
+
+按 `ci-onboarding` 技能五步（信息收集 → 平台选择 → 编排 → 密钥 → 验证）接入，**首跑目标就是全绿**。
+
+- **`.github/workflows/ci.yml`**：`check` job（Python 3.13 + pip 缓存 + ruff + pytest，与 `scripts/check.sh` 同源）+
+  `security` job（gitleaks 全历史扫描）；`concurrency` 串行化同分支 run；纯文档改动 `paths-ignore` 跳过。
+  actions 用当前大版本：`checkout@v7` / `setup-python@v7` / `gitleaks-action@v2`。
+- **`scripts/check.sh`**：本地预检，与 CI 同一份脚本；默认只 lint 相对 `BASE_REF` 变更的 `.py`（全库 282 条存量违规以 E501 为主，
+  一次清零属跨模块重构，另行排期；新代码必须干净），`--all` 可全量。
+- **`tests/test_api.py`**：修「本地绿 ≠ CI 绿」——原测试直连本地 `data/indicators.db`（断言 watchlist 非空），
+  全新 checkout 必红；改为临时库 + 预置一条标的 + lifespan TestClient（与 `test_storage.py` 等既有隔离模式一致）。
+  空库模拟 CI：92 passed / 5 skipped（skipped 为 `test_config.py` 既有「无数据库跳过数据断言」设计）。
+- **`requirements.txt`**：补 `scipy==1.17.1`——4 个模块（`top_detector`/`bottom_detector`/`tp_sl`/`indicators`）
+  import scipy 但清单缺失，全新环境 `import` 即挂；本地按 `pip download` 探针确认 numpy/pandas/scipy 锁都有 cp313 Linux wheel。
+- **`.env.example`**：只保留代码实际读取的字段（`TA_DB_PATH`/`TA_LOG_DIR`/`TA_ALLOW_PARTIAL_BAR`）——原样例里的
+  `TA_HOST`/`TA_PORT`（serve 的 host/port 实为 CLI 参数）与 `FUTU_OPEND_HOST/PORT`（config.py 常量）是死字段；
+  并注明项目不自动加载 `.env`（未依赖 python-dotenv），变量须是真实进程环境变量。
+- **`README.md`**：CI 徽章 + 「CI 与本地预检」小节；前置条件 Python 版本 3.10+ → 3.11+（锁定 pandas 3.0.1 要求 ≥3.11）。
+
+**验证**：本地 `pytest -q` 97 passed；空库 `TA_DB_PATH` 模拟 CI 92 passed / 5 skipped；`ruff check tests/test_api.py` 通过；
+push 后首跑全绿（见 Actions），随后完成门禁反向验证（人为 lint 违规 → 红 → revert）与 paths-ignore 验证（纯文档 push → skipped）。
+
+> 未改 `docs/reference/api.md`：本次没有任何接口变更，无需修改。
+
 ## [2026-11-01]
 
 ### 引入 Spec-Driven Development — 建立原则层与事前规格层

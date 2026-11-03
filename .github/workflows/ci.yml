@@ -1,0 +1,57 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['docs/**', '**/*.md']   # 纯文档改动不跑
+  pull_request:
+    paths-ignore: ['docs/**', '**/*.md']
+
+# 串行化同一分支的 run（有发布/部署时防旧覆盖新）
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ── L1 检查流水线：依赖安装（锁文件校验）→ lint → 测试 ───────────────────
+  # 门槛与本地 scripts/check.sh 完全同源（同一份脚本）。
+  check:
+    name: lint + test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # requirements.txt 锁定 pandas 3.0.1（requires-python >=3.11）
+        python-version: ['3.13']
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # 全量历史：变更文件 lint 的 BASE_REF 需要
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Run check (ruff on changed files + pytest)
+        env:
+          # push: 本次 push 之前的提交；PR: 目标分支。
+          # 全零 SHA（新分支首推）回退到 HEAD~1。
+          BASE_REF: ${{ github.event_name == 'pull_request' && 'origin/main' || github.event.before }}
+        run: bash scripts/check.sh
+
+  # ── L2 安全扫描：gitleaks 全历史密钥扫描（独立 job，不阻塞上游）─────────
+  security:
+    name: secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

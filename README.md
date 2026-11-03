@@ -12,7 +12,7 @@ Futu 量化评分与模拟盘交易系统。基于 195 只核心观察标的，�
 > 两者方向相反，因此利弗莫尔信号**不并入 `total_score`**、不写 `top/bottom_signal_log`，独立落库、独立 API、独立页面（`/livermore`）。
 > 也正因如此，系统里的「支撑压力位」是 Swing Pivot 聚类，**与利弗莫尔关键点不是一回事**，勿混称。
 
-🌐 [体验地址](http://47.106.175.84/)
+🌐 [体验地址](http://47.106.175.84/)　[![CI](https://github.com/Chunxia-zzz/TraderAnalysis/actions/workflows/ci.yml/badge.svg)](https://github.com/Chunxia-zzz/TraderAnalysis/actions/workflows/ci.yml)
 
 ## 架构
 
@@ -31,9 +31,23 @@ Futu 量化评分与模拟盘交易系统。基于 195 只核心观察标的，�
 
 ## 前置条件
 
-- Python 3.10+
+- Python 3.11+（`requirements*.txt` 锁定 pandas 3.0.1，要求 ≥3.11；`pyproject.toml` 声明为 ≥3.10）
 - [富途 OpenD](https://openapi.futunn.com/) 运行在 `127.0.0.1:11111`（仅初始化和增量更新时需要）
 - 已登录富途账号，模拟账户可用
+
+## CI 与本地预检
+
+push 到 GitHub 后自动跑 [GitHub Actions](.github/workflows/ci.yml)（`ci` 工作流，纯文档改动跳过）：
+
+- `check`：Python 3.13 → `pip install -r requirements-dev.txt` → ruff（本次变更的 `.py` 文件）→ 全量 `pytest`
+- `security`：gitleaks 全历史密钥扫描
+
+本地预检与 CI **完全同源**（同一份脚本），推送前跑：
+
+```bash
+bash scripts/check.sh          # lint 变更文件 + 全量测试
+bash scripts/check.sh --all    # lint 全部 src/tests + 全量测试（存量债清零用）
+```
 
 ## 部署上线
 
