@@ -1,7 +1,5 @@
 """FastAPI 端点测试。"""
 
-import os
-
 import pytest
 from fastapi.testclient import TestClient
 
