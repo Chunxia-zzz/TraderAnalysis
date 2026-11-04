@@ -49,6 +49,19 @@ ssh root@47.106.175.84 "cat /etc/nginx/conf.d/gzip.conf"                        
 > **推该 bare repo 不再改变线上**；服务器也不需要再为前端装 Node/npm。
 > 上面那行原文保留，用于记录 2026-11-04 之前的实际行为。
 
+> ⚠️ **勘误（2026-11-04）：后端也不再由 hook 部署。**
+> 后端上线改由本仓库的 `ci.yml` 的 `deploy` job 执行（`specs/001-deploy-on-green/`）：
+> `push main` → `check`（双平台 lint + pytest + 覆盖率）→ `deploy` job 推到裸库
+> → 一条 SSH 执行 `checkout -f <sha>` → `requirements*.txt` 有变更才 `pip install`
+> → `systemctl restart trader-api` → 轮询 `GET /health`；失败自动 `checkout` 回上一个 sha。
+> `trader-analysis.git/hooks/post-receive` 已停用（备份 `post-receive.bak-20261104`），
+> **推裸库不再 checkout、不再重启服务**。
+> 另外：上面的 `本地 git push <deploy>` 一行已不可用 —— 后端 `origin` 现在只指向 GitHub，
+> 服务器地址是 `deploy` remote，且推它只更新裸库。
+>
+> 核验线上版本**不要**用 `git -C /opt/trader-analysis log`（那个 `.git` 是历史遗留的旧 clone），
+> 用 `git --git-dir=/opt/git/trader-analysis.git rev-parse HEAD`。
+
 ## 核验部署是否生效（重要）
 
 **不要看服务器上的 `git log`**：post-receive 用 `--work-tree` 检出，**不推进该目录自己的 HEAD**，

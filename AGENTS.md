@@ -102,6 +102,14 @@ specify extension add bug                  # 重建缺陷三件套命令（asses
 10. **非平凡变更先写 spec**：新增功能 / 改数据模型 / 改 API 契约 / 跨模块重构 / 改评分·温度·信号口径
     → 先落 `specs/NNN-<ascii-slug>/spec.md`，再让 `plan.md` 过一遍 Constitution Check。
     豁免清单与小 bug 路径见 `specs/README.md`；目录名用 `--short-name` 保持 ASCII（中文会生成中文目录名）。
+11. **上线只能由流水线执行**（specs/001-deploy-on-green）：`push main` + `check` 绿 → `deploy` job →
+    推裸库 → `checkout -f <sha>` → 按需 `pip install` → `systemctl restart trader-api` → 轮询 `/health`。
+    **不要**手工 `scp`/覆盖 `/opt/trader-analysis`，也**不要**恢复 `post-receive` 的部署逻辑
+    （原版备份在 `post-receive.bak-20261104`，仅作查阅）。
+12. **回滚用 sha，不重新构建**：`git --git-dir=/opt/git/trader-analysis.git --work-tree=/opt/trader-analysis
+    checkout -f <上一个 sha> && systemctl restart trader-api`。先 `rev-parse HEAD` 确认当前在跑哪一版。
+13. **`origin` 只指向 GitHub**：服务器地址已拆成 `deploy` remote。推 `deploy` 只更新裸库、**不再上线**，
+    上线唯一入口是 GitHub 上 `deploy` job 变绿。
 
 ## 6. 文档与提交规则
 
@@ -196,8 +204,9 @@ specify extension add bug                  # 重建缺陷三件套命令（asses
 | 日更怎么做 | `skills/trader-daily-update/SKILL.md` |
 | 标的池怎么管 | `README.md` + `src/trader_analysis/futu_strategy/watchlist_storage.py` |
 
-**核验线上部署时不要看服务器的 `git log`**：post-receive 用 `--work-tree` 检出，不推进该目录的 HEAD，
-`git -C /opt/trader-analysis log` 永远是旧 commit。要看**文件内容**或接口返回。
+**核验线上部署时不要 `git -C /opt/trader-analysis log`**：那个目录里的 `.git` 是历史遗留的旧 clone，
+既不随部署推进、也不反映现状。要查当前版本用
+`git --git-dir=/opt/git/trader-analysis.git rev-parse HEAD`，或直接看接口返回 / 文件内容。
 
 ## 10. 常用命令
 
@@ -209,6 +218,15 @@ trader-analysis score              # 个股评分（不依赖 OpenD）
 trader-analysis scan-signals       # 扫顶/底/EMA/利弗莫尔信号
 trader-analysis livermore --persist
 pytest -q                          # 全量测试
+
+# ── 线上发布（由流水线执行，这里只用于核对/应急）──
+git push origin main               # 只推 GitHub；check 绿后自动 deploy
+ssh root@47.106.175.84 'git --git-dir=/opt/git/trader-analysis.git rev-parse HEAD'      # 线上在跑哪个 sha
+curl -s http://47.106.175.84/health                                                     # 健康检查
+
+# 回滚（先确认上一个 sha）
+ssh root@47.106.175.84 'git --git-dir=/opt/git/trader-analysis.git --work-tree=/opt/trader-analysis \
+  checkout -f <sha> && systemctl restart trader-api'
 ```
 
 `migrate-watchlist` 与 `data/watchlist.json` **已于 2026-11-01 删除**，不要再找它们。

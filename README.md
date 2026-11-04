@@ -49,6 +49,42 @@ push 到 GitHub 后自动跑 [GitHub Actions](.github/workflows/ci.yml)（`ci` �
 bash scripts/check.sh    # 全库 lint + 全量测试 + 覆盖率门禁
 ```
 
+## 线上发布（CI → CD）
+
+**`check` 绿了才上线**：推到 `main` 后，`deploy` job 把该 commit 发到服务器并重启服务；
+检查红则线上代码与进程都不动。
+
+```
+git push origin main（origin 只指向 GitHub）
+  └─ check（双平台 lint + pytest + 覆盖率）┴─ security（gitleaks）
+       └─ deploy（needs: check，仅 push main）
+            1. 读工作树当前 sha（作为回滚锚点）
+            2. git push ssh://root@host/opt/git/trader-analysis.git HEAD:main
+            3. 一条 SSH：checkout -f <sha> → 依赖有变更才 pip install → systemctl restart
+            4. 轮询 GET /health 直到 200（上限 40s，重启期间会短暂 502）
+            5. 失败 → checkout 回上一个 sha → 重启 → 再检查
+```
+
+要点：
+
+- **部署的是 commit，不是构建产物**：后端是解释型服务，`git checkout -f <sha>` 能正确删除已删掉的模块，
+  也不会碰 `.venv` / `.env` / `data/` / `logs/`（都不在 git 跟踪范围）。
+- **依赖只在 `requirements*.txt` 变更时安装**，走服务器已配置的阿里云 PyPI 镜像
+  （服务器连不上 pypi.org）。**pip 失败不会重启服务**——宁可跑旧进程，也不带着旧依赖启动新代码。
+- **PR 不部署**；只有 `push` 到 `main` 才部署。
+- 服务器裸库的 `post-receive` 已停用（备份 `post-receive.bak-20261104`），**推它不再上线**。
+
+回滚（两条命令，不用重新构建）：
+
+```bash
+ssh root@47.106.175.84 'git --git-dir=/opt/git/trader-analysis.git rev-parse HEAD'   # 看当前跑的 sha
+ssh root@47.106.175.84 'git --git-dir=/opt/git/trader-analysis.git --work-tree=/opt/trader-analysis \
+  checkout -f <上一个 sha> && systemctl restart trader-api'
+```
+
+> 首次配置：GitHub → Settings → Secrets and variables → Actions → `DEPLOY_SSH_KEY`
+> （与前端仓库**同一把**部署私钥；GitHub 的 Secrets 不跨仓库共享，需要在本仓库再添加一次）。
+
 ## 部署上线
 
 ### 1. 安装依赖
