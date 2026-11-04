@@ -4,5 +4,6 @@
 httpx==0.28.1        # FastAPI TestClient
 pytest==9.0.2
 pytest-asyncio==1.3.0
+pytest-cov==7.1.0    # 覆盖率门禁（总覆盖率，阈值见 scripts/check.sh 的 COV_FAIL_UNDER）
 ruff==0.15.8
 watchfiles>=0.21     # uvicorn --reload on Windows

@@ -26,6 +26,19 @@
 - 本地等价物：`scripts/check.sh` 与 CI 同一份脚本（Windows Git Bash + Linux runner 双端实测）；push 前跑一遍即预检。
 - pip 缓存已配置（key=requirements-dev.txt）；今日 GitHub 故障波动，提速幅度暂不可测，属加速项不影响正确性。
 
+### L3：ruff 存量债清零、覆盖率门禁、OS 矩阵（skill 渐进路线收尾）
+
+- **ruff 清零**：全库 282 条存量违规全部清零——E501×178、E702×16、F841×8、E741、UP031 手工修复 +
+  F401/I001/UP045/F541/E401 自动修复。行为零变化：所有字符串常量经 AST 与 HEAD 逐字符比对，
+  97 项测试全程护航；`stock_names.py` 删除重复键 `"HOOD"`（两处值相同）；cli.py 的 8 条 B008
+  （`typer.Option` 默认参数）是框架惯用法，pyproject `per-file-ignores` 文档化豁免。
+  lint 门禁随之从「只查变更文件」升级为**全库**（check.sh 与 CI 同源同一份脚本）。
+- **覆盖率门禁**：pytest-cov 7.1.0；用**总覆盖率**（不用逐包阈值——单包受平台分支影响，总覆盖率摊薄）；
+  当前实测水位 16%，阈值 13%（= −3pp 余量，只能涨不能跌）；check.sh 把各平台实测总数写进 CI annotations。
+- **OS 矩阵**：check job 扩为 ubuntu + windows 双腿（`fail-fast: false`，代码双端运行故第一天就加）；
+  bash 步骤在 Windows runner 显式 `shell: bash`（默认是 pwsh）。
+- README「CI 与本地预检」同步新门槛。
+
 ## [2026-11-03]
 
 ### 接入 GitHub Actions CI（L1 检查流水线 + L2 安全扫描）

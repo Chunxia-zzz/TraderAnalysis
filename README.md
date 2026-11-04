@@ -39,14 +39,14 @@ Futu 量化评分与模拟盘交易系统。基于 195 只核心观察标的，�
 
 push 到 GitHub 后自动跑 [GitHub Actions](.github/workflows/ci.yml)（`ci` 工作流，纯文档改动跳过）：
 
-- `check`：Python 3.13 → `pip install -r requirements-dev.txt` → ruff（本次变更的 `.py` 文件）→ 全量 `pytest`
+- `check`：**Windows + Linux 双矩阵**（Python 3.13）→ `pip install -r requirements-dev.txt` →
+  全库 `ruff` → 全量 `pytest` + **总覆盖率门禁**（阈值见 `scripts/check.sh` 的 `COV_FAIL_UNDER`）
 - `security`：gitleaks 全历史密钥扫描
 
 本地预检与 CI **完全同源**（同一份脚本），推送前跑：
 
 ```bash
-bash scripts/check.sh          # lint 变更文件 + 全量测试
-bash scripts/check.sh --all    # lint 全部 src/tests + 全量测试（存量债清零用）
+bash scripts/check.sh    # 全库 lint + 全量测试 + 覆盖率门禁
 ```
 
 ## 部署上线

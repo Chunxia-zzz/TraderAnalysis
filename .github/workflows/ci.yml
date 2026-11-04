@@ -13,23 +13,24 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # ── L1 检查流水线：依赖安装（锁文件校验）→ lint → 测试 ───────────────────
+  # ── L1+L3 检查流水线：依赖安装（锁文件校验）→ 全库 lint → 测试+覆盖率门禁 ──
   # 门槛与本地 scripts/check.sh 完全同源（同一份脚本）。
+  # OS 矩阵：代码在 Windows（本地开发）与 Linux（线上 + CI）双端运行，
+  # 反斜杠路径、权限位、平台后缀二进制名这类雷只有矩阵才抓得住。
   check:
-    name: lint + test (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    name: lint + test (${{ matrix.os }}, Python ${{ matrix.python-version }})
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
         # requirements.txt 锁定 pandas 3.0.1（requires-python >=3.11）
         python-version: ['3.13']
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
-        shell: bash
+        shell: bash   # windows runner 默认是 pwsh，bash 语法步骤必须显式指定
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0   # 全量历史：变更文件 lint 的 BASE_REF 需要
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
@@ -41,11 +42,7 @@ jobs:
         # 只装 requirements-dev 不装项目本身：pytest 收集期会
         # ModuleNotFoundError: No module named 'trader_analysis'（首跑 exit 2 实测）。
         run: python -m pip install -e .
-      - name: Run check (ruff on changed files + pytest)
-        env:
-          # push: 本次 push 之前的提交；PR: 目标分支。
-          # 全零 SHA（新分支首推）回退到 HEAD~1。
-          BASE_REF: ${{ github.event_name == 'pull_request' && 'origin/main' || github.event.before }}
+      - name: Run check (ruff full repo + pytest with coverage gate)
         run: bash scripts/check.sh
 
   # ── L2 安全扫描：gitleaks 全历史密钥扫描（独立 job，不阻塞上游）─────────
