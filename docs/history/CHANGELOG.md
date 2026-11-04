@@ -4,6 +4,19 @@
 
 ---
 
+## [2026-11-04]
+
+### CI 首跑红灯排查：requirements-dev 只装依赖、不装项目本身
+
+首跑 `check` job 红（exit 2、2 秒即挂），本地全绿。排查结论与修复：
+
+- **根因**：`ModuleNotFoundError: No module named 'trader_analysis'`——`requirements-dev.txt` 只装第三方依赖，
+  不装项目本身；本地 venv 因早先 `pip install -e .`（README 部署路径）有可编辑安装而掩盖了问题。
+  CI 全新环境收集期 6 个测试模块全部 import 失败 → pytest exit 2（先实证了「收集期 import 错误 = exit 2」再定位）。
+  干净 venv 复现（只装 requirements-dev）100% 复刻，补 `pip install -e .` 后 97 passed。
+- **修复**：`ci.yml` 增加 `Install project (editable)` 步骤；`check.sh` 增加前置守卫——
+  解释器找不到 `trader_analysis` 时直接给出清晰错误（`请先 pip install -e .`）并 exit 1，不再抛 exit 2 的迷惑签名。
+
 ## [2026-11-03]
 
 ### 接入 GitHub Actions CI（L1 检查流水线 + L2 安全扫描）
@@ -26,7 +39,7 @@
 - **`README.md`**：CI 徽章 + 「CI 与本地预检」小节；前置条件 Python 版本 3.10+ → 3.11+（锁定 pandas 3.0.1 要求 ≥3.11）。
 
 **验证**：本地 `pytest -q` 97 passed；空库 `TA_DB_PATH` 模拟 CI 92 passed / 5 skipped；`ruff check tests/test_api.py` 通过；
-push 后首跑全绿（见 Actions），随后完成门禁反向验证（人为 lint 违规 → 红 → revert）与 paths-ignore 验证（纯文档 push → skipped）。
+push 后首跑 `security`（gitleaks）绿、`check` **红**（根因与修复见 2026-11-04 记录）。
 
 > 未改 `docs/reference/api.md`：本次没有任何接口变更，无需修改。
 

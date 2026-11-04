@@ -45,5 +45,13 @@ else
   fi
 fi
 
+# ── 项目必须已安装（可编辑安装），否则 pytest 收集期报 ModuleNotFoundError ──
+# 首跑 CI 曾因此红掉（exit 2）：requirements-dev 只装依赖不装项目本身。
+if ! "$PYTHON" -c "import trader_analysis" >/dev/null 2>&1; then
+  echo "错误：当前解释器找不到 trader_analysis 包，请先安装项目：" >&2
+  echo "  $PYTHON -m pip install -e ." >&2
+  exit 1
+fi
+
 # ── 全量测试（唯一既有门槛，本地 97 项全绿）────────────────────────────────
 "$PYTHON" -m pytest -q
