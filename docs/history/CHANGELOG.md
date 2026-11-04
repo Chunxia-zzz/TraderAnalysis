@@ -34,9 +34,10 @@
   （`typer.Option` 默认参数）是框架惯用法，pyproject `per-file-ignores` 文档化豁免。
   lint 门禁随之从「只查变更文件」升级为**全库**（check.sh 与 CI 同源同一份脚本）。
 - **覆盖率门禁**：pytest-cov 7.1.0；用**总覆盖率**（不用逐包阈值——单包受平台分支影响，总覆盖率摊薄）；
-  当前实测水位 16%，阈值 13%（= −3pp 余量，只能涨不能跌）；check.sh 把各平台实测总数写进 CI annotations。
+  CI 实测水位 ubuntu/windows 均为 15%（本地有真实 DB 为 16%，多出的 1pp 来自空库 CI 跳过的 5 项数据断言），
+  阈值 12%（= −3pp 余量，只能涨不能跌）；check.sh 把各平台实测总数写进 CI annotations（已用该机制核对双腿水位）。
 - **OS 矩阵**：check job 扩为 ubuntu + windows 双腿（`fail-fast: false`，代码双端运行故第一天就加）；
-  bash 步骤在 Windows runner 显式 `shell: bash`（默认是 pwsh）。
+  bash 步骤在 Windows runner 显式 `shell: bash`（默认是 pwsh）；首跑双腿全绿。
 - README「CI 与本地预检」同步新门槛。
 
 ## [2026-11-03]
