@@ -21,7 +21,8 @@
 - 修复后首跑（run #2）check + security 全绿，每个步骤绿。
 - **门禁反向验证**（run #3/#4）：故意在 `tests/test_api.py` 引入 F401 → check job 的 ruff 步骤 1 秒内红灯、
   security 独立保持绿 → revert → 复绿。红灯真的会亮。
-- **paths-ignore 验证**：本条目所在 commit 为纯文档改动，流水线被跳过（run #5 = skipped）。
+- **paths-ignore 验证**：本条目所在 commit（`11654b5`）为纯文档改动，路径过滤生效——
+  **未产生任何 run**（GitHub 对 path 过滤的事件不创建 run，而不是「skipped」记录），已与 API 核对。
 - 本地等价物：`scripts/check.sh` 与 CI 同一份脚本（Windows Git Bash + Linux runner 双端实测）；push 前跑一遍即预检。
 - pip 缓存已配置（key=requirements-dev.txt）；今日 GitHub 故障波动，提速幅度暂不可测，属加速项不影响正确性。
 
