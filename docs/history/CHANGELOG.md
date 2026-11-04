@@ -17,6 +17,14 @@
 - **修复**：`ci.yml` 增加 `Install project (editable)` 步骤；`check.sh` 增加前置守卫——
   解释器找不到 `trader_analysis` 时直接给出清晰错误（`请先 pip install -e .`）并 exit 1，不再抛 exit 2 的迷惑签名。
 
+**验证（skill 第 5 步清单全部打勾）**：
+- 修复后首跑（run #2）check + security 全绿，每个步骤绿。
+- **门禁反向验证**（run #3/#4）：故意在 `tests/test_api.py` 引入 F401 → check job 的 ruff 步骤 1 秒内红灯、
+  security 独立保持绿 → revert → 复绿。红灯真的会亮。
+- **paths-ignore 验证**：本条目所在 commit 为纯文档改动，流水线被跳过（run #5 = skipped）。
+- 本地等价物：`scripts/check.sh` 与 CI 同一份脚本（Windows Git Bash + Linux runner 双端实测）；push 前跑一遍即预检。
+- pip 缓存已配置（key=requirements-dev.txt）；今日 GitHub 故障波动，提速幅度暂不可测，属加速项不影响正确性。
+
 ## [2026-11-03]
 
 ### 接入 GitHub Actions CI（L1 检查流水线 + L2 安全扫描）
