@@ -116,7 +116,12 @@ jobs:
           echo "PREV_SHA=$prev" >> "$GITHUB_ENV"
 
       - name: Push commit to bare repo
-        # hook 已停用，这一步只更新裸库，不会触发部署
+        # hook 已停用，这一步只更新裸库，不会触发部署。
+        # GIT_SSH_COMMAND 必须显式指定私钥：`git push` 自己起 ssh 时不认上面几步用的
+        # `-i ~/.ssh/deploy`，runner 上没有任何默认身份，会以 Permission denied (publickey) 失败。
+        env:
+          GIT_SSH_COMMAND: >-
+            ssh -i ~/.ssh/deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes
         run: |
           set -euo pipefail
           git push "ssh://root@$DEPLOY_HOST$BARE" HEAD:refs/heads/main
@@ -164,12 +169,21 @@ jobs:
 
       - name: Rollback to previous commit
         # 与前端同构：GitHub Actions 没有 try/catch，if: failure() 是唯一补偿点。
+        # 但必须再判一次「本次是否真的换过代码」：如果失败发生在推送裸库阶段，
+        # 工作树还停在 PREV_SHA，此时回滚只会白白重启一次服务（首跑就踩到了）。
         if: failure()
         run: |
           set -euo pipefail
           [ -f ~/.ssh/deploy ] || { echo "::warning::SSH 未就绪，无法回滚"; exit 0; }
           if [ "${PREV_SHA:-none}" = "none" ]; then
             echo "::warning::没有上一个 sha（首次部署），无可回滚"
+            exit 0
+          fi
+          current=$(ssh -i ~/.ssh/deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+                      -o BatchMode=yes root@$DEPLOY_HOST \
+                      "git --git-dir=$BARE --work-tree=$WORKTREE rev-parse HEAD")
+          if [ "$current" != "$TARGET_SHA" ]; then
+            echo "工作树仍是 $current（未切换到 $TARGET_SHA），本次没有换过代码 → 不重启、不回滚"
             exit 0
           fi
           echo "回滚到 $PREV_SHA"
