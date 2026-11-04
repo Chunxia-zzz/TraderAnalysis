@@ -56,3 +56,136 @@ jobs:
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── CD：检查通过后把该 commit 发到服务器（specs/001-deploy-on-green）──────────
+  # 为什么是「推 commit」而不是「传文件」：工作树里有 .venv/.env/data/logs，
+  # tar 覆盖不会删除已删掉的模块（残留文件可能被 import 到），也无法保证与某个
+  # commit 精确对应。git checkout -f <sha> 两者都解决，且回滚只需换一个 sha。
+  #
+  # 服务器不能访问 GitHub（curl 超时），所以只能由 Actions 推过去。
+  deploy:
+    name: deploy (systemd restart → ${{ vars.DEPLOY_HOST || '47.106.175.84' }})
+    needs: [check]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: deploy-main
+      cancel-in-progress: false
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST || '47.106.175.84' }}
+      BARE: /opt/git/trader-analysis.git
+      WORKTREE: /opt/trader-analysis
+      SERVICE: trader-api
+      TARGET_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # 需要 HEAD~1 之外的历史做依赖变更判定，也要能推送
+
+      - name: Prepare SSH key
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DEPLOY_SSH_KEY:-}" ]; then
+            echo "::error::缺少 secret DEPLOY_SSH_KEY。添加方式见 specs/001-deploy-on-green/plan.md §6"
+            exit 1
+          fi
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy
+          chmod 600 ~/.ssh/deploy
+          ssh-keygen -y -f ~/.ssh/deploy > /dev/null 2>&1 \
+            || { echo "::error::DEPLOY_SSH_KEY 不是合法的 OpenSSH 私钥"; exit 1; }
+          [ -f .github/deploy_known_hosts ] \
+            || { echo "::error::缺少 .github/deploy_known_hosts"; exit 1; }
+          cp .github/deploy_known_hosts ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Read currently deployed sha
+        # 回滚锚点要用「工作树里真正 checkout 出来的那一版」，两个错误写法都要避开：
+        #   1) HEAD~1 —— 一次推送可能包含多个 commit（历史上有过推 10 个的情况）
+        #   2) rev-parse main —— 回滚后裸库的 main 仍指向被回滚掉的「坏」提交，
+        #      下次部署会拿坏 sha 当锚点。HEAD 才是工作树的真实状态。
+        run: |
+          set -euo pipefail
+          prev=$(ssh -i ~/.ssh/deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+                   -o BatchMode=yes root@$DEPLOY_HOST \
+                   "git --git-dir=$BARE --work-tree=$WORKTREE rev-parse HEAD 2>/dev/null || echo none")
+          echo "当前工作树 sha: $prev"
+          echo "PREV_SHA=$prev" >> "$GITHUB_ENV"
+
+      - name: Push commit to bare repo
+        # hook 已停用，这一步只更新裸库，不会触发部署
+        run: |
+          set -euo pipefail
+          git push "ssh://root@$DEPLOY_HOST$BARE" HEAD:refs/heads/main
+
+      - name: Deploy (checkout → deps if changed → restart)
+        # 一条 SSH 连接做完三件事。pip 失败必须阻止重启（set -e）：宁可旧进程继续跑，
+        # 也不要带着旧依赖启动新代码——那种状态最难查。
+        run: |
+          set -euo pipefail
+          if [ "$PREV_SHA" = "none" ]; then
+            deps=1
+          elif git diff --name-only "$PREV_SHA" "$TARGET_SHA" | grep -qE '^requirements(-dev)?\.txt$'; then
+            deps=1
+          else
+            deps=0
+          fi
+          echo "依赖是否变更: $deps（对比 $PREV_SHA..$TARGET_SHA）"
+          ssh -i ~/.ssh/deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o BatchMode=yes root@$DEPLOY_HOST "set -e
+              echo '[1/3] checkout $TARGET_SHA'
+              git --git-dir=$BARE --work-tree=$WORKTREE checkout -f $TARGET_SHA
+              echo \"      工作树 HEAD: \$(git --git-dir=$BARE rev-parse --short HEAD)\"
+              echo '[2/3] 依赖'
+              if [ '$deps' = '1' ]; then
+                echo '      requirements 有变更 → pip install'
+                $WORKTREE/.venv/bin/pip install -q -r $WORKTREE/requirements.txt
+              else
+                echo '      requirements 未变更 → 跳过'
+              fi
+              echo '[3/3] 重启 $SERVICE'
+              systemctl restart $SERVICE
+              systemctl is-active --quiet $SERVICE"
+
+      - name: Health check
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://$DEPLOY_HOST/health" || true)
+            if [ "$code" = "200" ]; then echo "健康检查通过（第 ${i} 次，/health=200）"; exit 0; fi
+            echo "  第 ${i} 次 /health=$code，2s 后重试"
+            sleep 2
+          done
+          echo "::error::/health 40s 内未返回 200"
+          exit 1
+
+      - name: Rollback to previous commit
+        # 与前端同构：GitHub Actions 没有 try/catch，if: failure() 是唯一补偿点。
+        if: failure()
+        run: |
+          set -euo pipefail
+          [ -f ~/.ssh/deploy ] || { echo "::warning::SSH 未就绪，无法回滚"; exit 0; }
+          if [ "${PREV_SHA:-none}" = "none" ]; then
+            echo "::warning::没有上一个 sha（首次部署），无可回滚"
+            exit 0
+          fi
+          echo "回滚到 $PREV_SHA"
+          ssh -i ~/.ssh/deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o BatchMode=yes root@$DEPLOY_HOST "set -e
+              git --git-dir=$BARE --work-tree=$WORKTREE checkout -f $PREV_SHA
+              if git --git-dir=$BARE diff --name-only $PREV_SHA $TARGET_SHA | grep -qE '^requirements(-dev)?\.txt$'; then
+                echo '依赖有差异 → 重装'
+                $WORKTREE/.venv/bin/pip install -q -r $WORKTREE/requirements.txt
+              fi
+              systemctl restart $SERVICE
+              systemctl is-active --quiet $SERVICE"
+          for i in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://$DEPLOY_HOST/health" || true)
+            if [ "$code" = "200" ]; then echo "回滚后健康检查通过（第 ${i} 次）"; exit 0; fi
+            sleep 2
+          done
+          echo "::error::回滚后 /health 仍非 200，线上可能处于异常状态，需要人工介入"
+          exit 1

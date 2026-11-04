@@ -1,0 +1,10 @@
+# 服务器 47.106.175.84 的主机公钥（公钥本身不是机密，钉住它才能防中间人）
+# 来源：服务器 /etc/ssh/ssh_host_*_key.pub，2026-11-04 采集
+# 指纹：
+#   ED25519  SHA256:9HQfejlW89FDwHaHovE9Zy//kaLBQ/0zeDaav6h45qQ
+#   ECDSA    SHA256:IDnnRW7kHoyzFeZqJIIpYBf+BcCVMHwUEzivmrJrkGY
+#   RSA      SHA256:BjzHTtg+s/Pu/SiwsKRomjcx3lY/FqFYTJ86ekgfu1Y
+# 服务器重装/换 IP 后必须重新生成此文件，否则 deploy job 会因主机密钥不匹配失败（这是期望行为）
+47.106.175.84 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJNmz/DH/OKMLSJHGOxeIWXgiBKxpahkc/4scx5tW8C2
+47.106.175.84 ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBIsIhu4D6yaMfVcNz1BXgN0YWDJjUG4cOnQPHZS75TfvZbVaxwp0urZhhosotCzNP6TFkkYGlNrAwiMz7Zb0vh4=
+47.106.175.84 ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDJ10AIbhv+jCHjKalMDAcG870cPO4RSTnwG818MM5A6/6kFIIw4wXIOsq8aWC+YaXS7yAgMGxWacMkJfsXtqvP6IYJYykLNq5gj+aKsXIuU5/rkrlQY4hTwNyZBkjKcxWuLzdXIDOaVs6r9HKLfzUyfUXixm3xq2fYtD6oWaWD5A5pA0sCGHmCUvOXEgnVirMACUu+8szKupn/rp1YhkFN+QZ94Jg4y8fGyLc3KoPyHbSe2Ez82B1c+txtH82RGxUZ2ZTcJJ/xc+hbmNU9CWGzj8N0lOhvxVXb/n6xv1wRDBBEpUpigEBbp8BjiHFpn8cbEDec2XI6CO0TUk4jXtO20cEXxZeay/Z96JU87zrEo1YWBbgChxhk/g39FuFwhrbQze4sOiBd/qdTq67ZaSF82KJELpSAtg7XOdwAdM7qPf8VG4b5+vsAybP1PGVWaB8Gx0aaNKPZXEBsQbYj/QejUTYkIr7xVMmUWbcUVjExOHOw7jIxwFqz7ifwYkajZrM=
