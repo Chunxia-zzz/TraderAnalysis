@@ -13,5 +13,3 @@ typer==0.24.1
 python-jose[cryptography]==3.4.0
 passlib[bcrypt]==1.7.4
 yfinance>=0.2.36
-
-# probe: 验证 deploy 的依赖变更判定（2026-11-04，随后移除）
