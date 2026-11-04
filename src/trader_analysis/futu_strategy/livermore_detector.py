@@ -398,7 +398,6 @@ def analyze_livermore(
     total = len(df)
     closes = _arr(df, "close")
     highs = _arr(df, "high")
-    lows = _arr(df, "low")
     volumes = _arr(df, "volume")
     vol_ma20 = _arr(df, "vol_ma20")
 
@@ -409,7 +408,9 @@ def analyze_livermore(
         return LivermoreResult(_to_native(panorama), [])
 
     # ── 趋势：周线潮汐 + 日线波浪 ──
-    tide, tide_period, tide_note = weekly_tide(weekly_df) if weekly_df is not None else ("unknown", None, "无周线")
+    tide, tide_period, tide_note = (
+        weekly_tide(weekly_df) if weekly_df is not None else ("unknown", None, "无周线")
+    )
     ma20 = _num(df.iloc[-1].get("ma20"))
     ma60 = _num(df.iloc[-1].get("ma60"))
     wave = "unknown"
@@ -481,7 +482,7 @@ def analyze_livermore(
 
     if plat is None:
         panorama["state"] = "no_platform"
-        panorama["skip_reason"] = "近 %d 根内无有效整理平台" % p["PLATFORM_LOOKBACK"]
+        panorama["skip_reason"] = f"近 {p['PLATFORM_LOOKBACK']} 根内无有效整理平台"
         return LivermoreResult(_to_native(panorama), [])
 
     end_idx = plat["end_idx"]
@@ -686,7 +687,15 @@ def _build_signals(
             action = "趋势反转确认，可分批建仓"
 
         vol_txt = f"量比{vol_ratio:.2f}" if vol_ratio is not None else "量比—"
-        vol_flag = "放量确认" if confirmed else ("无量突破，需谨慎" if vol_ratio is not None and vol_ratio < p["VOL_DRY_RATIO"] else "量能一般")
+        vol_flag = (
+            "放量确认"
+            if confirmed
+            else (
+                "无量突破，需谨慎"
+                if vol_ratio is not None and vol_ratio < p["VOL_DRY_RATIO"]
+                else "量能一般"
+            )
+        )
         if tide != "up" and require_tide_up:
             action = "⚠️ 逆潮汐突破，建议只做观察不下单"
 
@@ -746,7 +755,9 @@ def _build_signals(
     if is_failed:
         out.append(LivermoreSignal(
             signal_type=SIG_FAILED_BREAKOUT,
-            strength=_clamp(0.55 + (0.15 if vol_ratio and vol_ratio >= p["VOL_CONFIRM_RATIO"] else 0.0)),
+            strength=_clamp(
+                0.55 + (0.15 if vol_ratio and vol_ratio >= p["VOL_CONFIRM_RATIO"] else 0.0)
+            ),
             description=(
                 f"近 {p['FAILED_BREAKOUT_BARS']} 根内曾突破 {upper:.2f}，"
                 f"今日收回下方（收 {close:.2f}）→ 假突破，按利弗莫尔原则应离场"
@@ -899,7 +910,10 @@ def scan_livermore(
     try:
         from trader_analysis.futu_strategy.storage import _get_conn
         conn = _get_conn()
-        names = {r["code"]: (r["name"] or "") for r in conn.execute("SELECT code, name FROM watchlist")}
+        names = {
+            r["code"]: (r["name"] or "")
+            for r in conn.execute("SELECT code, name " "FROM watchlist")
+        }
         conn.close()
     except Exception:
         pass
@@ -917,12 +931,22 @@ def scan_livermore(
     for code in codes:
         df = query_recent(code, "1d", limit=daily_bars)
         if df.empty or len(df) < MIN_BARS:
-            skipped.append({"code": code, "name": names.get(code, ""), "reason": "日线数据不足", "daily_bars": len(df)})
+            skipped.append({
+                "code": code,
+                "name": names.get(code, ""),
+                "reason": "日线数据不足",
+                "daily_bars": len(df),
+            })
             continue
         if date:
             df = df[df["date"].astype(str) <= date]
             if len(df) < MIN_BARS:
-                skipped.append({"code": code, "name": names.get(code, ""), "reason": "指定日期前数据不足", "daily_bars": len(df)})
+                skipped.append({
+                    "code": code,
+                    "name": names.get(code, ""),
+                    "reason": "指定日期前数据不足",
+                    "daily_bars": len(df),
+                })
                 continue
         weekly_df = query_recent(code, "1w", limit=200)
         if date and not weekly_df.empty:
@@ -998,7 +1022,9 @@ def scan_livermore(
     # 危险信号：先按严重度（止损 > 假突破 > 放量滞涨）再按强度；同一标的只留最严重的一条
     # （止损与假突破常同时成立，两条都列在页面上是噪声；DB 里两条都会保留，供回测分别统计）
     _danger_order = {SIG_STOP_TRIGGERED: 0, SIG_FAILED_BREAKOUT: 1, SIG_CLIMAX_WARNING: 2}
-    dangers.sort(key=lambda x: (_danger_order.get(x.get("signal_type", ""), 9), -(x.get("strength") or 0)))
+    dangers.sort(
+        key=lambda x: (_danger_order.get(x.get("signal_type", ""), 9), -(x.get("strength") or 0)),
+    )
     _deduped: list[dict] = []
     _seen: set[str] = set()
     for d in dangers:
@@ -1022,7 +1048,9 @@ def scan_livermore(
             "above_pivot": len(above_pivot),
             "dangers": len(dangers),
             "dangers_stop": sum(1 for d in dangers if d.get("signal_type") == SIG_STOP_TRIGGERED),
-            "dangers_failed": sum(1 for d in dangers if d.get("signal_type") == SIG_FAILED_BREAKOUT),
+            "dangers_failed": sum(
+                1 for d in dangers if d.get("signal_type") == SIG_FAILED_BREAKOUT
+            ),
             "dangers_climax": sum(1 for d in dangers if d.get("signal_type") == SIG_CLIMAX_WARNING),
             "leaders": sum(1 for p in panoramas if p.get("is_leader")),
             "tide_up": tide_up,

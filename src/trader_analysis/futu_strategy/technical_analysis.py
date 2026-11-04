@@ -10,7 +10,6 @@ from typing import Any
 
 import pandas as pd
 
-
 # ── 支撑/压力位检测 ────────────────────────────────────────────────────────────
 
 
@@ -44,7 +43,6 @@ def find_support_resistance(
     close = float(latest["close"])
     atr = float(latest["atr14"]) if pd.notna(latest.get("atr14")) else close * 0.02
     cluster_thresh = atr * 0.6
-    price_range = close * 0.25  # 只返回距当前价格 ±25% 以内的位
 
     highs = df["high"].values
     lows = df["low"].values
@@ -56,13 +54,13 @@ def find_support_resistance(
 
     for i in range(n, total - n):
         h = highs[i]
-        l = lows[i]
+        lo = lows[i]
         if all(h >= highs[i - j] for j in range(1, n + 1)) and \
            all(h >= highs[i + j] for j in range(1, n + 1)):
             swing_highs.append((h, i))
-        if all(l <= lows[i - j] for j in range(1, n + 1)) and \
-           all(l <= lows[i + j] for j in range(1, n + 1)):
-            swing_lows.append((l, i))
+        if all(lo <= lows[i - j] for j in range(1, n + 1)) and \
+           all(lo <= lows[i + j] for j in range(1, n + 1)):
+            swing_lows.append((lo, i))
 
     # ── 2. 聚类合并 ───────────────────────────────────────────────────────────
     def cluster_pivots(pivots: list[tuple[float, int]]) -> list[dict]:
@@ -109,7 +107,13 @@ def find_support_resistance(
         price = float(val)
         if abs(price - close) / close > 0.25:
             continue
-        entry = {"price": price, "strength": 1, "recency_idx": total - 1, "label": label, "type": "ma"}
+        entry = {
+            "price": price,
+            "strength": 1,
+            "recency_idx": total - 1,
+            "label": label,
+            "type": "ma",
+        }
         if price < close:
             raw_supports.append(entry)
         else:
@@ -230,7 +234,6 @@ def detect_patterns(df: pd.DataFrame) -> list[dict[str, Any]]:
         return []
 
     last = df.iloc[-1]
-    recent5 = df.tail(5)   # noqa: F841（供后续扩展用）
     patterns: list[dict[str, Any]] = []
 
     def add(id_: str, label: str, bullish: bool | None, desc: str) -> None:
@@ -240,15 +243,22 @@ def detect_patterns(df: pd.DataFrame) -> list[dict[str, Any]]:
         v = last.get(col)
         return None if v is None or (isinstance(v, float) and math.isnan(v)) else float(v)
 
-    ma5  = get("ma5");   ma10 = get("ma10")
-    ma20 = get("ma20");  ma60 = get("ma60")
-    ema5 = get("ema5");  ema10 = get("ema10")
-    ema15 = get("ema15"); ema20 = get("ema20")
-    dif  = get("dif");   dea  = get("dea")
+    ma5 = get("ma5")
+    ma10 = get("ma10")
+    ma20 = get("ma20")
+    ma60 = get("ma60")
+    ema5 = get("ema5")
+    ema10 = get("ema10")
+    ema15 = get("ema15")
+    ema20 = get("ema20")
+    dif = get("dif")
+    dea = get("dea")
     rsi12 = get("rsi12")
     close = get("close")
-    boll_upper = get("boll_upper"); boll_lower = get("boll_lower")
-    vol = get("volume"); vol_ma20 = get("vol_ma20")
+    boll_upper = get("boll_upper")
+    boll_lower = get("boll_lower")
+    vol = get("volume")
+    vol_ma20 = get("vol_ma20")
 
     # ── 均线排列 ──────────────────────────────────────────────────────────────
     if all(v is not None for v in [ma5, ma10, ma20, ma60]):
@@ -331,14 +341,20 @@ def analyze_trend(df: pd.DataFrame) -> dict[str, Any]:
         v = last.get(col)
         return None if v is None or (isinstance(v, float) and math.isnan(v)) else float(v)
 
-    close   = get("close") or 0
-    ma20    = get("ma20");  ma60  = get("ma60"); ma120 = get("ma120")
-    ma5     = get("ma5");   ma10  = get("ma10")
-    dif     = get("dif");   dea   = get("dea")
-    rsi12   = get("rsi12")
-    boll_upper = get("boll_upper"); boll_lower = get("boll_lower"); boll_mid = get("boll_mid")
-    vol     = get("volume"); vol_ma20 = get("vol_ma20")
-    atr14   = get("atr14")
+    close = get("close") or 0
+    ma20 = get("ma20")
+    ma60 = get("ma60")
+    ma120 = get("ma120")
+    ma5 = get("ma5")
+    ma10 = get("ma10")
+    dif = get("dif")
+    dea = get("dea")
+    rsi12 = get("rsi12")
+    boll_upper = get("boll_upper")
+    boll_lower = get("boll_lower")
+    vol = get("volume")
+    vol_ma20 = get("vol_ma20")
+    atr14 = get("atr14")
 
     # 主趋势：均线多空排列
     primary = "sideways"
@@ -420,7 +436,14 @@ def analyze_dow_trend(
     综合策略基于潮汐×估值×波浪 8 种核心场景。
     """
     if daily_df.empty:
-        return {"tide": "neutral", "wave": "neutral", "ripple": {}, "signal": "无数据", "signal_desc": "", "trade_hint": ""}
+        return {
+            "tide": "neutral",
+            "wave": "neutral",
+            "ripple": {},
+            "signal": "无数据",
+            "signal_desc": "",
+            "trade_hint": "",
+        }
 
     def _get(df, col):
         val = df.iloc[-1].get(col)
@@ -431,7 +454,6 @@ def analyze_dow_trend(
     tide_ma20 = tide_ma60 = None
     if not weekly_df.empty:
         # 优先用 DB 中的指标值，None 时回退到 on-the-fly 计算
-        w_last = weekly_df.iloc[-1]
         tide_ma20 = _get(weekly_df, "ma20")
         tide_ma60 = _get(weekly_df, "ma60")
 
@@ -473,7 +495,6 @@ def analyze_dow_trend(
     vol_ratio = None
     vol_context = ""
     if not daily_df.empty:
-        last = daily_df.iloc[-1]
         rsi12 = _get(daily_df, "rsi12")
         ripple["rsi12"] = round(rsi12, 1) if rsi12 else None
 

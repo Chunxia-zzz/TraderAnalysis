@@ -21,8 +21,8 @@ def _get_quote_ctx():
     """创建 OpenQuoteContext，连接失败抛 OpenDNotConnected。"""
     try:
         from futu import OpenQuoteContext  # type: ignore[import]
-    except ImportError:
-        raise OpenDNotConnected("futu-api 未安装")
+    except ImportError as exc:
+        raise OpenDNotConnected("futu-api 未安装") from exc
 
     try:
         ctx = OpenQuoteContext(host=config.OPEND_HOST, port=config.OPEND_PORT)
@@ -50,7 +50,9 @@ def fetch_stock_info(code: str) -> dict | None:
         from futu import Market as FutuMarket  # type: ignore[import]
 
         market_code = code.split(".")[0] if "." in code else "US"
-        market_map = {"US": FutuMarket.US, "HK": FutuMarket.HK, "SH": FutuMarket.SH, "SZ": FutuMarket.SZ}
+        market_map = {
+            "US": FutuMarket.US, "HK": FutuMarket.HK, "SH": FutuMarket.SH, "SZ": FutuMarket.SZ,
+        }
         futu_market = market_map.get(market_code, FutuMarket.US)
         ret, data = ctx.get_stock_basicinfo(futu_market, code_list=[code])
         info: dict = {}
@@ -59,7 +61,9 @@ def fetch_stock_info(code: str) -> dict | None:
             info["name"] = str(row.get("name", ""))
             info["sector"] = str(row.get("sec_type", "")) if row.get("sec_type") else None
             info["industry"] = str(row.get("industry", "")) if row.get("industry") else None
-            info["listing_date"] = str(row.get("listing_date", "")) if row.get("listing_date") else None
+            info["listing_date"] = (
+                str(row.get("listing_date", "")) if row.get("listing_date") else None
+            )
 
         # 获取实时快照
         ret, snapshot = ctx.get_market_snapshot([code])
@@ -92,7 +96,6 @@ def search_stocks(
     try:
         from futu import (  # type: ignore[import]
             RET_OK,
-            FilterType,
             Market,
             SimpleFilter,
             StockFilter,

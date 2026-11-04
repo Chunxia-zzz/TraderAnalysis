@@ -251,7 +251,9 @@ def insert_order(
     return row_id
 
 
-def update_order_fill(row_id: int, fill_price: float, fill_qty: int, pnl: float | None = None) -> None:
+def update_order_fill(
+    row_id: int, fill_price: float, fill_qty: int, pnl: float | None = None
+) -> None:
     """更新成交信息。"""
     conn = _get_conn()
     conn.execute(

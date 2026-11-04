@@ -22,7 +22,6 @@ from datetime import datetime
 
 import pandas as pd
 
-
 # ── 权重配置 ──────────────────────────────────────────────────────────────────
 
 WEIGHTS: dict[str, int] = {

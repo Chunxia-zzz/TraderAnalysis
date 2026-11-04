@@ -1,8 +1,5 @@
 """SQLite 存储层 CRUD 测试（使用临时数据库）。"""
 
-import os
-import tempfile
-
 import pandas as pd
 import pytest
 

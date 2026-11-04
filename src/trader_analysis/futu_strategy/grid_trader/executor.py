@@ -7,7 +7,9 @@ import logging
 logger = logging.getLogger("grid_trader")
 
 
-def place_grid_order(trd_ctx, code: str, direction: str, qty: int, price: float, env: str) -> str | None:
+def place_grid_order(
+    trd_ctx, code: str, direction: str, qty: int, price: float, env: str
+) -> str | None:
     """下限价单，返回 order_id。失败返回 None。
 
     Args:

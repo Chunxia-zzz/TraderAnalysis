@@ -37,7 +37,10 @@ def check_risk(state: GridState, cfg: GridConfig, direction: str) -> tuple[bool,
 
     # 单日亏损熔断
     if state.daily_pnl <= cfg.daily_loss_limit:
-        return False, f"daily loss limit triggered (${state.daily_pnl:.2f} <= ${cfg.daily_loss_limit:.2f})"
+        return False, (
+            f"daily loss limit triggered (${state.daily_pnl:.2f} <= "
+            f"${cfg.daily_loss_limit:.2f})"
+        )
 
     # 单日交易次数
     if state.daily_trades >= cfg.max_orders_per_day:

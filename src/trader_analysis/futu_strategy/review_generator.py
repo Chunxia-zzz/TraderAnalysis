@@ -15,7 +15,6 @@ import pandas as pd
 
 from trader_analysis.futu_strategy import storage, template_store
 
-
 # ── 复盘标的 ──────────────────────────────────────────────────────────────────
 
 REVIEW_ASSETS = [
@@ -134,20 +133,27 @@ def _asset_line(a: dict, period_label: str) -> str:
 def _pick_line(p: dict) -> str:
     """交易机会一行。"""
     ticker = p["code"].split(".")[-1]
-    return f"- **{ticker}**：评分 {p['score']}，折价 {p['discount_pct']}%，{p['signal']}。{p.get('trade_hint', '')}"
+    return (
+        f"- **{ticker}**：评分 {p['score']}，折价 {p['discount_pct']}%，"
+        f"{p['signal']}。{p.get('trade_hint', '')}"
+    )
 
 
 # ── 报告组装 ──────────────────────────────────────────────────────────────────
 
 
-def _build_markdown(ktype: str, date: str, macro: list[dict], mag7: list[dict], picks: list[dict]) -> str:
+def _build_markdown(
+    ktype: str, date: str, macro: list[dict], mag7: list[dict], picks: list[dict]
+) -> str:
     """组装 Markdown 复盘正文（从模板渲染）。"""
     period_word = "周" if ktype == "1w" else "日"
     period_label = "本周" if ktype == "1w" else "当日"
 
     macro_section = "\n".join(_asset_line(a, period_label) for a in macro)
     mag7_section = "\n".join(_asset_line(a, period_label) for a in mag7)
-    picks_section = "\n".join(_pick_line(p) for p in picks) if picks else "今日无符合条件的低估做多机会。"
+    picks_section = (
+        "\n".join(_pick_line(p) for p in picks) if picks else "今日无符合条件的低估做多机会。"
+    )
 
     data = {
         "period_word": period_word,

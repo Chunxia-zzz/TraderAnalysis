@@ -340,7 +340,11 @@ def detect_acceleration(daily_df: pd.DataFrame, cfg: dict) -> TopSignal | None:
         signal_type="ACCELERATION",
         strength=round(strength, 3),
         description=f"加速赶顶: 短期斜率/长期斜率={ratio:.1f}x",
-        detail={"short_slope": round(short_slope, 5), "long_slope": round(long_slope, 5), "ratio": round(ratio, 2)},
+        detail={
+            "short_slope": round(short_slope, 5),
+            "long_slope": round(long_slope, 5),
+            "ratio": round(ratio, 2),
+        },
     )
 
 
@@ -469,7 +473,11 @@ def detect_emergency_stop(daily_df: pd.DataFrame, cfg: dict) -> TopSignal | None
                 signal_type="EMERGENCY_STOP",
                 strength=1.0,
                 description=f"跌破MA{ma_period}({ma_now:.2f})，触发紧急止损",
-                detail={"ma_value": round(ma_now, 2), "close": round(close_now, 2), "trigger": f"ma{ma_period}"},
+                detail={
+                    "ma_value": round(ma_now, 2),
+                    "close": round(close_now, 2),
+                    "trigger": f"ma{ma_period}",
+                },
             )
 
     return None

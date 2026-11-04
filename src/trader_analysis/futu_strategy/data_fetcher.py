@@ -10,8 +10,8 @@ import logging
 
 import pandas as pd
 
-from trader_analysis.futu_strategy.providers import DataProviderError, FutuLiveDataProvider
 from trader_analysis.futu_strategy import config
+from trader_analysis.futu_strategy.providers import DataProviderError, FutuLiveDataProvider
 
 logger = logging.getLogger(__name__)
 

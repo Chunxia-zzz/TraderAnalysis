@@ -1,4 +1,4 @@
-"""信号回测引擎。
+("""信号回测引擎。
 
 支持三种策略模式：
 - hold: 评分达标买入，固定持有N天卖出（买入持有）
@@ -10,16 +10,19 @@
 用法：
     from trader_analysis.futu_strategy.backtest import run_backtest, BacktestParams
     # 买入持有
-    result = run_backtest(BacktestParams(code="US.SNDK", mode="hold", threshold=40, holding_days=10))
+    result = run_backtest(BacktestParams(code="US.SNDK", mode="hold", """
+ """threshold=40, holding_days=10))
     # 波段操作
-    result = run_backtest(BacktestParams(code="US.SNDK", mode="swing", threshold=60, exit_threshold=30))
+    result = run_backtest(BacktestParams(code="US.SNDK", mode="swing", """
+ """threshold=60, exit_threshold=30))
     # 趋势跟踪
-    result = run_backtest(BacktestParams(code="US.SNDK", mode="trend", threshold=40, trail_ma="ma5"))
-"""
+    result = run_backtest(BacktestParams(code="US.SNDK", mode="trend", """
+ """threshold=40, trail_ma="ma5"))
+""")
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from statistics import median, stdev
 
 from trader_analysis.futu_strategy.storage import (
@@ -67,16 +70,26 @@ class Trade:
     status: str  # complete | incomplete
 
 
-def _apply_cooldown(signals: list[dict], params: BacktestParams, date_index: dict[str, int]) -> list[dict]:
+def _apply_cooldown(
+    signals: list[dict], params: BacktestParams, date_index: dict[str, int]
+) -> list[dict]:
     """应用冷却期去重。"""
     if params.cooldown == "none":
         return signals
 
     if params.mode == "hold":
-        cooldown_days = params.holding_days if params.cooldown == "holding" else (params.cooldown_days or params.holding_days)
+        cooldown_days = (
+            params.holding_days
+            if params.cooldown == "holding"
+            else (params.cooldown_days or params.holding_days)
+        )
     else:
         # swing 模式：冷却期默认用 max_holding_days 或 custom
-        cooldown_days = params.cooldown_days or params.max_holding_days if params.cooldown == "custom" else 0
+        cooldown_days = (
+            params.cooldown_days or params.max_holding_days
+            if params.cooldown == "custom"
+            else 0
+        )
 
     # swing + holding 模式: 冷却期在交易完成后动态处理，这里先不过滤
     if params.mode == "swing" and params.cooldown == "holding":
@@ -183,17 +196,28 @@ def _calculate_summary(trades: list[Trade]) -> dict:
         "max_return_pct": round(max(returns), 2),
         "min_return_pct": round(min(returns), 2),
         "total_return_pct": round(sum(returns), 2),
-        "avg_holding_days": round(sum(holding_days_list) / len(holding_days_list), 1) if holding_days_list else 0,
+        "avg_holding_days": (
+            round(sum(holding_days_list) / len(holding_days_list), 1) if holding_days_list else 0
+        ),
         "sharpe_like": round(avg_ret / std_ret, 2) if std_ret > 0 else 0.0,
         "profit_factor": round(total_profit / total_loss, 2) if total_loss > 0 else 999.0,
     }
 
 
-def _run_hold_mode(params: BacktestParams, scores: list[dict], prices: dict, trading_dates: list, date_index: dict, price_ma5: dict | None = None) -> list[Trade]:
+def _run_hold_mode(
+    params: BacktestParams,
+    scores: list[dict],
+    prices: dict,
+    trading_dates: list,
+    date_index: dict,
+    price_ma5: dict | None = None,
+) -> list[Trade]:
     """策略A: 买入持有模式。"""
     signal_dates = [s for s in scores if s["total_score"] >= params.threshold]
     if price_ma5 and params.entry_confirm == "above_ma5":
-        signal_dates = _apply_entry_confirm(signal_dates, params, trading_dates, date_index, price_ma5)
+        signal_dates = _apply_entry_confirm(
+            signal_dates, params, trading_dates, date_index, price_ma5
+        )
     filtered_signals = _apply_cooldown(signal_dates, params, date_index)
 
     trades: list[Trade] = []
@@ -242,14 +266,23 @@ def _run_hold_mode(params: BacktestParams, scores: list[dict], prices: dict, tra
     return trades
 
 
-def _run_swing_mode(params: BacktestParams, scores: list[dict], prices: dict, trading_dates: list, date_index: dict, price_ma5: dict | None = None) -> list[Trade]:
+def _run_swing_mode(
+    params: BacktestParams,
+    scores: list[dict],
+    prices: dict,
+    trading_dates: list,
+    date_index: dict,
+    price_ma5: dict | None = None,
+) -> list[Trade]:
     """策略B: 波段操作模式。评分高时买入，评分回落时卖出。"""
     # 构建日期→评分映射
     score_by_date = {s["date"]: s for s in scores}
 
     signal_dates = [s for s in scores if s["total_score"] >= params.threshold]
     if price_ma5 and params.entry_confirm == "above_ma5":
-        signal_dates = _apply_entry_confirm(signal_dates, params, trading_dates, date_index, price_ma5)
+        signal_dates = _apply_entry_confirm(
+            signal_dates, params, trading_dates, date_index, price_ma5
+        )
     filtered_signals = _apply_cooldown(signal_dates, params, date_index)
 
     trades: list[Trade] = []
@@ -332,14 +365,23 @@ def _run_swing_mode(params: BacktestParams, scores: list[dict], prices: dict, tr
     return trades
 
 
-def _run_trend_mode(params: BacktestParams, scores: list[dict], prices: dict, trading_dates: list, date_index: dict, price_ma5: dict | None = None) -> list[Trade]:
+def _run_trend_mode(
+    params: BacktestParams,
+    scores: list[dict],
+    prices: dict,
+    trading_dates: list,
+    date_index: dict,
+    price_ma5: dict | None = None,
+) -> list[Trade]:
     """策略C: 趋势跟踪模式。评分达标买入，收盘跌破MA时卖出。"""
     # 获取 close + MA 数据（卖出用的 trail_ma）
     price_ma = query_price_and_ma(params.code, params.trail_ma, params.start_date, params.end_date)
 
     signal_dates = [s for s in scores if s["total_score"] >= params.threshold]
     if price_ma5 and params.entry_confirm == "above_ma5":
-        signal_dates = _apply_entry_confirm(signal_dates, params, trading_dates, date_index, price_ma5)
+        signal_dates = _apply_entry_confirm(
+            signal_dates, params, trading_dates, date_index, price_ma5
+        )
     filtered_signals = _apply_cooldown(signal_dates, params, date_index)
 
     trades: list[Trade] = []
@@ -613,7 +655,9 @@ def run_backtest(params: BacktestParams) -> dict:
             "threshold": params.threshold,
             "holding_days": params.holding_days if params.mode == "hold" else None,
             "exit_threshold": params.exit_threshold if params.mode == "swing" else None,
-            "max_holding_days": params.max_holding_days if params.mode in ("swing", "trend") else None,
+            "max_holding_days": (
+                params.max_holding_days if params.mode in ("swing", "trend") else None
+            ),
             "trail_ma": params.trail_ma if params.mode == "trend" else None,
             "entry_confirm": params.entry_confirm,
             "cooldown": params.cooldown,

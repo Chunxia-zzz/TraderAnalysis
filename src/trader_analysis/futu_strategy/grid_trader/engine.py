@@ -13,12 +13,11 @@ from __future__ import annotations
 import logging
 import signal
 import time
-from datetime import datetime
 
 from trader_analysis.futu_strategy import config as app_config
 from trader_analysis.futu_strategy.grid_trader import state_manager
 from trader_analysis.futu_strategy.grid_trader.executor import place_grid_order
-from trader_analysis.futu_strategy.grid_trader.models import GridConfig, GridState, Signal
+from trader_analysis.futu_strategy.grid_trader.models import Signal
 from trader_analysis.futu_strategy.grid_trader.risk_control import check_risk, is_trading_hours
 from trader_analysis.futu_strategy.grid_trader.strategy import (
     calculate_grid_lines,
@@ -48,7 +47,7 @@ class GridEngine:
 
     def start(self) -> None:
         """启动引擎：连接 OpenD、订阅行情、进入事件循环。"""
-        from futu import OpenQuoteContext, OpenSecTradeContext, SubType, TrdEnv, TrdMarket
+        from futu import OpenQuoteContext, OpenSecTradeContext, SubType, TrdMarket
 
         logger.info(f"Starting grid engine #{self.cfg.id}: {self.cfg.code} [{self.cfg.env}]")
         logger.info(f"Grid lines ({len(self.grid_lines)}): {self.grid_lines}")
@@ -58,7 +57,6 @@ class GridEngine:
 
         # 连接
         self._quote_ctx = OpenQuoteContext(host=app_config.OPEND_HOST, port=app_config.OPEND_PORT)
-        trd_env = TrdEnv.SIMULATE if self.cfg.env == "simulate" else TrdEnv.REAL
         self._trd_ctx = OpenSecTradeContext(
             host=app_config.OPEND_HOST,
             port=app_config.OPEND_PORT,
@@ -143,7 +141,10 @@ class GridEngine:
 
         # 网格状态检查
         if not should_execute(sig, self.state.grid_status):
-            logger.debug(f"[SKIP] {sig.direction} level={sig.grid_level} (already {self.state.grid_status.get(str(sig.grid_level), 'empty')})")
+            logger.debug(
+                f"[SKIP] {sig.direction} level={sig.grid_level} "
+                f"(already {self.state.grid_status.get(str(sig.grid_level), 'empty')})"
+            )
             return
 
         # 风控检查
@@ -193,9 +194,16 @@ class GridEngine:
 
             if sig.direction == "BUY":
                 # 更新持仓
-                total_cost = self.state.cost_basis * self.state.current_position + fill_price * self.cfg.order_qty
+                total_cost = (
+                    self.state.cost_basis * self.state.current_position
+                    + fill_price * self.cfg.order_qty
+                )
                 self.state.current_position += self.cfg.order_qty
-                self.state.cost_basis = total_cost / self.state.current_position if self.state.current_position > 0 else 0
+                self.state.cost_basis = (
+                    total_cost / self.state.current_position
+                    if self.state.current_position > 0
+                    else 0
+                )
                 # 更新网格状态
                 self.state.grid_status[str(sig.grid_level)] = "bought"
             else:
@@ -215,7 +223,10 @@ class GridEngine:
             state_manager.update_order_fill(row_id, fill_price, self.cfg.order_qty, pnl)
 
             if pnl is not None:
-                logger.info(f"[FILL] {sig.direction} {self.cfg.order_qty}@{fill_price:.2f} pnl=${pnl:.2f}")
+                logger.info(
+                    f"[FILL] {sig.direction} {self.cfg.order_qty}@{fill_price:.2f} "
+                    f"pnl=${pnl:.2f}"
+                )
             else:
                 logger.info(f"[FILL] {sig.direction} {self.cfg.order_qty}@{fill_price:.2f}")
 

@@ -81,7 +81,8 @@ DEFAULT_TEMPLATES: dict[str, dict] = {
             "折价 {discount_text}，{rsi_text}，系统策略信号「{signal}」。\n"
             "{trade_hint}\n\n"
             "03 / 风险在哪\n"
-            "折价大不代表必涨。市场给出 {discount_text} 的折扣，大概率是定价了某些利空。分歧越大，越要谨慎。\n\n"
+            "折价大不代表必涨。市场给出 {discount_text} 的折扣，大概率是定价了某些利空。"
+            "分歧越大，越要谨慎。\n\n"
             "写在最后\n"
             "本文是个人量化系统的案例复盘，不构成投资建议。"
         ),
@@ -89,7 +90,10 @@ DEFAULT_TEMPLATES: dict[str, dict] = {
     },
     # ── 市场复盘 ──────────────────────────────────────────────────────
     "review_asset_line": {
-        "body": "{label}（{ticker}）：{period_label}{change_desc}，收 {close}，{trend}排列 {trend_icon}{rsi_desc}{drawdown_desc}"
+        "body": (
+            "{label}（{ticker}）：{period_label}{change_desc}，收 {close}，{trend}排列 "
+            "{trend_icon}{rsi_desc}{drawdown_desc}"
+        ),
     },
     "review_skeleton": {
         "body": (
@@ -118,8 +122,8 @@ class SafeDict(dict):
 
 
 def _get_conn():
-    import sqlite3
     import os
+    import sqlite3
 
     os.makedirs(os.path.dirname(_DB_PATH), exist_ok=True)
     conn = sqlite3.connect(_DB_PATH)
@@ -148,8 +152,14 @@ def init_templates_table() -> None:
     if count == 0:
         for key, tpl in DEFAULT_TEMPLATES.items():
             conn.execute(
-                "INSERT INTO content_templates (template_key, title, body, hashtags) VALUES (?, ?, ?, ?)",
-                (key, tpl.get("title", ""), tpl.get("body", ""), json.dumps(tpl.get("hashtags", []), ensure_ascii=False)),
+                "INSERT INTO content_templates (template_key, title, body, hashtags) "
+                "VALUES (?, ?, ?, ?)",
+                (
+                    key,
+                    tpl.get("title", ""),
+                    tpl.get("body", ""),
+                    json.dumps(tpl.get("hashtags", []), ensure_ascii=False),
+                ),
             )
         conn.commit()
     conn.close()
@@ -181,7 +191,9 @@ def get_template(key: str) -> dict:
 def list_templates() -> list[dict]:
     """列出所有模板（含默认模板中尚未入库的）。"""
     conn = _get_conn()
-    rows = {r["template_key"]: r for r in conn.execute("SELECT * FROM content_templates").fetchall()}
+    rows = {
+        r["template_key"]: r for r in conn.execute("SELECT * FROM content_templates").fetchall()
+    }
     conn.close()
 
     # 合并默认模板，确保所有 key 都在
@@ -194,13 +206,19 @@ def list_templates() -> list[dict]:
             "key": key,
             "title": row["title"] if row else default.get("title", ""),
             "body": row["body"] if row else default.get("body", ""),
-            "hashtags": (json.loads(row["hashtags"]) if row and row["hashtags"] else default.get("hashtags", [])),
+            "hashtags": (
+                json.loads(row["hashtags"])
+                if row and row["hashtags"]
+                else default.get("hashtags", [])
+            ),
             "is_custom": key in rows,
         })
     return result
 
 
-def save_template(key: str, title: str = "", body: str = "", hashtags: list[str] | None = None) -> dict:
+def save_template(
+    key: str, title: str = "", body: str = "", hashtags: list[str] | None = None
+) -> dict:
     """保存/更新模板。"""
     conn = _get_conn()
     conn.execute(

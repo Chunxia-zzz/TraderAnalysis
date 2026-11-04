@@ -171,7 +171,10 @@ def detect_deep_v(daily_df: pd.DataFrame, cfg: dict) -> BottomSignal | None:
     return BottomSignal(
         signal_type="DEEP_V",
         strength=round(min(shadow_ratio, 1.0), 3),
-        description=f"深V确认: 跌破{support_ma}({support_price:.2f})后收回，下影线占比{shadow_ratio*100:.0f}%",
+        description=(
+            f"深V确认: 跌破{support_ma}({support_price:.2f})后收回，"
+            f"下影线占比{shadow_ratio*100:.0f}%"
+        ),
         detail={
             "support_ma": support_ma,
             "support_price": round(support_price, 2),
@@ -343,7 +346,6 @@ def detect_support_confirm(daily_df: pd.DataFrame, cfg: dict) -> BottomSignal | 
 
     last = daily_df.iloc[-1]
     prev = daily_df.iloc[-2]
-    threshold = cfg.get("near_support_threshold", 0.02)
     ma_periods = cfg.get("support_ma_periods", [20, 30, 50, 60])
 
     today_close = float(last["close"])
@@ -516,6 +518,9 @@ def detect_gap_up(daily_df: pd.DataFrame, cfg: dict) -> BottomSignal | None:
     return BottomSignal(
         signal_type="GAP_UP",
         strength=round(strength, 3),
-        description=f"向上跳空缺口: 开盘{today_open:.2f} > 昨高{prev_high:.2f} (缺口{gap*100:.1f}%)",
+        description=(
+            f"向上跳空缺口: 开盘{today_open:.2f} > 昨高{prev_high:.2f} "
+            f"(缺口{gap*100:.1f}%)"
+        ),
         detail={"gap_pct": round(gap, 4)},
     )

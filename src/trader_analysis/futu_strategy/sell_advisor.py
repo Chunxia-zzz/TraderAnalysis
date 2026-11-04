@@ -82,7 +82,9 @@ def evaluate(
         has_divergence = bool(signal_types & {"RSI_TOP_DIV", "VOLUME_STALL", "MACD_TOP_DIV"})
 
         if has_near_high and has_divergence:
-            sell_qty = math.floor((total_qty if total_qty > 0 else remaining_qty) * cfg.get("sell_1_ratio", 1 / 3))
+            sell_qty = math.floor(
+                (total_qty if total_qty > 0 else remaining_qty) * cfg.get("sell_1_ratio", 1 / 3)
+            )
             sell_qty = min(sell_qty, remaining_qty)
             if sell_qty <= 0:
                 return no_action

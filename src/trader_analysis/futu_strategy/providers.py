@@ -10,7 +10,6 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-
 # ── OHLCV Schema ─────────────────────────────────────────────────────────────
 
 
@@ -69,7 +68,12 @@ def _coerce_ohlcv_types(df: pd.DataFrame) -> pd.DataFrame:
     else:
         df[OHLCVSchema.volume] = 0.0
 
-    if df[[OHLCVSchema.open, OHLCVSchema.high, OHLCVSchema.low, OHLCVSchema.close]].isna().any().any():
+    if (
+        df[[OHLCVSchema.open, OHLCVSchema.high, OHLCVSchema.low, OHLCVSchema.close]]
+        .isna()
+        .any()
+        .any()
+    ):
         raise DataProviderError("OHLC columns contain NaN after numeric coercion.")
 
     df = df.sort_values(OHLCVSchema.timestamp).reset_index(drop=True)
@@ -185,7 +189,9 @@ class FutuLiveDataProvider:
             # 下一段从最后一根的下一天开始
             last_date = str(df.iloc[-1]["time_key"])[:10]
             from datetime import datetime, timedelta
-            next_start = (datetime.strptime(last_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+            next_start = (
+                datetime.strptime(last_date, "%Y-%m-%d") + timedelta(days=1)
+            ).strftime("%Y-%m-%d")
 
             if end and next_start > end:
                 break
@@ -200,21 +206,37 @@ class FutuLiveDataProvider:
         return normalize_ohlcv(combined, symbol=code, timeframe=timeframe)
 
     def get_daily(
-        self, quote_ctx, code: str, count: int = 250, *, start: str | None = None, end: str | None = None
+        self,
+        quote_ctx,
+        code: str,
+        count: int = 250,
+        *,
+        start: str | None = None,
+        end: str | None = None,
     ) -> pd.DataFrame:
         """拉取日线 K 线（默认 250 根，满足 MA200 计算需求）。"""
         try:
             from futu import KLType  # type: ignore[import]
         except ImportError as exc:
             raise DataProviderError("futu-api 未安装") from exc
-        return self.get_kline(quote_ctx, code, KLType.K_DAY, count, timeframe="1D", start=start, end=end)
+        return self.get_kline(
+            quote_ctx, code, KLType.K_DAY, count, timeframe="1D", start=start, end=end
+        )
 
     def get_weekly(
-        self, quote_ctx, code: str, count: int = 60, *, start: str | None = None, end: str | None = None
+        self,
+        quote_ctx,
+        code: str,
+        count: int = 60,
+        *,
+        start: str | None = None,
+        end: str | None = None,
     ) -> pd.DataFrame:
         """拉取周线 K 线（默认 60 根，约 14 个月）。"""
         try:
             from futu import KLType  # type: ignore[import]
         except ImportError as exc:
             raise DataProviderError("futu-api 未安装") from exc
-        return self.get_kline(quote_ctx, code, KLType.K_WEEK, count, timeframe="1W", start=start, end=end)
+        return self.get_kline(
+            quote_ctx, code, KLType.K_WEEK, count, timeframe="1W", start=start, end=end
+        )

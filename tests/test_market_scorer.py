@@ -14,7 +14,6 @@ import pytest
 
 from trader_analysis.futu_strategy import storage
 from trader_analysis.futu_strategy.market_scorer import (
-    NEUTRAL_SCORE,
     _calc_pct_b,
     _clamp,
     _compute_score,
@@ -24,8 +23,6 @@ from trader_analysis.futu_strategy.market_scorer import (
     _score_asset_daily,
     _score_asset_price_position,
     _score_daily_tech,
-    _score_price_position,
-    _score_weekly_tech,
     calculate_market_temperature,
 )
 from trader_analysis.futu_strategy.scorer import calculate_score
@@ -330,8 +327,8 @@ class TestMirrorEquivalence:
                 macd_series = df["macd"].dropna()
                 pct = cls._legacy_pct(macd_series, float(last.get("macd", 0)), 252)
                 scores.append(pct * 100)
-                c, u, l = (float(last.get(k, 0)) for k in ("close", "boll_upper", "boll_lower"))
-                pct_b = 0.5 if (pd.isna(u) or pd.isna(l) or u == l) else (c - l) / (u - l)
+                c, u, lo = (float(last.get(k, 0)) for k in ("close", "boll_upper", "boll_lower"))
+                pct_b = 0.5 if (pd.isna(u) or pd.isna(lo) or u == lo) else (c - lo) / (u - lo)
                 scores.append(_clamp(pct_b * 100))
             return sum(scores) / len(scores)
 
@@ -344,8 +341,8 @@ class TestMirrorEquivalence:
                 macd_series = df["macd"].dropna()
                 pct = cls._legacy_pct(macd_series, float(last.get("macd", 0)), 52)
                 scores.append(pct * 100)
-                c, u, l = (float(last.get(k, 0)) for k in ("close", "boll_upper", "boll_lower"))
-                pct_b = 0.5 if (pd.isna(u) or pd.isna(l) or u == l) else (c - l) / (u - l)
+                c, u, lo = (float(last.get(k, 0)) for k in ("close", "boll_upper", "boll_lower"))
+                pct_b = 0.5 if (pd.isna(u) or pd.isna(lo) or u == lo) else (c - lo) / (u - lo)
                 scores.append(_clamp(pct_b * 100))
             return sum(scores) / len(scores)
 
@@ -510,7 +507,9 @@ class TestMarketBonus:
 
     def _bonus(self, market_composite):
         daily, weekly = self._minimal_frames()
-        return calculate_score("US.TEST", daily, weekly, market_composite=market_composite)["market_bonus"]
+        return calculate_score(
+            "US.TEST", daily, weekly, market_composite=market_composite
+        )["market_bonus"]
 
     def test_bonus_fires_on_high_panic(self):
         """新口径：composite > 60（恐慌）触发加成。"""
@@ -550,7 +549,9 @@ class TestCalculateMarketTemperature:
         storage.init_db()
         # 写入 SPY/QQQ/GLD/VIX 日线和周线
         for code, seed in [("US.SPY", 10), ("US.QQQ", 20), ("US.GLD", 30), ("US.VIXY", 40)]:
-            daily = _make_daily_df(260, base_price=500 if code != "US.VIXY" else 25, seed=seed, for_storage=True)
+            daily = _make_daily_df(
+                260, base_price=500 if code != "US.VIXY" else 25, seed=seed, for_storage=True
+            )
             if code == "US.VIXY":
                 daily["close"] = 20 + np.random.default_rng(seed).uniform(0, 15, 260)
             storage.batch_upsert(code, "1d", daily)

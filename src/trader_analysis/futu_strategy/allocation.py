@@ -131,10 +131,14 @@ def _make_advice(code: str, gap: float) -> dict:
     try:
         conn = storage._get_conn()
         s = conn.execute(
-            "SELECT total_score FROM score_results WHERE code = ? ORDER BY date DESC LIMIT 1", (code,)
+            "SELECT total_score FROM score_results WHERE code = ? "
+            "ORDER BY date DESC LIMIT 1",
+            (code,),
         ).fetchone()
         row = conn.execute(
-            "SELECT rsi6, close FROM kline_indicators WHERE code = ? AND ktype='1d' ORDER BY date DESC LIMIT 1", (code,)
+            "SELECT rsi6, close FROM kline_indicators WHERE code = ? AND ktype='1d' "
+            "ORDER BY date DESC LIMIT 1",
+            (code,),
         ).fetchone()
         w = conn.execute(
             "SELECT morningstar_fair_value FROM watchlist WHERE code = ?", (code,)
@@ -148,7 +152,13 @@ def _make_advice(code: str, gap: float) -> dict:
         pass
 
     if gap <= 0:
-        return {"score": score, "rsi": rsi, "action": "已达标或超配", "level": "hold", "reasons": []}
+        return {
+            "score": score,
+            "rsi": rsi,
+            "action": "已达标或超配",
+            "level": "hold",
+            "reasons": [],
+        }
 
     # 规则：价格高于晨星公允价值 → 回调再买
     if ms and close and close > ms:
@@ -181,7 +191,13 @@ def _make_advice(code: str, gap: float) -> dict:
             reasons.append(f"低估{discount:.0f}%")
 
     if reasons:
-        return {"score": score, "rsi": rsi, "action": "建议加仓", "level": "buy", "reasons": reasons}
+        return {
+            "score": score,
+            "rsi": rsi,
+            "action": "建议加仓",
+            "level": "buy",
+            "reasons": reasons,
+        }
     return {"score": score, "rsi": rsi, "action": "有差距，等回调", "level": "watch", "reasons": []}
 
 
@@ -324,7 +340,8 @@ def compute_allocation(env: str = "REAL") -> dict:
                 try:
                     conn3 = storage._get_conn()
                     c3 = conn3.execute(
-                        "SELECT close FROM kline_indicators WHERE code = ? AND ktype='1d' ORDER BY date DESC LIMIT 1",
+                        "SELECT close FROM kline_indicators WHERE code = ? AND ktype='1d' "
+                        "ORDER BY date DESC LIMIT 1",
                         (ref_etf,),
                     ).fetchone()
                     conn3.close()

@@ -28,7 +28,11 @@ def _score_pe_reasonability(forward_pe: float | None) -> dict:
     if forward_pe is None or forward_pe <= 0:
         return {"score": 0.0, "raw": forward_pe, "ratio": None}
     ratio = _clamp((40 - forward_pe) / 30)  # 10→1, 40→0
-    return {"score": round(ratio * weight, 1), "raw": round(forward_pe, 2), "ratio": round(ratio, 3)}
+    return {
+        "score": round(ratio * weight, 1),
+        "raw": round(forward_pe, 2),
+        "ratio": round(ratio, 3),
+    }
 
 
 def _score_growth(revenue_growth: float | None, earnings_growth: float | None) -> dict:
@@ -97,7 +101,9 @@ def calculate_fundamental_score(code: str, data: dict) -> dict:
     f1 = _score_valuation_discount(data.get("current_price"), data.get("target_mean"))
     f2 = _score_pe_reasonability(data.get("forward_pe"))
     f3 = _score_growth(data.get("revenue_growth"), data.get("earnings_growth"))
-    f4 = _score_financial_health(data.get("roe"), data.get("profit_margin"), data.get("debt_to_equity"))
+    f4 = _score_financial_health(
+        data.get("roe"), data.get("profit_margin"), data.get("debt_to_equity")
+    )
     f5 = _score_analyst_consensus(data.get("recommendation"), data.get("analyst_count"))
 
     total = f1["score"] + f2["score"] + f3["score"] + f4["score"] + f5["score"]

@@ -5,8 +5,6 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 import typer
 import uvicorn
 
@@ -27,9 +25,11 @@ def serve(
 
 @app.command()
 def init(
-    codes: Optional[list[str]] = typer.Option(None, help="标的代码列表（默认全部 watchlist）"),
+    codes: list[str] | None = typer.Option(None, help="标的代码列表（默认全部 watchlist）"),
     force: bool = typer.Option(False, help="强制重新拉取，忽略已有数据"),
-    start: Optional[str] = typer.Option(None, help="起始日期 YYYY-MM-DD，拉取更长历史（如 2022-06-01）"),
+    start: str | None = typer.Option(
+        None, help="起始日期 YYYY-MM-DD，拉取更长历史（如 2022-06-01）"
+    ),
 ) -> None:
     """拉取历史 K 线并计算指标，写入数据库。支持断点续传。"""
     from trader_analysis.futu_strategy import config
@@ -41,7 +41,7 @@ def init(
 
 @app.command()
 def update(
-    codes: Optional[list[str]] = typer.Option(None, help="标的代码列表（默认全部 watchlist）"),
+    codes: list[str] | None = typer.Option(None, help="标的代码列表（默认全部 watchlist）"),
     allow_partial: bool = typer.Option(
         False,
         "--allow-partial",
@@ -66,7 +66,7 @@ def update(
 
 @app.command()
 def run(
-    codes: Optional[list[str]] = typer.Option(None, help="标的代码列表（默认全部 watchlist）"),
+    codes: list[str] | None = typer.Option(None, help="标的代码列表（默认全部 watchlist）"),
 ) -> None:
     """运行完整策略流程：增量更新 → 评分 → 交易。"""
     from trader_analysis.futu_strategy import config
@@ -78,11 +78,10 @@ def run(
 
 @app.command()
 def score(
-    codes: Optional[list[str]] = typer.Option(None, help="标的代码列表（默认全部 watchlist）"),
+    codes: list[str] | None = typer.Option(None, help="标的代码列表（默认全部 watchlist）"),
     backfill: int = typer.Option(0, help="回溯天数（从已有K线数据回溯计算历史评分，0=仅计算最新）"),
 ) -> None:
     """纯本地评分：从 DB 读取指标，计算个股评分并写入 score_results。不依赖 OpenD。"""
-    from datetime import date, timedelta
 
     from trader_analysis.futu_strategy import config
     from trader_analysis.futu_strategy.market_clock import filter_week_closed
@@ -166,7 +165,10 @@ def score(
                     upsert_score(code, score_date, result)
                     scored += 1
                     if result["signal"] != "NO_ACTION":
-                        typer.echo(f"  {code}: {result['total_score']}分 → {result['signal']} ({score_date})")
+                        typer.echo(
+                            f"  {code}: {result['total_score']}分 → {result['signal']} "
+                            f"({score_date})"
+                        )
                 except Exception:
                     pass
         typer.echo(f"评分完成：写入 {scored} 条评分，跳过 {skipped} 个标的（无数据）")
@@ -174,13 +176,15 @@ def score(
 
 @app.command()
 def refresh_snapshot(
-    codes: Optional[list[str]] = typer.Option(None, help="指定代码，不传则全部刷新"),
+    codes: list[str] | None = typer.Option(None, help="指定代码，不传则全部刷新"),
 ) -> None:
     """刷新标的池静态快照字段（trailing_pe, market_cap 等）。需要 OpenD。"""
     from trader_analysis.futu_strategy.stock_info_fetcher import fetch_snapshot_batch
     from trader_analysis.futu_strategy.watchlist_storage import (
         get_all_codes,
         init_watchlist_table,
+    )
+    from trader_analysis.futu_strategy.watchlist_storage import (
         refresh_snapshot as _refresh,
     )
 
@@ -200,7 +204,7 @@ def refresh_snapshot(
 
 @app.command()
 def fundamental(
-    codes: Optional[list[str]] = typer.Option(None, help="标的代码列表（默认全部 watchlist）"),
+    codes: list[str] | None = typer.Option(None, help="标的代码列表（默认全部 watchlist）"),
 ) -> None:
     """拉取基本面数据并评分（数据源：yfinance，不依赖 OpenD）。
 
@@ -264,9 +268,19 @@ def fundamental(
         # 收集输出
         signal = score_result["valuation_signal"]
         if signal == "UNDERVALUED":
-            undervalued.append((code, score_result["fundamental_score"], data.get("forward_pe"), data.get("recommendation")))
+            undervalued.append((
+                code,
+                score_result["fundamental_score"],
+                data.get("forward_pe"),
+                data.get("recommendation"),
+            ))
         elif signal == "OVERVALUED":
-            overvalued.append((code, score_result["fundamental_score"], data.get("forward_pe"), data.get("recommendation")))
+            overvalued.append((
+                code,
+                score_result["fundamental_score"],
+                data.get("forward_pe"),
+                data.get("recommendation"),
+            ))
 
     # 打印摘要
     typer.echo("")
@@ -319,17 +333,23 @@ def temperature(
 @app.command()
 def backtest(
     code: str = typer.Argument(..., help="股票代码 (Futu 格式, 如 US.SNDK)"),
-    mode: str = typer.Option("hold", help="策略模式: hold(买入持有) / swing(波段操作) / trend(趋势跟踪)"),
+    mode: str = typer.Option(
+        "hold", help="策略模式: hold(买入持有) / swing(波段操作) / trend(趋势跟踪)"
+    ),
     threshold: int = typer.Option(40, help="买入评分阈值 (1-100)"),
     holding_days: int = typer.Option(10, "--holding-days", help="[hold] 持有交易日数"),
     exit_threshold: int = typer.Option(30, "--exit-threshold", help="[swing] 评分回落卖出阈值"),
-    max_holding_days: int = typer.Option(120, "--max-holding-days", help="[swing/trend] 最大持有天数"),
+    max_holding_days: int = typer.Option(
+        120, "--max-holding-days", help="[swing/trend] 最大持有天数"
+    ),
     trail_ma: str = typer.Option("ma5", "--trail-ma", help="[trend] 跟踪止盈均线: ma5/ma10/ma20"),
-    entry_confirm: str = typer.Option("none", "--entry-confirm", help="买入确认: none(立即) / above_ma5(站上MA5再买)"),
+    entry_confirm: str = typer.Option(
+        "none", "--entry-confirm", help="买入确认: none(立即) / above_ma5(站上MA5再买)"
+    ),
     cooldown: str = typer.Option("holding", help="去重策略: none/holding/custom"),
     cooldown_days: int = typer.Option(None, "--cooldown-days", help="custom 模式冷却天数"),
-    start_date: Optional[str] = typer.Option(None, "--start-date", help="起始日期 YYYY-MM-DD"),
-    end_date: Optional[str] = typer.Option(None, "--end-date", help="截止日期 YYYY-MM-DD"),
+    start_date: str | None = typer.Option(None, "--start-date", help="起始日期 YYYY-MM-DD"),
+    end_date: str | None = typer.Option(None, "--end-date", help="截止日期 YYYY-MM-DD"),
 ) -> None:
     """信号回测：验证评分信号的历史收益表现。支持 hold/swing 两种模式。"""
     from trader_analysis.futu_strategy.backtest import BacktestParams, run_backtest
@@ -364,19 +384,30 @@ def backtest(
     typer.echo(f"\nSignal Backtest: {result['code']} [{p['mode']}]")
     typer.echo("━" * 56)
     if p["mode"] == "swing":
-        typer.echo(f"Parameters: buy≥{p['threshold']}, sell≤{p['exit_threshold']}, max_hold={p['max_holding_days']}d, cooldown={p['cooldown']}")
+        typer.echo(
+            f"Parameters: buy≥{p['threshold']}, sell≤{p['exit_threshold']}, "
+            f"max_hold={p['max_holding_days']}d, cooldown={p['cooldown']}"
+        )
     elif p["mode"] == "trend":
-        typer.echo(f"Parameters: buy≥{p['threshold']}, trail={p['trail_ma']}, max_hold={p['max_holding_days']}d, cooldown={p['cooldown']}")
+        typer.echo(
+            f"Parameters: buy≥{p['threshold']}, trail={p['trail_ma']}, "
+            f"max_hold={p['max_holding_days']}d, cooldown={p['cooldown']}"
+        )
     else:
-        typer.echo(f"Parameters: threshold={p['threshold']}, holding={p['holding_days']}d, cooldown={p['cooldown']}")
+        typer.echo(
+            f"Parameters: threshold={p['threshold']}, holding={p['holding_days']}d, "
+            f"cooldown={p['cooldown']}"
+        )
     typer.echo(f"Date Range: {p['start_date']} → {p['end_date']}")
 
     # 输出汇总
     s = result["summary"]
-    typer.echo(f"\nSummary:")
+    typer.echo("\nSummary:")
     typer.echo(f"  Signals triggered:   {s['total_signals']}")
     typer.echo(f"  Completed trades:    {s['completed_trades']}")
-    typer.echo(f"  Win rate:            {s['win_rate']:.1f}%  ({s['win_count']}W / {s['loss_count']}L)")
+    typer.echo(
+        f"  Win rate:            {s['win_rate']:.1f}%  ({s['win_count']}W / {s['loss_count']}L)"
+    )
     typer.echo(f"  Avg return:          {s['avg_return_pct']:+.2f}%")
     typer.echo(f"  Median return:       {s['median_return_pct']:+.2f}%")
     typer.echo(f"  Best / Worst:        {s['max_return_pct']:+.2f}% / {s['min_return_pct']:+.2f}%")
@@ -394,7 +425,10 @@ def backtest(
     recent = completed[-10:] if len(completed) > 10 else completed
     if recent:
         typer.echo(f"\nRecent Trades (last {len(recent)}):")
-        typer.echo(f"  {'Date':>10}  {'Entry':>8}  {'Exit Date':>10}  {'Exit':>8}  {'Return':>8}  {'Days':>4}  {'Reason':>10}")
+        typer.echo(
+            f"  {'Date':>10}  {'Entry':>8}  {'Exit Date':>10}  "
+            f"{'Exit':>8}  {'Return':>8}  {'Days':>4}  {'Reason':>10}"
+        )
         typer.echo(f"  {'-'*10}  {'-'*8}  {'-'*10}  {'-'*8}  {'-'*8}  {'-'*4}  {'-'*10}")
         for t in recent:
             days_str = f"{t['holding_days']:>4}" if t.get("holding_days") else "   -"
@@ -422,7 +456,10 @@ def grid_create(
     daily_loss_limit: float = typer.Option(-500.0, "--daily-loss-limit", help="单日最大亏损(美元)"),
 ) -> None:
     """创建网格交易配置。"""
-    from trader_analysis.futu_strategy.grid_trader.state_manager import create_config, init_grid_tables
+    from trader_analysis.futu_strategy.grid_trader.state_manager import (
+        create_config,
+        init_grid_tables,
+    )
 
     if upper <= lower:
         typer.echo("Error: upper must be greater than lower", err=True)
@@ -443,7 +480,9 @@ def grid_create(
     spacing = (upper - lower) / grid_count
     typer.echo(f"Grid config #{config_id} created.")
     typer.echo(f"  Code: {code} | Env: {env}")
-    typer.echo(f"  Range: ${lower:.2f} - ${upper:.2f} | Grids: {grid_count} | Spacing: ${spacing:.2f}")
+    typer.echo(
+        f"  Range: ${lower:.2f} - ${upper:.2f} | Grids: {grid_count} | Spacing: ${spacing:.2f}"
+    )
     typer.echo(f"  Order qty: {order_qty} | Max position: {max_position}")
     typer.echo(f"\nStart with: trader-analysis grid-start {config_id}")
 
@@ -483,7 +522,11 @@ def grid_stop(
     config_id: int = typer.Argument(..., help="网格配置 ID"),
 ) -> None:
     """停止网格交易引擎（发送停止信号）。"""
-    from trader_analysis.futu_strategy.grid_trader.state_manager import get_config, init_grid_tables, update_config_status
+    from trader_analysis.futu_strategy.grid_trader.state_manager import (
+        get_config,
+        init_grid_tables,
+        update_config_status,
+    )
 
     init_grid_tables()
     cfg = get_config(config_id)
@@ -497,7 +540,7 @@ def grid_stop(
 
 @app.command("scan-top")
 def scan_top(
-    codes: Optional[list[str]] = typer.Option(None, help="标的代码列表（默认全部 watchlist）"),
+    codes: list[str] | None = typer.Option(None, help="标的代码列表（默认全部 watchlist）"),
     min_strength: float = typer.Option(0.3, "--min-strength", help="信号强度过滤阈值 0~1"),
 ) -> None:
     """扫描顶背离预警信号：对所有标的执行顶部信号检测，打印摘要并写入 DB。不依赖 OpenD。"""
@@ -548,13 +591,15 @@ def scan_top(
         typer.echo(f"  {code:14s}  {sig_summary}")
 
     typer.echo("")
-    typer.echo(f"信号已写入 DB（top_signal_log 表），可通过 /api/top-signals 查询。")
+    typer.echo("信号已写入 DB（top_signal_log 表），可通过 /api/top-signals 查询。")
 
 
 @app.command("livermore")
 def livermore(
-    date: Optional[str] = typer.Option(None, help="按指定日期回算 YYYY-MM-DD（默认最新）"),
-    all_tide: bool = typer.Option(False, "--all", help="不做周线潮汐过滤（默认只报潮汐向上的做多信号）"),
+    date: str | None = typer.Option(None, help="按指定日期回算 YYYY-MM-DD（默认最新）"),
+    all_tide: bool = typer.Option(
+        False, "--all", help="不做周线潮汐过滤（默认只报潮汐向上的做多信号）"
+    ),
     persist: bool = typer.Option(False, help="写入 livermore_signal_log 表"),
     backfill: int = typer.Option(0, help="回填最近 N 个交易日（隐含 --persist）"),
     top: int = typer.Option(15, help="每个分组最多打印多少条"),
@@ -566,22 +611,24 @@ def livermore(
     同时输出逼近关键点的预备名单、已在关键点上方的持仓参考、以及假突破/止损/放量滞涨预警。
     只读本地 DB，不依赖 OpenD。
     """
+    import sqlite3
+
     from trader_analysis.futu_strategy import config
     from trader_analysis.futu_strategy.livermore_detector import scan_livermore
     from trader_analysis.futu_strategy.storage import init_db, insert_livermore_signal
-
-    import sqlite3
 
     init_db()
     require_tide_up = not all_tide and getattr(config, "LIV_REQUIRE_TIDE_UP", True)
     daily_bars = getattr(config, "LIV_DAILY_BARS", 300)
 
-    def _persist(d: Optional[str]) -> int:
+    def _persist(d: str | None) -> int:
         r = scan_livermore(date=d, require_tide_up=require_tide_up, daily_bars=daily_bars)
         n = 0
         for s in r["signals"]:
             try:
-                insert_livermore_signal(s["code"], s["date"], s["signal_type"], s["strength"], s["detail"])
+                insert_livermore_signal(
+                    s["code"], s["date"], s["signal_type"], s["strength"], s["detail"]
+                )
                 n += 1
             except Exception:
                 pass
@@ -591,7 +638,8 @@ def livermore(
     if backfill > 0:
         conn = sqlite3.connect(config.DB_PATH)
         rows = conn.execute(
-            "SELECT DISTINCT date FROM kline_indicators WHERE ktype = '1d' ORDER BY date DESC LIMIT ?",
+            "SELECT DISTINCT date FROM kline_indicators WHERE ktype = '1d' "
+            "ORDER BY date DESC LIMIT ?",
             (backfill,),
         ).fetchall()
         conn.close()
@@ -615,8 +663,14 @@ def livermore(
         f" | 龙头 {stats['leaders']}"
     )
     if require_tide_up:
-        typer.echo(f"  已按周线潮汐过滤：另有 {stats['filtered_by_tide']} 条做多信号因潮汐不向上被挡（加 --all 可看全量）")
-    typer.echo(f"  基准 SPY：20 日 {result['bench'].get('ret_20')}% / 60 日 {result['bench'].get('ret_60')}%")
+        typer.echo(
+            f"  已按周线潮汐过滤：另有 {stats['filtered_by_tide']} 条做多信号"
+            f"因潮汐不向上被挡（加 --all 可看全量）"
+        )
+    typer.echo(
+        f"  基准 SPY：20 日 {result['bench'].get('ret_20')}% "
+        f"/ 60 日 {result['bench'].get('ret_60')}%"
+    )
 
     def _dump(title: str, rows: list[dict]) -> None:
         typer.echo("")
@@ -650,16 +704,18 @@ def livermore(
 
 @app.command("scan-signals")
 def scan_signals(
-    codes: Optional[list[str]] = typer.Option(None, help="标的代码列表（默认全部 watchlist）"),
+    codes: list[str] | None = typer.Option(None, help="标的代码列表（默认全部 watchlist）"),
     backfill: int = typer.Option(0, help="回溯天数（从已有K线数据回溯计算历史信号，0=仅计算最新）"),
 ) -> None:
     """扫描交易信号（顶部+底部），写入 DB。支持 --backfill 回溯历史。不依赖 OpenD。"""
-    from datetime import date
 
     from trader_analysis.futu_strategy import config
     from trader_analysis.futu_strategy.bottom_detector import detect_all as detect_all_bottom
     from trader_analysis.futu_strategy.storage import (
-        init_db, insert_bottom_signal, insert_top_signal, query_recent,
+        init_db,
+        insert_bottom_signal,
+        insert_top_signal,
+        query_recent,
     )
     from trader_analysis.futu_strategy.top_detector import detect_all as detect_all_top
 
@@ -693,7 +749,9 @@ def scan_signals(
                 top_sigs = detect_all_top(daily_slice)
                 for sig in top_sigs:
                     try:
-                        insert_top_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
+                        insert_top_signal(
+                            code, signal_date, sig.signal_type, sig.strength, sig.detail
+                        )
                         total_top += 1
                     except Exception:
                         pass
@@ -701,7 +759,9 @@ def scan_signals(
                 bottom_sigs = detect_all_bottom(daily_slice)
                 for sig in bottom_sigs:
                     try:
-                        insert_bottom_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
+                        insert_bottom_signal(
+                            code, signal_date, sig.signal_type, sig.strength, sig.detail
+                        )
                         total_bottom += 1
                     except Exception:
                         pass
@@ -711,9 +771,13 @@ def scan_signals(
                 for sig in ema_sigs_1d:
                     try:
                         if "BULL" in sig.signal_type:
-                            insert_bottom_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
+                            insert_bottom_signal(
+                                code, signal_date, sig.signal_type, sig.strength, sig.detail
+                            )
                         else:
-                            insert_top_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
+                            insert_top_signal(
+                                code, signal_date, sig.signal_type, sig.strength, sig.detail
+                            )
                         total_ema += 1
                     except Exception:
                         pass
@@ -728,14 +792,23 @@ def scan_signals(
                         for sig in ema_sigs_4h:
                             try:
                                 if "BULL" in sig.signal_type:
-                                    insert_bottom_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
+                                    insert_bottom_signal(
+                                        code, signal_date, sig.signal_type, sig.strength,
+                                        sig.detail,
+                                    )
                                 else:
-                                    insert_top_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
+                                    insert_top_signal(
+                                        code, signal_date, sig.signal_type, sig.strength,
+                                        sig.detail,
+                                    )
                                 total_ema += 1
                             except Exception:
                                 pass
 
-        typer.echo(f"回溯完成，写入 {total_top} 条顶部信号，{total_bottom} 条底部信号，{total_ema} 条EMA交叉信号。")
+        typer.echo(
+            f"回溯完成，写入 {total_top} 条顶部信号，{total_bottom} 条底部信号，"
+            f"{total_ema} 条EMA交叉信号。"
+        )
 
         # ── 利弗莫尔关键点回溯（逐日按当时数据重算，周线与基准同步截断，无前视偏差）──
         try:
@@ -746,7 +819,8 @@ def scan_signals(
 
             conn_d = _sq.connect(config.DB_PATH)
             rows_d = conn_d.execute(
-                "SELECT DISTINCT date FROM kline_indicators WHERE ktype = '1d' ORDER BY date DESC LIMIT ?",
+                "SELECT DISTINCT date FROM kline_indicators WHERE ktype = '1d' "
+                "ORDER BY date DESC LIMIT ?",
                 (backfill,),
             ).fetchall()
             conn_d.close()
@@ -756,7 +830,9 @@ def scan_signals(
                                      daily_bars=getattr(config, "LIV_DAILY_BARS", 300))
                 for s in liv["signals"]:
                     try:
-                        insert_livermore_signal(s["code"], s["date"], s["signal_type"], s["strength"], s["detail"])
+                        insert_livermore_signal(
+                            s["code"], s["date"], s["signal_type"], s["strength"], s["detail"]
+                        )
                         liv_total += 1
                     except Exception:
                         pass
@@ -768,9 +844,9 @@ def scan_signals(
     # 自动增量补算：补算「上次信号扫描之后」缺失的交易日信号
     typer.echo(f"扫描交易信号中... ({len(code_list)} 只标的)")
 
-    from trader_analysis.futu_strategy.ema_cross_detector import detect_ema_cross
-
     import sqlite3 as _sqlite3
+
+    from trader_analysis.futu_strategy.ema_cross_detector import detect_ema_cross
 
     top_count = 0
     bottom_count = 0
@@ -786,8 +862,12 @@ def scan_signals(
 
         # 查该标的信号表最新日期（顶部 + 底部取更晚者）
         _conn = _sqlite3.connect(config.DB_PATH)
-        _r1 = _conn.execute("SELECT MAX(date) FROM top_signal_log WHERE code = ?", (code,)).fetchone()
-        _r2 = _conn.execute("SELECT MAX(date) FROM bottom_signal_log WHERE code = ?", (code,)).fetchone()
+        _r1 = _conn.execute(
+            "SELECT MAX(date) FROM top_signal_log WHERE code = ?", (code,)
+        ).fetchone()
+        _r2 = _conn.execute(
+            "SELECT MAX(date) FROM bottom_signal_log WHERE code = ?", (code,)
+        ).fetchone()
         _conn.close()
         _latest_dates = [d for d in (_r1[0], _r2[0]) if d]
         latest_signal_date = max(_latest_dates) if _latest_dates else None
@@ -807,7 +887,9 @@ def scan_signals(
             top_sigs = detect_all_top(daily_slice)
             for sig in top_sigs:
                 try:
-                    insert_top_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
+                    insert_top_signal(
+                        code, signal_date, sig.signal_type, sig.strength, sig.detail
+                    )
                     top_count += 1
                 except Exception:
                     pass
@@ -815,7 +897,9 @@ def scan_signals(
             bottom_sigs = detect_all_bottom(daily_slice)
             for sig in bottom_sigs:
                 try:
-                    insert_bottom_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
+                    insert_bottom_signal(
+                        code, signal_date, sig.signal_type, sig.strength, sig.detail
+                    )
                     bottom_count += 1
                 except Exception:
                     pass
@@ -825,9 +909,13 @@ def scan_signals(
             for sig in ema_sigs_1d:
                 try:
                     if "BULL" in sig.signal_type:
-                        insert_bottom_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
+                        insert_bottom_signal(
+                            code, signal_date, sig.signal_type, sig.strength, sig.detail
+                        )
                     else:
-                        insert_top_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
+                        insert_top_signal(
+                            code, signal_date, sig.signal_type, sig.strength, sig.detail
+                        )
                     ema_count += 1
                 except Exception:
                     pass
@@ -841,14 +929,23 @@ def scan_signals(
                     for sig in ema_sigs_4h:
                         try:
                             if "BULL" in sig.signal_type:
-                                insert_bottom_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
+                                insert_bottom_signal(
+                                    code, signal_date, sig.signal_type, sig.strength,
+                                    sig.detail,
+                                )
                             else:
-                                insert_top_signal(code, signal_date, sig.signal_type, sig.strength, sig.detail)
+                                insert_top_signal(
+                                    code, signal_date, sig.signal_type, sig.strength,
+                                    sig.detail,
+                                )
                             ema_count += 1
                         except Exception:
                             pass
 
-    typer.echo(f"完成，写入 {top_count} 条顶部信号，{bottom_count} 条底部信号，{ema_count} 条EMA交叉信号。")
+    typer.echo(
+        f"完成，写入 {top_count} 条顶部信号，{bottom_count} 条底部信号，"
+        f"{ema_count} 条EMA交叉信号。"
+    )
 
     # ── 利弗莫尔关键点信号（独立体系，写入 livermore_signal_log）──
     # 注意：这里落库的是**未按潮汐过滤**的全量信号，便于日后回测验证潮汐过滤本身是否有效；
@@ -862,7 +959,9 @@ def scan_signals(
         liv_n = 0
         for s in liv["signals"]:
             try:
-                insert_livermore_signal(s["code"], s["date"], s["signal_type"], s["strength"], s["detail"])
+                insert_livermore_signal(
+                    s["code"], s["date"], s["signal_type"], s["strength"], s["detail"]
+                )
                 liv_n += 1
             except Exception:
                 pass
@@ -873,7 +972,7 @@ def scan_signals(
 
 @app.command("grid-status")
 def grid_status(
-    config_id: Optional[int] = typer.Argument(None, help="配置 ID（不传则显示全部）"),
+    config_id: int | None = typer.Argument(None, help="配置 ID（不传则显示全部）"),
 ) -> None:
     """查看网格交易运行状态。"""
     from trader_analysis.futu_strategy.grid_trader.state_manager import (
@@ -905,9 +1004,15 @@ def grid_status(
     grid_lines = calculate_grid_lines(cfg)
 
     typer.echo(f"\nGrid #{cfg.id}: {cfg.code} [{cfg.status.upper()}] {cfg.env}")
-    typer.echo(f"  Range: ${cfg.price_lower:.2f} - ${cfg.price_upper:.2f} | Spacing: ${cfg.grid_spacing:.2f}")
+    typer.echo(
+        f"  Range: ${cfg.price_lower:.2f} - ${cfg.price_upper:.2f} | "
+        f"Spacing: ${cfg.grid_spacing:.2f}"
+    )
     if state.last_price:
-        typer.echo(f"  Price: ${state.last_price:.2f} | Position: {state.current_position} shares | Cost: ${state.cost_basis:.2f}")
+        typer.echo(
+            f"  Price: ${state.last_price:.2f} | Position: {state.current_position} shares "
+            f"| Cost: ${state.cost_basis:.2f}"
+        )
     else:
         typer.echo(f"  Price: N/A | Position: {state.current_position} shares")
     typer.echo(f"  Today: {state.daily_trades} trades | PnL: ${state.daily_pnl:+.2f}")

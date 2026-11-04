@@ -38,8 +38,8 @@ def fetch_position(env: str = "REAL", display_currency: str = "base") -> dict:
         dict: 账户摘要 + positions 列表；OpenD 不可用或失败时返回 {"error": ...}
     """
     try:
-        from futu import OpenSecTradeContext, RET_OK, SecurityFirm, TrdEnv  # type: ignore[import]
-    except ImportError as exc:
+        from futu import RET_OK, OpenSecTradeContext, SecurityFirm, TrdEnv  # type: ignore[import]
+    except ImportError:
         return {"error": "持仓功能需在本机运行（连接富途 OpenD），当前环境未安装 futu-api"}
 
     try:
@@ -50,7 +50,9 @@ def fetch_position(env: str = "REAL", display_currency: str = "base") -> dict:
         )
     except Exception as exc:
         logger.error(f"连接 OpenD 失败: {exc}")
-        return {"error": f"无法连接富途 OpenD（{config.OPEND_HOST}:{config.OPEND_PORT}），请确认已启动"}
+        return {
+            "error": f"无法连接富途 OpenD（{config.OPEND_HOST}:{config.OPEND_PORT}），请确认已启动"
+        }
 
     try:
         # ── 1. 定位账户 ──

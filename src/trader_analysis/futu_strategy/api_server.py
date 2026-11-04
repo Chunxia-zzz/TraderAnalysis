@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -199,7 +199,11 @@ def update_watchlist_item(code: str, body: dict):
     result, updated_or_violations = watchlist_storage.update_stock(code, body)
     if result is None:
         return {"data": None, "message": f"Fields not editable: {', '.join(updated_or_violations)}"}
-    return {"message": f"Stock {code} updated", "data": result, "updated_fields": updated_or_violations}
+    return {
+        "message": f"Stock {code} updated",
+        "data": result,
+        "updated_fields": updated_or_violations,
+    }
 
 
 @app.delete("/api/watchlist/{code}")
@@ -308,7 +312,10 @@ def _calc_momentum(kline_rows: list) -> int:
 
 @app.get("/api/scores/overview")
 def get_scores_overview(
-    date: str | None = Query(default=None, description="指定日期 YYYY-MM-DD，不传则取各标的最新评分"),
+    date: str | None = Query(
+        default=None,
+        description="指定日期 YYYY-MM-DD，不传则取各标的最新评分",
+    ),
 ):
     """返回所有标的的评分概览，按分数降序，按信号分组。"""
     rows = storage.query_scores_overview(date)
@@ -317,6 +324,7 @@ def get_scores_overview(
         return {"data": None, "message": msg}
 
     import sqlite3
+
     from trader_analysis.futu_strategy import config as app_config
 
     conn = sqlite3.connect(app_config.DB_PATH)
@@ -350,7 +358,11 @@ def get_scores_overview(
         f"SELECT code, morningstar_fair_value FROM watchlist WHERE code IN ({placeholders})",
         codes,
     ).fetchall()
-    ms_map = {r["code"]: float(r["morningstar_fair_value"]) for r in ms_rows if r["morningstar_fair_value"]}
+    ms_map = {
+        r["code"]: float(r["morningstar_fair_value"])
+        for r in ms_rows
+        if r["morningstar_fair_value"]
+    }
 
     for r in rows:
         kline_rows = kline_by_code.get(r["code"], [])
@@ -363,7 +375,8 @@ def get_scores_overview(
             r["above_ma5"] = close > ma5 if (close and ma5) else None
             r["momentum_score"] = _calc_momentum(kline_rows)
             # EMA 飘带状态
-            e5_raw = k["ema5"]; e30_raw = k["ema30"]
+            e5_raw = k["ema5"]
+            e30_raw = k["ema30"]
             if e5_raw and e30_raw:
                 r["ema_ribbon"] = "green" if float(e5_raw) > float(e30_raw) else "red"
             else:
@@ -373,7 +386,8 @@ def get_scores_overview(
             if r["ema_ribbon"] is not None and len(kline_rows) >= 2:
                 current_bull = r["ema_ribbon"] == "green"
                 for row in kline_rows[1:6]:
-                    e5 = row["ema5"]; e30 = row["ema30"]
+                    e5 = row["ema5"]
+                    e30 = row["ema30"]
                     if e5 and e30:
                         if (float(e5) > float(e30)) != current_bull:
                             ribbon_flip = "to_bull" if current_bull else "to_bear"
@@ -381,7 +395,11 @@ def get_scores_overview(
             r["ribbon_flip"] = ribbon_flip
             # 60日跌幅（从60日高点回撤；"过滤烂票"检查：<30% 通过）
             highs = [float(x["high"]) for x in kline_rows if x["high"]]
-            r["dd60_pct"] = round((1 - close / max(highs)) * 100, 1) if (close and highs and max(highs) > 0) else None
+            r["dd60_pct"] = (
+                round((1 - close / max(highs)) * 100, 1)
+                if (close and highs and max(highs) > 0)
+                else None
+            )
             r["dd60_ok"] = r["dd60_pct"] is not None and r["dd60_pct"] < 30
             # 晨星低估检查
             ms = ms_map.get(r["code"])
@@ -440,7 +458,10 @@ def get_market_temperature():
     """返回最新一期市场温度评分，附加黄金/BTC 单资产温度（实时计算）。"""
     result = storage.query_latest_market_score()
     if not result:
-        return {"data": None, "message": "暂无市场温度数据，请先运行 trader-analysis temperature 命令"}
+        return {
+            "data": None,
+            "message": "暂无市场温度数据，请先运行 trader-analysis temperature 命令",
+        }
     result["gld_temp"] = compute_asset_temperature("GLD")
     result["btc_temp"] = compute_asset_temperature("BTC")
     return result
@@ -750,11 +771,21 @@ def _livermore_scan_cached(require_tide_up: bool, force: bool = False) -> dict:
 def _livermore_group_rows(rows: list[dict], name_map: dict) -> dict[str, list[dict]]:
     """把 DB 行按信号类型分到页面的四个分组。"""
     from trader_analysis.futu_strategy.livermore_detector import (
-        SIG_BREAK_CONTINUATION, SIG_BREAK_REVERSAL, SIG_CLIMAX_WARNING,
-        SIG_FAILED_BREAKOUT, SIG_NEAR_PIVOT, SIG_STOP_TRIGGERED, SIGNAL_LABEL,
+        SIG_BREAK_CONTINUATION,
+        SIG_BREAK_REVERSAL,
+        SIG_CLIMAX_WARNING,
+        SIG_FAILED_BREAKOUT,
+        SIG_NEAR_PIVOT,
+        SIG_STOP_TRIGGERED,
+        SIGNAL_LABEL,
     )
 
-    out: dict[str, list[dict]] = {"breakouts": [], "near_pivots": [], "above_pivot": [], "dangers": []}
+    out: dict[str, list[dict]] = {
+        "breakouts": [],
+        "near_pivots": [],
+        "above_pivot": [],
+        "dangers": [],
+    }
     for r in rows:
         d = r.get("detail") or {}
         item = {
@@ -791,8 +822,11 @@ def _livermore_group_rows(rows: list[dict], name_map: dict) -> dict[str, list[di
 @app.get("/api/livermore/signals")
 def get_livermore_signals(
     date: str | None = Query(default=None, description="指定日期 YYYY-MM-DD；不传=最新"),
-    source: str = Query(default="live", pattern="^(live|db)$",
-                        description="live=实时扫描（默认，含全部四个分组）；db=读 livermore_signal_log 历史"),
+    source: str = Query(
+        default="live",
+        pattern="^(live|db)$",
+        description="live=实时扫描（默认，含全部四个分组）；db=读 livermore_signal_log 历史",
+    ),
     all_tide: bool = Query(default=False, alias="all", description="true=不按周线潮汐过滤做多信号"),
     refresh: bool = Query(default=False, description="true=忽略内存缓存强制重算（仅 live）"),
 ):
@@ -836,20 +870,30 @@ def get_livermore_signals(
             "stats": {
                 "breakouts": len(groups["breakouts"]),
                 "reversal": sum(1 for b in groups["breakouts"] if b.get("context") == "reversal"),
-                "continuation": sum(1 for b in groups["breakouts"] if b.get("context") == "continuation"),
+                "continuation": sum(
+                    1 for b in groups["breakouts"] if b.get("context") == "continuation"
+                ),
                 "near_pivots": len(groups["near_pivots"]),
                 "above_pivot": 0,
                 "dangers": len(groups["dangers"]),
-                "dangers_stop": sum(1 for d in groups["dangers"] if d.get("signal_type") == "LIV_STOP_TRIGGERED"),
-                "dangers_failed": sum(1 for d in groups["dangers"] if d.get("signal_type") == "LIV_FAILED_BREAKOUT"),
-                "dangers_climax": sum(1 for d in groups["dangers"] if d.get("signal_type") == "LIV_CLIMAX_WARNING"),
+                "dangers_stop": sum(
+                    1 for d in groups["dangers"] if d.get("signal_type") == "LIV_STOP_TRIGGERED"
+                ),
+                "dangers_failed": sum(
+                    1 for d in groups["dangers"] if d.get("signal_type") == "LIV_FAILED_BREAKOUT"
+                ),
+                "dangers_climax": sum(
+                    1 for d in groups["dangers"] if d.get("signal_type") == "LIV_CLIMAX_WARNING"
+                ),
                 "leaders": sum(1 for lst in groups.values() for i in lst if i.get("is_leader")),
                 "filtered_by_tide": 0,
                 "no_platform": 0,
             },
             "bench": {},
             "available_dates": dates,
-            "message": None if rows else "该日期在 livermore_signal_log 中无记录，请先运行 scan-signals",
+            "message": (
+                None if rows else "该日期在 livermore_signal_log 中无记录，请先运行 scan-signals"
+            ),
             "skipped": [],
             "above_pivot": [],
             **groups,
@@ -892,7 +936,10 @@ def get_livermore_detail(
     """
     from trader_analysis.futu_strategy import config as _cfg
     from trader_analysis.futu_strategy.livermore_detector import (
-        SIGNAL_BULLISH, SIGNAL_LABEL, analyze_livermore, _bench_returns,
+        SIGNAL_BULLISH,
+        SIGNAL_LABEL,
+        _bench_returns,
+        analyze_livermore,
     )
 
     df = storage.query_recent(code, "1d", limit=getattr(_cfg, "LIV_DAILY_BARS", 300))
@@ -922,10 +969,16 @@ def get_livermore_detail(
         levels.append({"price": pan["pivotal"], "role": "pivotal", "label": "关键点",
                        "bars_ago": pan.get("platform_end_bars_ago")})
         if pan.get("prior_high"):
-            levels.append({"price": pan["prior_high"], "role": "prior_high", "label": "前高", "bars_ago": None})
+            levels.append({
+                "price": pan["prior_high"], "role": "prior_high", "label": "前高", "bars_ago": None,
+            })
         if pan.get("platform_lower"):
-            levels.append({"price": pan["platform_lower"], "role": "platform_lower", "label": "箱体下沿",
-                           "bars_ago": pan.get("platform_end_bars_ago")})
+            levels.append({
+                "price": pan["platform_lower"],
+                "role": "platform_lower",
+                "label": "箱体下沿",
+                "bars_ago": pan.get("platform_end_bars_ago"),
+            })
         if pan.get("stop"):
             levels.append({"price": pan["stop"], "role": "stop", "label": "止损",
                            "bars_ago": pan.get("platform_end_bars_ago")})
@@ -961,40 +1014,47 @@ def get_trade_signals(
     code: str = Query(..., description="标的代码"),
     date: str | None = Query(default=None, description="日期(YYYY-MM-DD)，不传则实时计算最新"),
 ):
-    """交易信号检测。
+    ("""交易信号检测。
 
     - 不传 date：实时运行顶/底信号检测（基于最新数据）
     - 传 date：从 DB 读取该日期已存储的信号（需先 scan-signals --backfill）
 
-    每个信号包含：signal_type / category / triggered / strength / description / label / action / action_type
-    """
+    每个信号包含：signal_type / category / triggered / strength / description """
+     """/ label / action / action_type
+    """)
     _TOP_META = {
-        "NEAR_HIGH":        {"label": "接近前高",     "action": "注意减仓",     "action_type": "sell_warn"},
-        "RSI_TOP_DIV":      {"label": "RSI顶背离",    "action": "建议减仓1/3",  "action_type": "sell_1"},
-        "MACD_TOP_DIV":     {"label": "MACD顶背离",   "action": "建议减仓1/3",  "action_type": "sell_1"},
-        "VOLUME_STALL":     {"label": "天量滞涨",     "action": "注意减仓",     "action_type": "sell_warn"},
-        "UPPER_SHADOW":     {"label": "连续长上影线",  "action": "注意减仓",     "action_type": "sell_warn"},
-        "BOLL_SQUEEZE":     {"label": "布林高位收口",  "action": "注意减仓",     "action_type": "sell_warn"},
-        "ACCELERATION":     {"label": "加速赶顶",     "action": "注意减仓",     "action_type": "sell_warn"},
-        "BREAK_MA5":        {"label": "跌破MA5",      "action": "减仓2/3",      "action_type": "sell_2"},
-        "MA5_DEATH_CROSS":  {"label": "MA5死叉MA10",  "action": "建议清仓",     "action_type": "sell_3"},
-        "MA5_NO_RECOVERY":  {"label": "持续调整",       "action": "观望",         "action_type": "sell_warn"},
-        "EMERGENCY_STOP":   {"label": "紧急止损",     "action": "立即清仓",     "action_type": "sell_emergency"},
+        "NEAR_HIGH": {"label": "接近前高", "action": "注意减仓", "action_type": "sell_warn"},
+        "RSI_TOP_DIV": {"label": "RSI顶背离", "action": "建议减仓1/3", "action_type": "sell_1"},
+        "MACD_TOP_DIV": {"label": "MACD顶背离", "action": "建议减仓1/3", "action_type": "sell_1"},
+        "VOLUME_STALL": {"label": "天量滞涨", "action": "注意减仓", "action_type": "sell_warn"},
+        "UPPER_SHADOW": {"label": "连续长上影线", "action": "注意减仓", "action_type": "sell_warn"},
+        "BOLL_SQUEEZE": {"label": "布林高位收口", "action": "注意减仓", "action_type": "sell_warn"},
+        "ACCELERATION": {"label": "加速赶顶", "action": "注意减仓", "action_type": "sell_warn"},
+        "BREAK_MA5": {"label": "跌破MA5", "action": "减仓2/3", "action_type": "sell_2"},
+        "MA5_DEATH_CROSS": {"label": "MA5死叉MA10", "action": "建议清仓", "action_type": "sell_3"},
+        "MA5_NO_RECOVERY": {"label": "持续调整", "action": "观望", "action_type": "sell_warn"},
+        "EMERGENCY_STOP": {
+            "label": "紧急止损",
+            "action": "立即清仓",
+            "action_type": "sell_emergency",
+        },
     }
 
     _BOTTOM_META = {
-        "NEAR_SUPPORT":     {"label": "均线支撑",   "action": "关注",       "action_type": "buy_watch"},
-        "DEEP_V":           {"label": "深V确认",    "action": "试探建仓",   "action_type": "buy_1"},
-        "VOLUME_SHRINK":    {"label": "缩量企稳",   "action": "关注",       "action_type": "buy_watch"},
-        "RSI_BOTTOM_DIV":   {"label": "RSI底背离",  "action": "加仓确认",   "action_type": "buy_2"},
-        "W_BOTTOM":         {"label": "W底形态",    "action": "加仓确认",   "action_type": "buy_2"},
-        "SUPPORT_CONFIRM":  {"label": "支撑确认",   "action": "关注",       "action_type": "buy_watch"},
-        "RECLAIM_MA5":      {"label": "站上MA5",    "action": "建仓完成",   "action_type": "buy_3"},
+        "NEAR_SUPPORT": {"label": "均线支撑", "action": "关注", "action_type": "buy_watch"},
+        "DEEP_V": {"label": "深V确认", "action": "试探建仓", "action_type": "buy_1"},
+        "VOLUME_SHRINK": {"label": "缩量企稳", "action": "关注", "action_type": "buy_watch"},
+        "RSI_BOTTOM_DIV": {"label": "RSI底背离", "action": "加仓确认", "action_type": "buy_2"},
+        "W_BOTTOM": {"label": "W底形态", "action": "加仓确认", "action_type": "buy_2"},
+        "SUPPORT_CONFIRM": {"label": "支撑确认", "action": "关注", "action_type": "buy_watch"},
+        "RECLAIM_MA5": {"label": "站上MA5", "action": "建仓完成", "action_type": "buy_3"},
     }
 
     if date:
         # ── 从 DB 读取已存储的信号 ─────────────────────────────────────────────
-        import sqlite3, json as _json
+        import json as _json
+        import sqlite3
+
         from trader_analysis.futu_strategy import config as _cfg
         conn = sqlite3.connect(_cfg.DB_PATH)
         conn.row_factory = sqlite3.Row
@@ -1170,6 +1230,7 @@ def get_sell_log(
     """返回卖出日志（从 trade_log.jsonl 读取 SELL 类型记录）。"""
     import json as _json
     import os
+
     from trader_analysis.futu_strategy import config as _cfg
 
     log_file = _cfg.TRADE_LOG_FILE
@@ -1308,14 +1369,18 @@ def _enhance_levels(
     # 做多: 止损=最近支撑(或-5%), 止盈=最近压力(��+10%)
     # 做空: 止损=最近压力(或+5%), 止盈=最近支撑(或-10%)
     nearest_support = max((s["price"] for s in supports), default=None) if supports else None
-    nearest_resistance = min((r["price"] for r in resistances), default=None) if resistances else None
+    nearest_resistance = (
+        min((r["price"] for r in resistances), default=None) if resistances else None
+    )
 
     # ── 标记"最近的一道"支撑/压力（前端高亮，且只有它显示价格轴标签）──
     # 注意：price 为 numpy.float64，比较结果是 numpy.bool_，FastAPI 无法序列化 → 必须转原生 bool
     for lv in supports:
         lv["is_nearest"] = bool(nearest_support is not None and lv["price"] == nearest_support)
     for lv in resistances:
-        lv["is_nearest"] = bool(nearest_resistance is not None and lv["price"] == nearest_resistance)
+        lv["is_nearest"] = bool(
+            nearest_resistance is not None and lv["price"] == nearest_resistance
+        )
 
     rr = {}
     # 做多
@@ -1424,11 +1489,12 @@ def get_analysis(
 def get_daily_picks(
     date: str | None = Query(default=None, description="指定日期 YYYY-MM-DD"),
 ):
-    """返回今日最佳做多标的：基本面低估 + 周线涨潮 + 日线回调 + 评分≥90。
+    ("""返回今日最佳做多标的：基本面低估 + 周线涨潮 + 日线回调 + 评分≥90。
 
     巴菲特原则：不懂不做，不做空，不借钱。
-    筛选逻辑：好公司（低估）+ 好位置（周线上涨+日线回调）+ 好价格（评分≥{config.DAILY_PICKS_MIN_SCORE}）。
-    """
+    筛选逻辑：好公司（低估）+ 好位置（周线上涨+日线回调）+ """
+     """好价格（评分≥{config.DAILY_PICKS_MIN_SCORE}）。
+    """)
     conn = storage._get_conn()
     picks = []
     min_score = config.DAILY_PICKS_MIN_SCORE
@@ -1436,20 +1502,23 @@ def get_daily_picks(
     # 1. 找出评分 ≥ 阈值的标的（超卖+技术面严重偏离均值）
     if date:
         score_rows = conn.execute(
-            f"SELECT code, total_score FROM score_results WHERE date = ? AND total_score >= {min_score} ORDER BY total_score DESC",
+            f"SELECT code, total_score FROM score_results WHERE date = ? "
+            f"AND total_score >= {min_score} ORDER BY total_score DESC",
             (date,),
         ).fetchall()
     else:
         # 取最近一个有 ≥10 个评分的日期
         latest_full = conn.execute(
-            "SELECT date, COUNT(*) as n FROM score_results GROUP BY date HAVING n >= 10 ORDER BY date DESC LIMIT 1"
+            "SELECT date, COUNT(*) as n FROM score_results GROUP BY date "
+            "HAVING n >= 10 ORDER BY date DESC LIMIT 1"
         ).fetchone()
         if not latest_full:
             conn.close()
             return {"data": [], "message": "暂无足够评分数据"}
         date = str(latest_full["date"])
         score_rows = conn.execute(
-            f"SELECT code, total_score FROM score_results WHERE date = ? AND total_score >= {min_score} ORDER BY total_score DESC",
+            f"SELECT code, total_score FROM score_results WHERE date = ? "
+            f"AND total_score >= {min_score} ORDER BY total_score DESC",
             (date,),
         ).fetchall()
 
@@ -1464,7 +1533,11 @@ def get_daily_picks(
         f"SELECT code, morningstar_fair_value FROM watchlist WHERE code IN ({ph})",
         codes,
     ).fetchall()
-    ms_map = {r["code"]: float(r["morningstar_fair_value"]) for r in ms_rows if r["morningstar_fair_value"]}
+    ms_map = {
+        r["code"]: float(r["morningstar_fair_value"])
+        for r in ms_rows
+        if r["morningstar_fair_value"]
+    }
     conn.close()
 
     # 2. 逐个跑道氏分析
@@ -1527,7 +1600,10 @@ def get_daily_picks(
 @app.get("/api/content-generator")
 def get_content_generator(
     code: str = Query(..., description="标的代码，如 US.AVGO"),
-    platform: str | None = Query(default=None, description="平台：xiaohongshu/zhihu/gongzhonghao，不传返回全部"),
+    platform: str | None = Query(
+        default=None,
+        description="平台：xiaohongshu/zhihu/gongzhonghao，不传返回全部",
+    ),
     date: str | None = Query(default=None, description="评分日期 YYYY-MM-DD，不传取最新"),
 ):
     """生成自媒体发布文案（小红书/知乎/公众号），基于该标的的道氏趋势 + 估值信号。"""
@@ -1554,7 +1630,9 @@ def get_content_generator(
         ).fetchone()
     else:
         s = conn.execute(
-            "SELECT total_score, date FROM score_results WHERE code = ? ORDER BY date DESC LIMIT 1", (code,)
+            "SELECT total_score, date FROM score_results WHERE code = ? "
+            "ORDER BY date DESC LIMIT 1",
+            (code,),
         ).fetchone()
     conn.close()
 
@@ -1658,8 +1736,16 @@ def delete_content_template(key: str):
 
 @app.get("/api/position")
 def get_position(
-    env: str = Query(default="REAL", pattern="^(REAL|SIMULATE)$", description="账户环境：REAL 实盘 / SIMULATE 模拟盘"),
-    currency: str = Query(default="base", pattern="^(base|USD)$", description="计价币种：base 账户记账币种（如 HKD）/ USD 美元"),
+    env: str = Query(
+        default="REAL",
+        pattern="^(REAL|SIMULATE)$",
+        description="账户环境：REAL 实盘 / SIMULATE 模拟盘",
+    ),
+    currency: str = Query(
+        default="base",
+        pattern="^(base|USD)$",
+        description="计价币种：base 账户记账币种（如 HKD）/ USD 美元",
+    ),
 ):
     """实时查询富途持仓 + 配比（依赖 OpenD 在线）。
 
@@ -1733,7 +1819,8 @@ def get_fundamental(
             ).fetchone()
         else:
             kline = conn.execute(
-                "SELECT close FROM kline_indicators WHERE code=? AND ktype='1d' ORDER BY date DESC LIMIT 1",
+                "SELECT close FROM kline_indicators WHERE code=? AND ktype='1d' "
+                "ORDER BY date DESC LIMIT 1",
                 (code,),
             ).fetchone()
 
@@ -1744,15 +1831,21 @@ def get_fundamental(
             conn.close()
             return {"data": None, "message": f"{code} 暂无价格数据"}
         analyst = float(row["analyst_target_mean"]) if row["analyst_target_mean"] else None
-        morningstar = float(row["morningstar_fair_value"]) if row["morningstar_fair_value"] else None
+        morningstar = (
+            float(row["morningstar_fair_value"]) if row["morningstar_fair_value"] else None
+        )
 
         return {
             "code": code,
             "current_price": round(current, 2),
             "analyst_target": round(analyst, 2) if analyst else None,
-            "analyst_upside_pct": round((analyst - current) / current * 100, 1) if analyst else None,
+            "analyst_upside_pct": (
+                round((analyst - current) / current * 100, 1) if analyst else None
+            ),
             "morningstar_value": round(morningstar, 2) if morningstar else None,
-            "morningstar_discount_pct": round((morningstar - current) / current * 100, 1) if morningstar else None,
+            "morningstar_discount_pct": (
+                round((morningstar - current) / current * 100, 1) if morningstar else None
+            ),
             "forward_pe": round(row["forward_pe"], 1) if row["forward_pe"] else None,
             "peg_ratio": round(row["peg_ratio"], 2) if row["peg_ratio"] else None,
             "roe": round(row["roe"], 1) if row["roe"] else None,

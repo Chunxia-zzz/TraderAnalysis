@@ -12,10 +12,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
-import numpy as np
 import pandas as pd
 from scipy.signal import find_peaks
-
 
 # ── ATR 计算（on-the-fly fallback）──────────────────────────────────────────
 
@@ -227,14 +225,20 @@ def calculate_tp_sl(
         atr_value = float(atr_series.iloc[-1])
 
     # 支撑/阻力
-    support_levels = _calc_support_levels(daily_df, lookback=swing_lookback, distance=swing_distance)
-    resistance_levels = _calc_resistance_levels(daily_df, lookback=swing_lookback, distance=swing_distance)
+    support_levels = _calc_support_levels(
+        daily_df, lookback=swing_lookback, distance=swing_distance
+    )
+    resistance_levels = _calc_resistance_levels(
+        daily_df, lookback=swing_lookback, distance=swing_distance
+    )
 
     # 止损
     sl_result = _calc_stop_loss(current_price, atr_value, support_levels, atr_multiplier)
 
     # 止盈
-    tp_result = _calc_take_profit(current_price, sl_result["price"], resistance_levels, min_rr_ratio)
+    tp_result = _calc_take_profit(
+        current_price, sl_result["price"], resistance_levels, min_rr_ratio
+    )
 
     # 盈亏比
     risk_per_share = current_price - sl_result["price"]

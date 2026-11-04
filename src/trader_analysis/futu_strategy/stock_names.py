@@ -79,7 +79,7 @@ TICKER_CN: dict[str, str] = {
     "BHP": "必和必拓", "RIO": "力拓", "SCCO": "南方铜业", "GLW": "康宁",
     # ── 其他龙头 ──
     "SYK": "史赛克", "ABT": "雅培", "ADP": "ADP", "PLD": "普洛斯",
-    "EQIX": "易昆尼克斯", "WELL": "Welltower", "HOOD": "Robinhood",
+    "EQIX": "易昆尼克斯", "WELL": "Welltower",
     "RKLB": "Rocket Lab", "AXAHY": "AXA安盛", "ZURVY": "苏黎世保险",
     "LVMUY": "LVMH", "DRAM": "DRAM",
 }

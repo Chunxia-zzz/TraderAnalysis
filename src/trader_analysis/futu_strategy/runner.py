@@ -20,15 +20,21 @@ import argparse
 import logging
 from datetime import date
 
-from trader_analysis.futu_strategy import config, storage
+from trader_analysis.futu_strategy import config
+from trader_analysis.futu_strategy.bottom_detector import detect_all as detect_all_bottom
 from trader_analysis.futu_strategy.daily_update import run_update
 from trader_analysis.futu_strategy.logger import log_score
-from trader_analysis.futu_strategy.position_state import get_state, update_state
+from trader_analysis.futu_strategy.position_state import get_state
 from trader_analysis.futu_strategy.scorer import calculate_score
 from trader_analysis.futu_strategy.sell_advisor import evaluate as evaluate_sell
 from trader_analysis.futu_strategy.sell_executor import execute_sell
-from trader_analysis.futu_strategy.storage import init_db, insert_bottom_signal, insert_top_signal, query_recent, upsert_score
-from trader_analysis.futu_strategy.bottom_detector import detect_all as detect_all_bottom
+from trader_analysis.futu_strategy.storage import (
+    init_db,
+    insert_bottom_signal,
+    insert_top_signal,
+    query_recent,
+    upsert_score,
+)
 from trader_analysis.futu_strategy.top_detector import detect_all
 from trader_analysis.futu_strategy.trade_executor import execute_trade
 
@@ -92,7 +98,9 @@ def run_strategy(codes: list[str]) -> None:
                     logger.warning(f"{code} 存储层无数据，跳过（请先运行 init_history）")
                     continue
 
-                result = calculate_score(code, daily_df, weekly_df, market_composite=market_composite)
+                result = calculate_score(
+                    code, daily_df, weekly_df, market_composite=market_composite
+                )
 
                 # 写入评分结果到存储层
                 upsert_score(code, today, result)
@@ -120,7 +128,9 @@ def run_strategy(codes: list[str]) -> None:
                         # 记录信号到数据库
                         for sig in signals:
                             try:
-                                insert_top_signal(code, today, sig.signal_type, sig.strength, sig.detail)
+                                insert_top_signal(
+                                    code, today, sig.signal_type, sig.strength, sig.detail
+                                )
                             except Exception:
                                 pass
                         logger.info(
@@ -146,7 +156,9 @@ def run_strategy(codes: list[str]) -> None:
                 if bottom_signals:
                     for sig in bottom_signals:
                         try:
-                            insert_bottom_signal(code, today, sig.signal_type, sig.strength, sig.detail)
+                            insert_bottom_signal(
+                                code, today, sig.signal_type, sig.strength, sig.detail
+                            )
                         except Exception:
                             pass
                     logger.info(

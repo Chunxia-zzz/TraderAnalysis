@@ -13,7 +13,6 @@ from __future__ import annotations
 import logging
 from datetime import date as dt_date
 
-import numpy as np
 import pandas as pd
 
 from trader_analysis.futu_strategy import config, market_clock, storage
@@ -259,17 +258,23 @@ def _compute_score(
 
     # 计算各维度
     if has_spy and has_qqq:
-        daily_tech = _safe_score(_score_daily_tech, spy_daily, qqq_daily, dimension_name="日线技术面")
+        daily_tech = _safe_score(
+            _score_daily_tech, spy_daily, qqq_daily, dimension_name="日线技术面"
+        )
     else:
         daily_tech = {"score": NEUTRAL_SCORE, "breakdown": {"error": "SPY/QQQ 日线数据不足"}}
 
     if has_spy_w and has_qqq_w:
-        weekly_tech = _safe_score(_score_weekly_tech, spy_weekly, qqq_weekly, dimension_name="周线技术面")
+        weekly_tech = _safe_score(
+            _score_weekly_tech, spy_weekly, qqq_weekly, dimension_name="周线技术面"
+        )
     else:
         weekly_tech = {"score": NEUTRAL_SCORE, "breakdown": {"error": "SPY/QQQ 周线数据不足"}}
 
     if has_spy and has_qqq:
-        price_pos = _safe_score(_score_price_position, spy_daily, qqq_daily, dimension_name="价格位置")
+        price_pos = _safe_score(
+            _score_price_position, spy_daily, qqq_daily, dimension_name="价格位置"
+        )
     else:
         price_pos = {"score": NEUTRAL_SCORE, "breakdown": {"error": "SPY/QQQ 日线数据不足"}}
 
@@ -311,16 +316,35 @@ def _compute_score(
 
     # 组装维度列表
     dimensions = [
-        {"key": "daily_tech", "label": "日线技术面", "score": round(daily_tech["score"], 1), "weight": weights["daily_tech"]},
-        {"key": "weekly_tech", "label": "周线技术面", "score": round(weekly_tech["score"], 1), "weight": weights["weekly_tech"]},
-        {"key": "price_position", "label": "价格位置", "score": round(price_pos["score"], 1), "weight": weights["price_pos"]},
+        {
+            "key": "daily_tech",
+            "label": "日线技术面",
+            "score": round(daily_tech["score"], 1),
+            "weight": weights["daily_tech"],
+        },
+        {
+            "key": "weekly_tech",
+            "label": "周线技术面",
+            "score": round(weekly_tech["score"], 1),
+            "weight": weights["weekly_tech"],
+        },
+        {
+            "key": "price_position",
+            "label": "价格位置",
+            "score": round(price_pos["score"], 1),
+            "weight": weights["price_pos"],
+        },
     ]
 
     # 组装指标摘要
     indicators = {}
     if has_spy:
         spy_last = spy_daily.iloc[-1]
-        spy_vol_ratio = float(spy_last["volume"]) / float(spy_last["vol_ma20"]) if float(spy_last.get("vol_ma20", 0)) > 0 else 1.0
+        spy_vol_ratio = (
+            float(spy_last["volume"]) / float(spy_last["vol_ma20"])
+            if float(spy_last.get("vol_ma20", 0)) > 0
+            else 1.0
+        )
         indicators["SPY"] = {
             "price": round(float(spy_last["close"]), 2),
             "daily_rsi": round(float(spy_last.get("rsi6", 0)), 1),
@@ -331,7 +355,11 @@ def _compute_score(
         }
     if has_qqq:
         qqq_last = qqq_daily.iloc[-1]
-        qqq_vol_ratio = float(qqq_last["volume"]) / float(qqq_last["vol_ma20"]) if float(qqq_last.get("vol_ma20", 0)) > 0 else 1.0
+        qqq_vol_ratio = (
+            float(qqq_last["volume"]) / float(qqq_last["vol_ma20"])
+            if float(qqq_last.get("vol_ma20", 0)) > 0
+            else 1.0
+        )
         qqq_w_rsi = float(qqq_weekly.iloc[-1].get("rsi6", 50)) if has_qqq_w else 50
         indicators["QQQ"] = {
             "price": round(float(qqq_last["close"]), 2),
@@ -550,12 +578,18 @@ def compute_asset_temperature(asset_key: str) -> dict | None:
 
     weights = {"daily_tech": 0.50, "weekly_tech": 0.35, "price_pos": 0.15}
 
-    daily_tech = _safe_score(_score_asset_daily,  daily_df,  cfg, dimension_name=f"{asset_key} 日线技术面")
+    daily_tech = _safe_score(
+        _score_asset_daily, daily_df, cfg, dimension_name=f"{asset_key} 日线技术面"
+    )
     if not weekly_df.empty:
-        weekly_tech = _safe_score(_score_asset_weekly, weekly_df, cfg, dimension_name=f"{asset_key} 周线技术面")
+        weekly_tech = _safe_score(
+            _score_asset_weekly, weekly_df, cfg, dimension_name=f"{asset_key} 周线技术面"
+        )
     else:
         weekly_tech = {"score": NEUTRAL_SCORE, "breakdown": {"error": "周线数据不足"}}
-    price_pos = _safe_score(_score_asset_price_position, daily_df, cfg, dimension_name=f"{asset_key} 价格位置")
+    price_pos = _safe_score(
+        _score_asset_price_position, daily_df, cfg, dimension_name=f"{asset_key} 价格位置"
+    )
 
     composite = (
         daily_tech["score"]  * weights["daily_tech"]

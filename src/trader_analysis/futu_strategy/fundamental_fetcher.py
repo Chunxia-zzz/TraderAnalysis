@@ -100,7 +100,9 @@ def fetch_single(code: str) -> dict | None:
         try:
             tk = yf.Ticker(symbol)
             info = tk.info or {}
-            if not info or info.get("regularMarketPrice") is None and info.get("currentPrice") is None:
+            if not info or (
+                info.get("regularMarketPrice") is None and info.get("currentPrice") is None
+            ):
                 logger.warning("yfinance 无数据: %s (%s)", code, symbol)
                 return None
             return _extract_fields(info)

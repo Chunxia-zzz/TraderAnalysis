@@ -19,6 +19,9 @@ def test_import_providers():
         normalize_ohlcv,
     )
     assert OHLCVSchema.timestamp == "timestamp"
+    assert issubclass(DataProviderError, Exception)
+    assert FutuLiveDataProvider is not None
+    assert callable(normalize_ohlcv)
 
 
 def test_import_indicators():

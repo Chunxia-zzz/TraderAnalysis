@@ -417,7 +417,8 @@ def upsert_market_score(date: str, result: dict) -> None:
     conn.execute(
         "INSERT OR REPLACE INTO market_score "
         "(date, composite_score, target_position_pct, extreme_triggered, leverage_tool, "
-        "daily_tech_score, weekly_tech_score, vol_score, price_score, volume_score, safe_haven_score, "
+        "daily_tech_score, weekly_tech_score, vol_score, price_score, volume_score, "
+        "safe_haven_score, "
         "spy_price, qqq_price, gld_price, vix_value, "
         "spy_daily_rsi, qqq_daily_rsi, spy_weekly_rsi, qqq_weekly_rsi, "
         "spy_ma200_dev, qqq_ma200_dev, spy_vol_ratio, qqq_vol_ratio) "
@@ -485,7 +486,8 @@ def query_market_score_history(days: int = 30) -> list[dict]:
     conn = _get_conn()
     rows = conn.execute(
         "SELECT date, composite_score, target_position_pct, extreme_triggered, leverage_tool, "
-        "daily_tech_score, weekly_tech_score, vol_score, price_score, volume_score, safe_haven_score "
+        "daily_tech_score, weekly_tech_score, vol_score, price_score, volume_score, "
+        "safe_haven_score "
         "FROM market_score ORDER BY date DESC LIMIT ?",
         (days,),
     ).fetchall()
@@ -513,7 +515,8 @@ def upsert_fundamental(code: str, date: str, data: dict) -> None:
         "profit_margin, gross_margin, roe, "
         "market_cap, dividend_yield, beta, short_ratio, "
         "fundamental_score, valuation_signal, breakdown, updated_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))",
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,"
+        "?,datetime('now'))",
         (
             code, date,
             data.get("current_price"),
@@ -569,7 +572,9 @@ def query_fundamentals_overview() -> list[dict]:
         d = dict(r)
         # 计算 target_upside
         if d.get("target_mean") and d.get("current_price") and d["current_price"] > 0:
-            d["target_upside"] = round((d["target_mean"] - d["current_price"]) / d["current_price"], 4)
+            d["target_upside"] = round(
+                (d["target_mean"] - d["current_price"]) / d["current_price"], 4
+            )
         else:
             d["target_upside"] = None
         results.append(d)
@@ -579,7 +584,9 @@ def query_fundamentals_overview() -> list[dict]:
 # ── 回测引擎查询 ─────────────────────────────────────────────────────────────
 
 
-def query_all_scores(code: str, start_date: str | None = None, end_date: str | None = None) -> list[dict]:
+def query_all_scores(
+    code: str, start_date: str | None = None, end_date: str | None = None
+) -> list[dict]:
     """查询某股票在日期范围内的所有评分记录，按日期升序。"""
     conn = _get_conn()
     sql = "SELECT code, date, total_score, signal FROM score_results WHERE code = ?"
@@ -596,7 +603,9 @@ def query_all_scores(code: str, start_date: str | None = None, end_date: str | N
     return [dict(r) for r in rows]
 
 
-def query_close_prices(code: str, start_date: str | None = None, end_date: str | None = None) -> dict[str, float]:
+def query_close_prices(
+    code: str, start_date: str | None = None, end_date: str | None = None
+) -> dict[str, float]:
     """查询某股票日线收盘价，返回 {date: close} 字典。"""
     conn = _get_conn()
     sql = "SELECT date, close FROM kline_indicators WHERE code = ? AND ktype = '1d'"
@@ -613,7 +622,12 @@ def query_close_prices(code: str, start_date: str | None = None, end_date: str |
     return {r["date"]: float(r["close"]) for r in rows}
 
 
-def query_price_and_ma(code: str, ma_col: str = "ma5", start_date: str | None = None, end_date: str | None = None) -> dict[str, dict]:
+def query_price_and_ma(
+    code: str,
+    ma_col: str = "ma5",
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict[str, dict]:
     """查询日线 close + 指定 MA，返回 {date: {"close": float, "ma": float}}。"""
     conn = _get_conn()
     sql = f"SELECT date, close, {ma_col} FROM kline_indicators WHERE code = ? AND ktype = '1d'"
@@ -627,13 +641,24 @@ def query_price_and_ma(code: str, ma_col: str = "ma5", start_date: str | None = 
     sql += " ORDER BY date ASC"
     rows = conn.execute(sql, params).fetchall()
     conn.close()
-    return {r["date"]: {"close": float(r["close"]), "ma": float(r[ma_col]) if r[ma_col] else None} for r in rows}
+    return {
+        r["date"]: {
+            "close": float(r["close"]),
+            "ma": float(r[ma_col]) if r[ma_col] else None,
+        }
+        for r in rows
+    }
 
 
-def query_ema_ribbon_data(code: str, start_date: str | None = None, end_date: str | None = None) -> list[dict]:
+def query_ema_ribbon_data(
+    code: str, start_date: str | None = None, end_date: str | None = None
+) -> list[dict]:
     """查询日线 ema5, ema30, close，用于 EMA 飘带回测，返回按日期升序的列表。"""
     conn = _get_conn()
-    sql = "SELECT date, close, ema5, ema30 FROM kline_indicators WHERE code = ? AND ktype = '1d' AND ema5 IS NOT NULL AND ema30 IS NOT NULL"
+    sql = (
+        "SELECT date, close, ema5, ema30 FROM kline_indicators WHERE code = ? "
+        "AND ktype = '1d' AND ema5 IS NOT NULL AND ema30 IS NOT NULL"
+    )
     params: list = [code]
     if start_date:
         sql += " AND date >= ?"
@@ -644,10 +669,20 @@ def query_ema_ribbon_data(code: str, start_date: str | None = None, end_date: st
     sql += " ORDER BY date ASC"
     rows = conn.execute(sql, params).fetchall()
     conn.close()
-    return [{"date": r["date"], "close": float(r["close"]), "ema5": float(r["ema5"]), "ema30": float(r["ema30"])} for r in rows]
+    return [
+        {
+            "date": r["date"],
+            "close": float(r["close"]),
+            "ema5": float(r["ema5"]),
+            "ema30": float(r["ema30"]),
+        }
+        for r in rows
+    ]
 
 
-def query_trading_dates(code: str, start_date: str | None = None, end_date: str | None = None) -> list[str]:
+def query_trading_dates(
+    code: str, start_date: str | None = None, end_date: str | None = None
+) -> list[str]:
     """查询交易日历（从 kline 数据推导），返回日期列表升序。"""
     conn = _get_conn()
     sql = "SELECT DISTINCT date FROM kline_indicators WHERE code = ? AND ktype = '1d'"
@@ -667,7 +702,9 @@ def query_trading_dates(code: str, start_date: str | None = None, end_date: str 
 # ── 顶背离信号日志 ────────────────────────────────────────────────────────────
 
 
-def insert_top_signal(code: str, date: str, signal_type: str, strength: float, detail: dict) -> None:
+def insert_top_signal(
+    code: str, date: str, signal_type: str, strength: float, detail: dict
+) -> None:
     """写入一条顶部信号记录。"""
     conn = _get_conn()
     conn.execute(
@@ -719,7 +756,9 @@ def query_top_signals_all(days: int = 7) -> list[dict]:
 # ── 底部信号日志 ────────────────────────────────────────────────────────────────
 
 
-def insert_bottom_signal(code: str, date: str, signal_type: str, strength: float, detail: dict) -> None:
+def insert_bottom_signal(
+    code: str, date: str, signal_type: str, strength: float, detail: dict
+) -> None:
     """写入一条底部信号记录。"""
     conn = _get_conn()
     conn.execute(
@@ -953,7 +992,8 @@ def upsert_position_state(
     else:
         conn.execute(
             "INSERT INTO position_state "
-            "(code, stage, total_qty, remaining_qty, avg_cost, entry_date, last_signal, last_signal_date, updated_at) "
+            "(code, stage, total_qty, remaining_qty, avg_cost, entry_date, "
+            "last_signal, last_signal_date, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 code, stage,
