@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-04
 
-**Status**: Draft
+**Status**: Implemented — 部署链路已跑通（deploy 19s，工作树 HEAD 与推送 sha 一致，/health 200）；回滚未端到端验证，见 tasks.md
 
 **Input**: User description: "开始 D：后端也接 CI→CD。给后端仓库也加 deploy job（替掉 post-receive hook），让后端同样「合到 main 且检查通过才上线」。需先写 specs，并处理 systemd 重启与失败回滚。"
 

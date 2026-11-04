@@ -35,14 +35,54 @@
 
 ## Phase 5: 验证
 
-- [ ] **T018** 本地模拟：用部署 job 的同一段命令跑一次（checkout + restart + health）
-- [ ] **T019** 远端：推送后 deploy 绿，`/health` 200，工作树 `git rev-parse HEAD` = 部署 sha
-- [ ] **T020** 依赖判定：改 requirements 注释 → 日志出现 pip；改 .py → 日志无 pip
-- [ ] **T021** 回滚：注入坏 import → 自动回滚，`/health` 恢复 200
-- [ ] **T022** SC 逐条回填
+- [x] **T018** 本地模拟：同一段命令跑通「checkout → 跳过依赖 → restart」，`/health` 第 1 次 502、第 2 次 200
+      （证明必须轮询，一次性检查会误判）
+- [x] **T019** 远端：`3d83e12` 部署绿（deploy 19s），工作树 HEAD = 推送 sha，服务 active，`/health` 200
+- [x] **T020** 依赖判定：改 `requirements.txt` 注释后 Deploy 步骤 **5s → 157s**（走 pip + 阿里云镜像），
+      health 仍通过；改回后再次 157s
+- [ ] **T021** 回滚：**未端到端验证**，见下方「探针两次都被 lint 拦下」
+- [x] **T022** SC 逐条回填（见下表）
 
 ## 依赖关系
 
 ```
 T005-T008 → T009-T012 → T013-T014 → T015-T017 → T018-T022
 ```
+
+## 验证记录（2026-11-04 实测）
+
+| 项 | 实测 | 结论 |
+|---|---|---|
+| SC-001 push → /health 200 | 一次完整运行：check 双平台 81s/50s + deploy 19s ≈ **2.5 分钟** | ✅ ≤5min |
+| SC-002 检查红则不部署 | 两次探针提交（`96f13c5` E402、`965e97c` invalid-syntax）check 红后 deploy 直接 skipped，裸库 main 与工作树 HEAD **都没动** | ✅ 实测 |
+| SC-003 失败自动回滚 | **未验证**（探针没走到 deploy）。已单独验证：守卫逻辑（worktree≠target → 跳过）、回滚命令（checkout+restart）与部署用的是同一组命令、健康检查轮询可用 | ⚠️ 部分 |
+| SC-004 deploy ≤90s | 无依赖变更 **19s**；有依赖变更 **157s**（pip 装 53 个包） | ✅ 常态达标；依赖变更时会超 |
+| SC-005 依赖未变则不装 | 无变更的运行 Deploy 5s；有变更 157s，差异显著 | ✅ |
+| SC-006 推裸库不上线 | hook 已停用；推 `deploy` remote 只更新裸库（hook 打印移交说明） | ✅ |
+
+### 首跑失败与修复（两处）
+
+1. **`Push commit to bare repo` 失败：Permission denied (publickey)**
+   `git push` 自己起 ssh 时不认前面步骤的 `-i ~/.ssh/deploy`，而 runner 上没有任何默认身份。
+   修复：给该步骤设 `GIT_SSH_COMMAND="ssh -i ~/.ssh/deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes ..."`。
+2. **推送失败时回滚仍然执行**，白白重启一次服务（工作树其实没变）。
+   修复：回滚前先比对工作树 HEAD 与 `TARGET_SHA`，不同则跳过。
+
+### 探针两次都被 lint 拦下（回滚没测成，但反证门禁有效）
+
+想验证「启动失败 → 自动回滚」，两次设计都被 `check` 挡住，deploy 从未执行：
+
+| 探针 | 被什么拦下 |
+|---|---|
+| `raise` 写在 `__main__.py` 模块顶层 | ruff **E402**（import 不在文件顶部） |
+| 缩进与项目 3 空格风格不一致 | ruff **invalid-syntax** |
+
+结论：**「检查不过就不上线」这条链是真的通的**，但也因此没能端到端验证回滚。
+后续若要做，建议不要走主分支：直接往裸库推一个坏 sha，再手工触发一次 checkout+restart，
+观察 `/health` 失败后执行回滚命令即可（命令与 workflow 内一致）。
+
+### 顺带发现
+
+- 服务器**无外网**（GitHub / pypi.org 都不通），仅阿里云镜像可用 → 依赖只能走 `mirrors.aliyun.com`。
+- 服务器 Python **3.11.13**、CI **3.13**：本次未消除差异，`requires-python >=3.10` 兜底。
+- `gitleaks-action@v2`（前端已升 v3）：本次未动，记入技术债。
