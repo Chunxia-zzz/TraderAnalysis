@@ -37,9 +37,17 @@ ssh root@47.106.175.84 "cat /etc/nginx/conf.d/gzip.conf"                        
                                     └─ systemctl restart trader-api
 ```
 
-- 前端：独立仓库 → `/opt/git/trader-frontend.git` → 检出到 `/var/www/trader-frontend`
+- 前端：独立仓库 → `/opt/git/trader-frontend.git` → ~~检出到 `/var/www/trader-frontend`~~
 - 凭证：`/opt/trader-analysis/.env`（`EnvironmentFile`），**不入库**
 - 一键配置脚本：`scripts/setup-git-deploy.sh`（服务器上执行一次）
+
+> ⚠️ **勘误（2026-11-04）：前端已不在服务器构建/部署。**
+> 前端上线改由 GitHub Actions 执行（`TraderAnalysisFrontend` 仓库
+> `specs/004-deploy-on-green/`）：`push main` → `check`（lint/单测/构建）→ `deploy` job
+> → `tar` 到 `/var/www/trader-frontend.new` → 校验 → `mv` 交换（旧版留 `.prev`）→ 健康检查。
+> 服务器 `trader-frontend.git/hooks/post-receive` 已停用（原版备份 `post-receive.bak-20261104`），
+> **推该 bare repo 不再改变线上**；服务器也不需要再为前端装 Node/npm。
+> 上面那行原文保留，用于记录 2026-11-04 之前的实际行为。
 
 ## 核验部署是否生效（重要）
 
