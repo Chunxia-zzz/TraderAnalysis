@@ -189,7 +189,7 @@ def find_support_resistance(
 def _clean_series(s: pd.Series) -> pd.Series:
     """把含 None 的 object 列转成数值列（None / 非数值 → NaN）。
 
-    周线与 4H 的均线列可能是 object dtype 且含 None（指标未算全时），
+    周线的均线列可能是 object dtype 且含 None（指标未算全时），
     直接比较会抛 TypeError: '<' not supported between 'NoneType' and 'NoneType'。
     """
     return pd.to_numeric(s, errors="coerce") if s.dtype == object else s

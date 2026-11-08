@@ -717,11 +717,16 @@ def insert_top_signal(
 
 
 def query_top_signals(code: str, days: int = 30) -> list[dict]:
-    """查询某标的最近 N 天的顶部信号历史，日期降序。"""
+    """查询某标的最近 N 天的顶部信号历史，日期降序。
+
+    已下线的 4H 交叉信号（`signal_type` 含 `4H`）不再返回——
+    行仍在库里，只是读层过滤，见 `specs/002-remove-4h-cycle`。
+    """
     conn = _get_conn()
     rows = conn.execute(
         "SELECT id, code, date, signal_type, strength, detail_json, created_at "
-        "FROM top_signal_log WHERE code = ? ORDER BY date DESC, id DESC LIMIT ?",
+        "FROM top_signal_log WHERE code = ? AND signal_type NOT LIKE '%4H%' "
+        "ORDER BY date DESC, id DESC LIMIT ?",
         (code, days * 5),  # 每天最多 5 个信号，多取一些
     ).fetchall()
     conn.close()
@@ -735,11 +740,11 @@ def query_top_signals(code: str, days: int = 30) -> list[dict]:
 
 
 def query_top_signals_all(days: int = 7) -> list[dict]:
-    """查询所有标的最近 N 天内触发过的顶部信号，按日期降序。"""
+    """查询所有标的最近 N 天内触发过的顶部信号，按日期降序（不含已下线的 4H 信号）。"""
     conn = _get_conn()
     rows = conn.execute(
         "SELECT id, code, date, signal_type, strength, detail_json, created_at "
-        "FROM top_signal_log WHERE date >= date('now', ?) "
+        "FROM top_signal_log WHERE date >= date('now', ?) AND signal_type NOT LIKE '%4H%' "
         "ORDER BY date DESC, strength DESC",
         (f"-{days} days",),
     ).fetchall()
@@ -771,11 +776,12 @@ def insert_bottom_signal(
 
 
 def query_bottom_signals(code: str, days: int = 30) -> list[dict]:
-    """查询某标的最近 N 天的底部信号历史，日期降序。"""
+    """查询某标的最近 N 天的底部信号历史，日期降序（不含已下线的 4H 信号）。"""
     conn = _get_conn()
     rows = conn.execute(
         "SELECT id, code, date, signal_type, strength, detail_json, created_at "
-        "FROM bottom_signal_log WHERE code = ? ORDER BY date DESC, id DESC LIMIT ?",
+        "FROM bottom_signal_log WHERE code = ? AND signal_type NOT LIKE '%4H%' "
+        "ORDER BY date DESC, id DESC LIMIT ?",
         (code, days * 7),  # 每天最多 7 个信号，多取一些
     ).fetchall()
     conn.close()
@@ -789,11 +795,11 @@ def query_bottom_signals(code: str, days: int = 30) -> list[dict]:
 
 
 def query_bottom_signals_all(days: int = 7) -> list[dict]:
-    """查询所有标的最近 N 天内触发过的底部信号，按日期降序。"""
+    """查询所有标的最近 N 天内触发过的底部信号，按日期降序（不含已下线的 4H 信号）。"""
     conn = _get_conn()
     rows = conn.execute(
         "SELECT id, code, date, signal_type, strength, detail_json, created_at "
-        "FROM bottom_signal_log WHERE date >= date('now', ?) "
+        "FROM bottom_signal_log WHERE date >= date('now', ?) AND signal_type NOT LIKE '%4H%' "
         "ORDER BY date DESC, strength DESC",
         (f"-{days} days",),
     ).fetchall()

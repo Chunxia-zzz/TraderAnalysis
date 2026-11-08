@@ -52,35 +52,30 @@ def health_check():
 @app.get("/api/indicators")
 def get_indicators(
     code: str,
-    ktype: str = Query(default="1d", pattern="^(1d|4h|1w)$"),
+    ktype: str = Query(default="1d", pattern="^(1d|1w)$"),
     days: int = Query(default=60, ge=1, le=500),
 ):
-    """返回某标的某周期最近 N 根 K 线 + 全部指标（日期升序，供图表使用）。"""
+    """返回某标的某周期最近 N 根 K 线 + 全部指标（日期升序，供图表使用）。
+
+    周期只支持 `1d` / `1w`。4H 已于 2026-11-08 下线（specs/002-remove-4h-cycle），
+    库中历史 4H 行保留但不再对外提供。
+    """
     rows = storage.query_range(code, ktype, days)
     if not rows:
-        ktype_label = {"1d": "日线", "4h": "4小时线", "1w": "周线"}.get(ktype, ktype)
+        ktype_label = {"1d": "日线", "1w": "周线"}.get(ktype, ktype)
         return {
             "code": code,
             "ktype": ktype,
             "data": [],
             "message": f"{code} 暂无{ktype_label}数据，请等待历史数据导入完成",
         }
-    # 4H 数据将日期转为 Unix 时间戳（秒），供轻量级图表正确显示
-    if ktype == "4h":
-        from datetime import datetime as dt
-        for r in rows:
-            if r.get("date"):
-                try:
-                    r["date"] = int(dt.strptime(r["date"], "%Y-%m-%d %H:%M:%S").timestamp())
-                except (ValueError, TypeError):
-                    pass
     return {"code": code, "ktype": ktype, "data": rows}
 
 
 @app.get("/api/indicators/latest")
 def get_latest(
     code: str,
-    ktype: str = Query(default="1d", pattern="^(1d|4h|1w)$"),
+    ktype: str = Query(default="1d", pattern="^(1d|1w)$"),
 ):
     """返回最新一根的所有指标值。"""
     result = storage.query_latest(code, ktype)
@@ -617,9 +612,12 @@ def get_grid_orders(
 def get_ema_cross_signals(
     date: str | None = Query(default=None, description="指定日期(YYYY-MM-DD)，查该日期的信号"),
 ):
-    """查询 EMA 交叉信号（日线+4H两个维度）。
+    """查询**日线** EMA 交叉信号（空转多/多转空）。
 
-    - 不传 date：实时计算最新信号（遍历全部标的，基于最新 K 线）
+    4H 维度已于 2026-11-08 下线（见 specs/002-remove-4h-cycle）：不再计算、不再返回；
+    库中历史 4H 信号保留原样，但读取层已过滤，不会出现在响应里。
+
+    - 不传 date：实时计算最新信号（遍历全部标的，基于最新日线）
     - 传 date：从 DB 读取该日期已存储的信号（需先 scan-signals --backfill）
     """
     import json as _json
@@ -636,7 +634,7 @@ def get_ema_cross_signals(
         }
         conn.close()
 
-        bull_1d, bull_4h, bear_1d, bear_4h = [], [], [], []
+        bull_1d, bear_1d = [], []
 
         def _to_item(code, sig):
             return {
@@ -651,65 +649,38 @@ def get_ema_cross_signals(
         for code in list(_cfg.WATCHLIST):
             daily_df = storage.query_recent(code, "1d", limit=60)
             if len(daily_df) >= 2:
-                for sig in detect_ema_cross(daily_df, timeframe="1d"):
+                for sig in detect_ema_cross(daily_df):
                     item = _to_item(code, sig)
                     if sig.signal_type == "EMA_CROSS_BULL_1D":
                         bull_1d.append(item)
                     else:
                         bear_1d.append(item)
 
-            four_h_df = storage.query_recent(code, "4h", limit=120)
-            if len(four_h_df) >= 2:
-                for sig in detect_ema_cross(four_h_df, timeframe="4h"):
-                    item = _to_item(code, sig)
-                    if sig.signal_type == "EMA_CROSS_BULL_4H":
-                        bull_4h.append(item)
-                    else:
-                        bear_4h.append(item)
-
-        for lst in (bull_1d, bull_4h, bear_1d, bear_4h):
+        for lst in (bull_1d, bear_1d):
             lst.sort(key=lambda x: -x["strength"])
 
         return {
             "bull_1d": bull_1d,
-            "bull_4h": bull_4h,
             "bear_1d": bear_1d,
-            "bear_4h": bear_4h,
-            "total": len(bull_1d) + len(bull_4h) + len(bear_1d) + len(bear_4h),
+            "total": len(bull_1d) + len(bear_1d),
         }
 
     conn = storage._get_conn()
 
-    if date:
-        # 精确匹配该日期写入的信号
-        date_filter = "AND date = ?"
-        params = (date,)
-    else:
-        # 取最近一次 scan 的日期
-        row = conn.execute(
-            "SELECT MAX(date) as d FROM bottom_signal_log WHERE signal_type LIKE 'EMA_CROSS%'"
-        ).fetchone()
-        latest = row["d"] if row else None
-        if not latest:
-            conn.close()
-            return {"bull_1d": [], "bull_4h": [], "bear_1d": [], "bear_4h": [], "total": 0}
-        date_filter = "AND date = ?"
-        params = (latest,)
-
-    # 从底部信号表取 BULL（空转多）
+    # 只查日线类型：历史遗留的 `_4H` 行按数据保留原则留在库里，但不参与任何查询结果
     bull_rows = conn.execute(
         "SELECT code, date, signal_type, strength, detail_json, created_at "
-        "FROM bottom_signal_log WHERE signal_type LIKE 'EMA_CROSS_BULL%' "
-        f"{date_filter} ORDER BY strength DESC",
-        params,
+        "FROM bottom_signal_log WHERE signal_type = 'EMA_CROSS_BULL_1D' AND date = ? "
+        "ORDER BY strength DESC",
+        (date,),
     ).fetchall()
 
     # 从顶部信号表取 BEAR（多转空）
     bear_rows = conn.execute(
         "SELECT code, date, signal_type, strength, detail_json, created_at "
-        "FROM top_signal_log WHERE signal_type LIKE 'EMA_CROSS_BEAR%' "
-        f"{date_filter} ORDER BY strength DESC",
-        params,
+        "FROM top_signal_log WHERE signal_type = 'EMA_CROSS_BEAR_1D' AND date = ? "
+        "ORDER BY strength DESC",
+        (date,),
     ).fetchall()
     conn.close()
 
@@ -726,12 +697,10 @@ def get_ema_cross_signals(
     bull_signals = _parse(bull_rows)
     bear_signals = _parse(bear_rows)
 
-    # 按维度分组
+    # 按维度分组（只保留日线）
     return {
-        "bull_1d": [s for s in bull_signals if s["signal_type"] == "EMA_CROSS_BULL_1D"],
-        "bull_4h": [s for s in bull_signals if s["signal_type"] == "EMA_CROSS_BULL_4H"],
-        "bear_1d": [s for s in bear_signals if s["signal_type"] == "EMA_CROSS_BEAR_1D"],
-        "bear_4h": [s for s in bear_signals if s["signal_type"] == "EMA_CROSS_BEAR_4H"],
+        "bull_1d": bull_signals,
+        "bear_1d": bear_signals,
         "total": len(bull_signals) + len(bear_signals),
     }
 
@@ -1413,7 +1382,7 @@ def _enhance_levels(
 @app.get("/api/analysis")
 def get_analysis(
     code: str,
-    ktype: str = Query(default="1d", pattern="^(1d|1w|4h)$"),
+    ktype: str = Query(default="1d", pattern="^(1d|1w)$"),
     date: str | None = Query(default=None, description="指定日期 YYYY-MM-DD，不传取最新"),
 ):
     """返回支撑/压力位、技术形态信号、趋势判断，辅助个股决策。

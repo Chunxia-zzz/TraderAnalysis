@@ -54,6 +54,17 @@ def test_daily_bar_at_exact_close_boundary():
     assert is_bar_closed("1d", "2026-10-16", "US.SPY", now_before) is False
 
 
+def test_daily_half_day_still_waits_until_1600():
+    """半日市（感恩节次日 / 平安夜）日线仍按 16:00 判定，会晚 3 小时入库。
+
+    方向安全——只晚、不写错。这是 4H 下线后仍然成立的行为，别顺手「优化」成 13:00。
+    """
+    assert is_bar_closed("1d", "2025-11-28", "US.SPY",
+                         datetime(2025, 11, 28, 13, 1, tzinfo=ET)) is False
+    assert is_bar_closed("1d", "2025-11-28", "US.SPY",
+                         datetime(2025, 11, 28, 16, 1, tzinfo=ET)) is True
+
+
 def test_daily_bar_kept_on_later_day():
     """周六回看周五 → 周五那根早已定稿。"""
     now = datetime(2026, 10, 17, 11, 28, tzinfo=ET)
@@ -103,7 +114,7 @@ def test_weekly_date_not_monday_still_normalized():
     assert is_bar_closed("1w", "2026-10-11", "US.SPY", now) is True
 
 
-# ── 4H（date 是 K 线结束时刻） ─────────────────────────────────────────────
+# ── 周线回填切片 ────────────────────────────────────────────────────────────
 
 
 def test_weekly_bar_usable_before_friday():
@@ -148,41 +159,6 @@ def test_filter_week_closed_empty_and_missing_column():
     assert filter_week_closed(None, "2026-10-30") is None
 
 
-def test_4h_bar_dropped_while_running():
-    """美东 12:19，13:30 那根还没走完 → 丢掉；前一天的保留。"""
-    now = datetime(2026, 10, 16, 12, 19, tzinfo=ET)
-    assert is_bar_closed("4h", "2026-10-16 13:30:00", "US.SPY", now) is False
-    assert is_bar_closed("4h", "2026-10-16 16:00:00", "US.SPY", now) is False
-    assert is_bar_closed("4h", "2026-10-15 16:00:00", "US.SPY", now) is True
-
-
-def test_4h_bar_kept_when_finished():
-    now = datetime(2026, 10, 16, 13, 31, tzinfo=ET)
-    assert is_bar_closed("4h", "2026-10-16 13:30:00", "US.SPY", now) is True
-    assert is_bar_closed("4h", "2026-10-16 16:00:00", "US.SPY", now) is False
-
-
-def test_4h_hk_bars():
-    now = datetime(2026, 10, 16, 12, 30, tzinfo=HKT)
-    assert is_bar_closed("4h", "2026-10-16 12:00:00", "HK.00700", now) is True
-    assert is_bar_closed("4h", "2026-10-16 16:00:00", "HK.00700", now) is False
-
-
-def test_4h_half_day_close_1300():
-    """半日市（2025-11-28 感恩节次日 / 2025-12-24 平安夜）4H 标签是 13:00，当天只有 1 根。
-
-    联网实测：500 根 SPY 4H 里恰好这 2 天是 13:00。
-    13:00 之后就该入库，不能死等 16:00。
-    """
-    assert is_bar_closed("4h", "2025-11-28 13:00:00", "US.SPY",
-                         datetime(2025, 11, 28, 12, 59, tzinfo=ET)) is False
-    assert is_bar_closed("4h", "2025-11-28 13:00:00", "US.SPY",
-                         datetime(2025, 11, 28, 13, 1, tzinfo=ET)) is True
-    # 同一天日线仍按 16:00 判定（半日市 1d 会晚 3 小时入库，方向安全）
-    assert is_bar_closed("1d", "2025-11-28", "US.SPY",
-                         datetime(2025, 11, 28, 13, 1, tzinfo=ET)) is False
-
-
 # ── 跨市场：同一时刻两侧结论相反 ────────────────────────────────────────────
 
 
@@ -194,8 +170,6 @@ def test_same_instant_us_intraday_hk_closed():
     now = datetime(2026, 10, 16, 12, 19, tzinfo=ET)
     assert is_bar_closed("1d", "2026-10-16", "US.SPY", now) is False
     assert is_bar_closed("1d", "2026-10-16", "HK.00700", now) is True
-    assert is_bar_closed("4h", "2026-10-16 16:00:00", "US.SPY", now) is False
-    assert is_bar_closed("4h", "2026-10-16 16:00:00", "HK.00700", now) is True
     assert is_bar_closed("1w", "2026-10-12", "US.SPY", now) is False
     assert is_bar_closed("1w", "2026-10-12", "HK.00700", now) is True
 
@@ -205,6 +179,17 @@ def test_same_instant_us_intraday_hk_closed():
 
 def test_unknown_ktype_always_kept():
     assert is_bar_closed("1m", "2026-10-16", "US.SPY", datetime.now(ET)) is True
+
+
+def test_4h_is_no_longer_policed():
+    """4H 已于 2026-11-08 下线（specs/002-remove-4h-cycle）。
+
+    采集端不再拉 4H，`is_bar_closed` 也不再为它维护收盘规则——未识别的 ktype 一律放行。
+    这条用例是**防回归锁**：若有人把 4H 规则悄悄加回来，它就会红。
+    """
+    now = datetime(2026, 10, 16, 12, 19, tzinfo=ET)
+    assert is_bar_closed("4h", "2026-10-16 13:30:00", "US.SPY", now) is True
+    assert is_bar_closed("4h", "2026-10-16 16:00:00", "HK.00700", now) is True
 
 
 def test_unparsable_value_kept():

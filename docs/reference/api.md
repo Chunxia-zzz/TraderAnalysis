@@ -1242,7 +1242,7 @@ export const getAssetTemperatureHistory = (asset, days = 60) =>
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `code` | string | 必填 | 标的代码，如 `US.MU` |
-| `ktype` | string | `"1d"` | `1d` \| `1w` \| `4h` |
+| `ktype` | string | `"1d"` | `1d` \| `1w`（`4h` 已于 2026-11-08 下线，传 `4h` 返回 422） |
 | `date` | string | 不传取最新 | 指定日期 `YYYY-MM-DD` |
 
 **响应 200**
@@ -1671,6 +1671,9 @@ assert stats["breakouts"] == len(breakouts)  # 各分组计数与 stats 一致
 | 只读保证 | 全部只读 | `/api/position`、`/api/allocation` 依赖本机 OpenD |
 | 鉴权 | 无 | 无（仍全开放） |
 
+> ⚠️ 勘误（2026-11-08）：上表 `ktype` 一行描述的是 v2 当时的能力。4H 已于本日下线，
+> **当前只支持 `1d` / `1w`**，传 `4h` 返回 422（见 `specs/002-remove-4h-cycle`）。
+
 ---
 
 ## 附录：市场温度字段速查
@@ -1983,22 +1986,23 @@ GET /api/trade-signals?code=US.AAPL&date=2026-07-08  → 查询历史信号
 
 ### GET `/api/ema-cross-signals`
 
-查询 EMA5/EMA30 交叉信号（日线+4H 双维度）。
+查询 EMA5/EMA30 交叉信号（**仅日线**）。
+
+> 4H 维度已于 2026-11-08 下线（`specs/002-remove-4h-cycle`）：不再计算、不再返回；
+> 库中历史 4H 信号保留，但读取层已过滤。
 
 **请求参数**
 
 | 参数 | 位置 | 类型 | 说明 |
 |------|------|------|------|
-| `date` | query | `string` | 可选，指定日期 YYYY-MM-DD。不传则返回最近一次 scan 的信号 |
+| `date` | query | `string` | 可选，指定日期 YYYY-MM-DD。不传则实时计算最新信号 |
 
 **响应示例**
 
 ```json
 {
   "bull_1d": [{"code": "US.GEV", "date": "2026-07-21", "signal_type": "EMA_CROSS_BULL_1D", "strength": 0.54, "detail": {"close": 1079.18, "ema5": 1064.24, "ema30": 1059.65, "spread_pct": 0.433}}],
-  "bull_4h": [],
   "bear_1d": [{"code": "US.ASML", "date": "2026-07-21", "signal_type": "EMA_CROSS_BEAR_1D", "strength": 0.51, "detail": {"close": 1739.02, "ema5": 1768.27, "ema30": 1769.61}}],
-  "bear_4h": [{"code": "US.CEG", "date": "2026-07-21", "signal_type": "EMA_CROSS_BEAR_4H", "strength": 0.50, "detail": {"close": 253.5, "ema5": 253.57, "ema30": 253.57}}],
   "total": 12
 }
 ```
@@ -2008,9 +2012,10 @@ GET /api/trade-signals?code=US.AAPL&date=2026-07-08  → 查询历史信号
 | signal_type | 含义 | 存入表 |
 |-------------|------|--------|
 | `EMA_CROSS_BULL_1D` | 日线 EMA5 上穿 EMA30（空转多） | bottom_signal_log |
-| `EMA_CROSS_BULL_4H` | 4H EMA5 上穿 EMA30（空转多） | bottom_signal_log |
 | `EMA_CROSS_BEAR_1D` | 日线 EMA5 下穿 EMA30（多转空） | top_signal_log |
-| `EMA_CROSS_BEAR_4H` | 4H EMA5 下穿 EMA30（多转空） | top_signal_log |
+
+> 历史行 `EMA_CROSS_*_4H` 仍在库中（各 295 / 331 条），但 `/api/top-signals`、
+> `/api/bottom-signals`、本端点均不再返回。
 
 ---
 
@@ -2093,6 +2098,9 @@ GET /api/trade-signals?code=US.AAPL&date=2026-07-08  → 查询历史信号
 
 ktype 正则扩展为 `^(1d|4h|1w)$`。4H 数据 date 字段自动转为 Unix 时间戳（秒），供图表正确显示时间轴。
 
+> ⚠️ 勘误（2026-11-08）：4H 已下线（`specs/002-remove-4h-cycle`），正则回退为 `^(1d|1w)$`，
+> 时间戳转换已删除；库中历史 4H 行保留但不再对外提供。
+
 ### GET `/api/analysis`（v3 更新）
 
 新增 `date` 参数、`dow_theory` 道氏三层趋势、`risk_reward` 盈亏比、patterns 中的 `confidence` 置信度、supports/resistances 中的 `is_key`/`pct`/`dow_context`。详见接口详情。
@@ -2100,6 +2108,8 @@ ktype 正则扩展为 `^(1d|4h|1w)$`。4H 数据 date 字段自动转为 Unix �
 ### GET `/api/analysis`（2026-10-12 更新）
 
 ktype 正则扩展为 `^(1d|4h|1w)$`（原先只支持 `1d|1w`），前端 K 线页的三个周期切换现均可用关键位标注。
+
+> ⚠️ 勘误（2026-11-08）：4H 已下线，正则现为 `^(1d|1w)$`，前端周期切换只剩日K / 周K。
 
 supports/resistances 每个元素新增三个字段，用于前端在 K 线图上定位与高亮关键位：
 

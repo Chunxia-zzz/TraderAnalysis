@@ -13,7 +13,7 @@
 | # | 功能 | 实现方式 |
 |---|------|---------|
 | F1 | 存储 K 线原始数据 + 全部技术指标值 | SQLite `kline_indicators` 表 |
-| F2 | 支持多标的、多周期（日线/周线/4小时）共存 | 主键 `(code, ktype, date)` |
+| F2 | 支持多标的、多周期（日线/周线）共存 | 主键 `(code, ktype, date)`；历史 4H 行保留但已冻结 |
 | F3 | 按标的+周期+日期范围快速查询 | 索引 `idx_code_ktype_date` |
 | F4 | 存储个股评分结果供 API 读取 | SQLite `score_results` 表 |
 | F5 | 存储大盘温度（市场评分）结果 | `market_score` + `market_score_detail` 表 |
@@ -121,8 +121,8 @@
 ```sql
 CREATE TABLE IF NOT EXISTS kline_indicators (
     code         TEXT NOT NULL,      -- 'HK.00700'
-    ktype        TEXT NOT NULL,      -- '1d' / '1w' / '4h'
-    date         TEXT NOT NULL,      -- '2026-04-14'（4h 为 'YYYY-MM-DD HH:MM:SS'）
+    ktype        TEXT NOT NULL,      -- '1d' / '1w'（'4h' 已于 2026-11-08 冻结：只读、不再新增）
+    date         TEXT NOT NULL,      -- '2026-04-14'（历史 4h 行为 'YYYY-MM-DD HH:MM:SS'）
     -- 原始 K 线
     open REAL, high REAL, low REAL, close REAL, volume REAL, turnover REAL,
     -- 均线
@@ -276,21 +276,21 @@ python -m trader_analysis.futu_strategy.daily_update
 执行流程：
   1. init_db()（幂等）
   2. for each code in 待更新标的:
-     a. 对每个周期（1d / 1w / 4h）调用 _update_ktype：
+     a. 对每个周期（1d / 1w）调用 _update_ktype：
         - last_date = get_latest_date(code, ktype)
           · last_date 为 None → 警告「请先运行 init_history.py」并跳过本周期
-        - 增量拉取根数 = min(max_count, {'1d': 30, '1w': 10, '4h': 60}[ktype])
+        - 增量拉取根数 = min(max_count, {'1d': 30, '1w': 10}[ktype])
           （只需覆盖约 1 个月缺口，避免浪费富途行情额度）
         - provider.get_kline(...) → 统一列名为 date（timestamp / time_key 均兼容）
-          · 4h 周期格式化为 'YYYY-MM-DD HH:MM:SS'
+          · 统一格式化为 'YYYY-MM-DD'
         - **丢弃尚未收盘的 K 线**：filter_closed_bars(new_df, ktype, code)
-          （规则见 `market_clock.py`：1d 需过本地 16:00、1w 需过周五 16:00、4h 需过其结束时刻）
+          （规则见 `market_clock.py`：1d 需过本地 16:00、1w 需过周五 16:00）
         - 过滤出比 last_date 更新的行；无新增 → 记录日志并跳过
         - history_df = query_recent(code, ktype, limit=300)
         - 拼接 history_df + new_df
         - merged_df = calc_indicators(merged, INDICATOR_CONFIG[ktype])
         - 只取新增行 → batch_upsert(code, ktype, new_rows)，日志打印新增根数
-  3. Futu API 限频：每 30 秒 60 次，每个标的 3 次请求（1d+1w+4h），代码内留有余量
+  3. Futu API 限频：每 30 秒 60 次，每个标的 2 次请求（1d+1w），代码内留有余量
   4. 输出更新摘要
 ```
 

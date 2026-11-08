@@ -173,9 +173,12 @@ DELETE FROM bottom_signal_log WHERE date = '2026-10-30';
 
 **原因**：美东盘中，当天日线还在走。
 
-**解法**：**代码已拦**（`market_clock.filter_closed_bars`，`1d` 过 16:00、`1w` 过周五 16:00、`4h` 过其结束时刻）。
+**解法**：**代码已拦**（`market_clock.filter_closed_bars`，`1d` 过 16:00、`1w` 过周五 16:00）。
 盘中跑只落到上一交易日属**正常**，报告里必须标明「数据日是哪天、是否盘中」。
 确需写入可加 `--allow-partial` 或 `TA_ALLOW_PARTIAL_BAR=1`（**不建议**：增量是 `date > last_date`，写进去永不覆盖）。
+
+> ⚠️ 勘误（2026-11-08）：4H 已于本日下线（`specs/002-remove-4h-cycle`），上文原先另有「`4h` 过其结束时刻」一条，
+> 现已随功能移除；4H 历史行保留但不参与更新与展示。
 
 ### 12. 回填后温度/评分虚高
 

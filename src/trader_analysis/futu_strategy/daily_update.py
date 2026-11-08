@@ -52,11 +52,11 @@ def _update_ktype(
     # 根据周期选择拉取函数
     from futu import KLType  # type: ignore[import]
 
-    _KTYPE_MAP = {"1d": KLType.K_DAY, "1w": KLType.K_WEEK, "4h": KLType.K_240M}
+    _KTYPE_MAP = {"1d": KLType.K_DAY, "1w": KLType.K_WEEK}
     kl_type = _KTYPE_MAP.get(ktype, KLType.K_DAY)
 
     # 增量更新只需拉最近一小段，避免浪费富途行情额度（覆盖约 1 个月缺口）
-    _INCREMENTAL_COUNT = {"1d": 30, "1w": 10, "4h": 60}
+    _INCREMENTAL_COUNT = {"1d": 30, "1w": 10}
     pull_count = min(max_count, _INCREMENTAL_COUNT.get(ktype, 30))
     new_df = provider.get_kline(
         quote_ctx, code, kl_type=kl_type, count=pull_count, timeframe=ktype
@@ -71,11 +71,7 @@ def _update_ktype(
 
     # 只保留比本地更新的行
     if "date" in new_df.columns:
-        if ktype == "4h":
-            # 4H K 线保留时间: "YYYY-MM-DD HH:MM:SS"
-            new_df["date"] = pd.to_datetime(new_df["date"]).dt.strftime("%Y-%m-%d %H:%M:%S")
-        else:
-            new_df["date"] = pd.to_datetime(new_df["date"]).dt.strftime("%Y-%m-%d")
+        new_df["date"] = pd.to_datetime(new_df["date"]).dt.strftime("%Y-%m-%d")
 
         # ⚠️ 先丢掉「尚未收盘」的那根（盘中跑 update 时 Futu 会返回当天进行中的 K 线）。
         #    增量落库是 `date > last_date`（严格大于），半截 K 线一旦写入**永远不会被覆盖**，
@@ -161,20 +157,11 @@ def run_update(codes: list[str], quote_ctx=None) -> None:
                     config.WEEKLY_KLINE_COUNT,
                     skip_stats,
                 )
-                _update_ktype(
-                    quote_ctx,
-                    provider,
-                    code,
-                    "4h",
-                    config.FOUR_HOUR_INDICATOR_CONFIG,
-                    config.INIT_4H_KLINE_COUNT,
-                    skip_stats,
-                )
 
             except Exception as exc:
                 logger.error(f"  {code} 增量更新失败：{exc}")
 
-            # Futu API 限频：每30秒60次，每个标的3次请求（1d+1w+4h），留余量
+            # Futu API 限频：每30秒60次，每个标的2次请求（1d+1w），留余量
             if idx < len(codes) - 1:
                 _time.sleep(1.5)
 

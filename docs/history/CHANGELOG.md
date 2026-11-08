@@ -4,6 +4,56 @@
 
 ---
 
+## [2026-11-08]
+
+### 下线 4H 周期：删除采集 / 策略 / 接口 / 前端入口，库中历史数据冻结保留
+
+**为什么删**：4H EMA5/EMA30 交叉（空转多 / 多转空）自 2026-07-21 上线后，实测没有边际价值。
+
+- 全库 4H 复算（50,395 根 / 199 只 / 2,592 次交叉）：空转多 10 根后 **−0.29%**（基准 +0.26%），
+  多转空 10 根后 **+0.85%**（方向相反），多空差在所有持有周期均为负，胜率 47–50%。
+  对照日线同口径：20 根多空差 **+1.78pp**、胜率 53.5%——日线仍有残余信息，4H 没有。
+- 采集本身还有结构性偏差：`scan-signals` 只判定「每个交易日最后一根 4H」，
+  而 **61.5%（1,594/2,592）的交叉发生在当日 13:30 / 12:00 那根**，永远采不到。
+- 成本：日更每标的 1 次 `K_240M` 请求（199 次/天，占 1/3 额度）；库里 56,166 行，约占 `kline_indicators` 的 43.5%。
+
+规范：`specs/002-remove-4h-cycle/`（spec / plan / tasks）。
+
+**改动范围**
+
+- **采集**：`daily_update` 只拉 `1d` / `1w`；删 `config.FOUR_HOUR_INDICATOR_CONFIG`、`INIT_4H_KLINE_COUNT`；
+  三条脚本（`refetch_klines` / `backfill_klines` / `verify_market_clock_live`）同步去 4H
+- **策略**：`ema_cross_detector` 收敛为日线单周期（删 `timeframe` 参数，信号固定 `_1D`）；
+  `scan-signals` 两条路径各删 4H 判定块
+- **接口**：`/api/indicators`、`/api/indicators/latest`、`/api/analysis` 的 `ktype` 收敛为 `^(1d|1w)$`（传 `4h` → 422）；
+  `/api/ema-cross-signals` 响应删 `bull_4h` / `bear_4h`；顶/底信号查询在 SQL 层加 `NOT LIKE '%4H%'` 过滤
+- **收盘规则**：`market_clock.is_bar_closed` 白名单收敛为 `1d/1w`，删 4H 分支与 `_to_local_datetime`
+- **前端**（独立仓库）：K 线页删 4H 周期选项；交易信号页删 4H 切换 tab、默认周期改日线、计数只算日线、清理 `.ema-tab` 死样式
+- **文档**：api / storage / architecture / troubleshooting / watchlist / data-fetcher / README 同步；
+  历史段落一律保留原文 + 加「⚠️ 勘误（2026-11-08）」
+
+**为什么保留库里的 4H 数据（不删不迁移）**
+
+删数据不可逆，而这 56,166 行 K 线与 626 条信号是「当初那套策略到底表现如何」的唯一原始凭证。
+它们冻结为只读：不再新增、不再计算、不再被任何接口返回。`trader-analysis init` 本来就不拉 4H，
+所以这批数据从一开始就只能靠日更累积——留着不增加任何运行成本。
+
+**测试数变化（97 → 95）**
+
+删 4 个 4H 用例（盘中拦截 / 收盘放行 / 港股时区 / 半日市 13:00），
+新增 2 个：`test_4h_is_no_longer_policed`（防 4H 规则被悄悄加回的回归锁）、
+`test_daily_half_day_still_waits_until_1600`（半日市 1d 仍按 16:00 判定）。
+数字下降是功能下线所致，不是覆盖率回退。
+
+**验证**
+
+- `pytest -q` **95 passed**
+- 接口：`/api/indicators?ktype=4h` → **422**、`/api/analysis?ktype=4h` → **422**；
+  `/api/ema-cross-signals` 键只剩 `bull_1d` / `bear_1d` / `total`；`/api/top-signals?days=90` 含 4H 记录 **0** 条
+- 数据：4H 行数 **56,166**（±0）、`min/max date` 不变、4H 信号 295 + 331 条仍在库；1d / 1w 行数不变
+- 策略：在库副本上跑 `scan-signals`，写入 8 条 EMA 信号全部为 `_1D`，4H 信号数 626 → 626（未增长）
+- 前端：`npm run build` 通过；两页人工走查无 4H 入口、默认日线、无控制台异常
+
 ## [2026-11-04]
 
 ### CI 首跑红灯排查：requirements-dev 只装依赖、不装项目本身

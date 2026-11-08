@@ -1,10 +1,10 @@
-"""一次性脚本：补全新标的 K 线数据 + 为所有标的拉取 4H K 线。
+"""一次性脚本：补全新标的的日线与周线 K 线数据。
 
-- 新标的（DB 中无日线）：拉取近 3 个月日线 + 周线 + 4H
-- 存量标的（DB 中已有日线）：只拉取近 3 个月 4H
+- 只处理 DB 中还没有日线的新标的（存量标的走日常 `trader-analysis update`）
+- 4H 周期已于 2026-11-08 下线（见 `specs/002-remove-4h-cycle`），本脚本不再处理
 
 用法:
-    python scripts/backfill_klines.py [--dry-run] [--only-4h]
+    python scripts/backfill_klines.py [--dry-run]
 """
 
 import sys
@@ -66,7 +66,10 @@ def fetch_history_kline(quote_ctx, code: str, kl_type, start: str, end: str) -> 
 
 
 def process_kline_df(df: pd.DataFrame, ktype: str, indicator_config: dict) -> pd.DataFrame:
-    """统一列名、格式化日期、计算指标。"""
+    """统一列名、格式化日期、计算指标。
+
+    `ktype` 只接受 `1d` / `1w`，两者都只保留日期部分。
+    """
     if df.empty:
         return df
 
@@ -74,13 +77,8 @@ def process_kline_df(df: pd.DataFrame, ktype: str, indicator_config: dict) -> pd
     if "time_key" in df.columns:
         df = df.rename(columns={"time_key": "date"})
 
-    # 日期格式化
-    if ktype == "4h":
-        # 4H 保留时间: "YYYY-MM-DD HH:MM:SS"
-        df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d %H:%M:%S")
-    else:
-        # 日线/周线只保留日期
-        df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+    # 日线/周线只保留日期
+    df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
 
     # 去重 + 排序
     df = df.drop_duplicates(subset=["date"], keep="last")
@@ -91,7 +89,7 @@ def process_kline_df(df: pd.DataFrame, ktype: str, indicator_config: dict) -> pd
     return df
 
 
-def run_backfill(dry_run: bool = False, only_4h: bool = False):
+def run_backfill(dry_run: bool = False):
     from futu import OpenQuoteContext, KLType
 
     init_db()
@@ -104,77 +102,47 @@ def run_backfill(dry_run: bool = False, only_4h: bool = False):
     codes = [r[0] for r in cur.fetchall()]
     conn.close()
 
-    # 分类：新标的 vs 存量
-    new_codes = []
-    existing_codes = []
-    for code in codes:
-        if get_latest_date(code, "1d") is None:
-            new_codes.append(code)
-        else:
-            existing_codes.append(code)
+    # 只有「DB 中无日线」的标的需要补历史
+    new_codes = [code for code in codes if get_latest_date(code, "1d") is None]
+    skipped = len(codes) - len(new_codes)
 
-    logger.info(f"标的池: {len(codes)} 只 (存量: {len(existing_codes)}, 新标的: {len(new_codes)})")
+    logger.info(f"标的池: {len(codes)} 只 (已有日线跳过: {skipped}, 待补: {len(new_codes)})")
     logger.info(f"日期范围: {THREE_MONTHS_AGO} ~ {TODAY}")
 
     if dry_run:
         logger.info("[DRY RUN] 不实际拉取")
-        logger.info(f"  新标的需拉取: 日线+周线+4H × {len(new_codes)} 只")
-        logger.info(f"  存量需拉取: 4H × {len(existing_codes)} 只")
+        logger.info(f"  新标的需拉取: 日线+周线 × {len(new_codes)} 只")
+        return
+
+    if not new_codes:
+        logger.info("所有标的均已有日线数据，无需补数")
         return
 
     quote_ctx = OpenQuoteContext(host=config.OPEND_HOST, port=config.OPEND_PORT)
 
     try:
-        total = len(codes)
+        total = len(new_codes)
         success = 0
         failed = 0
-        idx = 0
 
-        # ── Step 1: 新标的拉取日线+周线+4H ──
-        if not only_4h:
-            for code in new_codes:
-                idx += 1
-                logger.info(f"[{idx}/{total}] 新标的 {code} — 拉取日线+周线+4H")
-
-                try:
-                    # 日线
-                    df = fetch_history_kline(quote_ctx, code, KLType.K_DAY, THREE_MONTHS_AGO, TODAY)
-                    df = process_kline_df(df, "1d", config.DAILY_INDICATOR_CONFIG)
-                    n = batch_upsert(code, "1d", df) if not df.empty else 0
-                    logger.info(f"  日线: {n} 根")
-                    time.sleep(REQUEST_DELAY)
-
-                    # 周线
-                    df = fetch_history_kline(quote_ctx, code, KLType.K_WEEK, THREE_MONTHS_AGO, TODAY)
-                    df = process_kline_df(df, "1w", config.WEEKLY_INDICATOR_CONFIG)
-                    n = batch_upsert(code, "1w", df) if not df.empty else 0
-                    logger.info(f"  周线: {n} 根")
-                    time.sleep(REQUEST_DELAY)
-
-                    # 4H
-                    df = fetch_history_kline(quote_ctx, code, KLType.K_240M, THREE_MONTHS_AGO, TODAY)
-                    df = process_kline_df(df, "4h", config.FOUR_HOUR_INDICATOR_CONFIG)
-                    n = batch_upsert(code, "4h", df) if not df.empty else 0
-                    logger.info(f"  4H: {n} 根")
-                    time.sleep(REQUEST_DELAY)
-
-                    success += 1
-                except Exception as e:
-                    failed += 1
-                    logger.error(f"  {code} 失败: {e}")
-                    time.sleep(REQUEST_DELAY)
-
-        # ── Step 2: 存量标的只拉取 4H ──
-        for code in existing_codes:
-            idx += 1
-            logger.info(f"[{idx}/{total}] 存量 {code} — 拉取 4H")
+        for idx, code in enumerate(new_codes, 1):
+            logger.info(f"[{idx}/{total}] 新标的 {code} — 拉取日线+周线")
 
             try:
-                df = fetch_history_kline(quote_ctx, code, KLType.K_240M, THREE_MONTHS_AGO, TODAY)
-                df = process_kline_df(df, "4h", config.FOUR_HOUR_INDICATOR_CONFIG)
-                n = batch_upsert(code, "4h", df) if not df.empty else 0
-                logger.info(f"  4H: {n} 根")
+                # 日线
+                df = fetch_history_kline(quote_ctx, code, KLType.K_DAY, THREE_MONTHS_AGO, TODAY)
+                df = process_kline_df(df, "1d", config.DAILY_INDICATOR_CONFIG)
+                n = batch_upsert(code, "1d", df) if not df.empty else 0
+                logger.info(f"  日线: {n} 根")
                 time.sleep(REQUEST_DELAY)
+
+                # 周线
+                df = fetch_history_kline(quote_ctx, code, KLType.K_WEEK, THREE_MONTHS_AGO, TODAY)
+                df = process_kline_df(df, "1w", config.WEEKLY_INDICATOR_CONFIG)
+                n = batch_upsert(code, "1w", df) if not df.empty else 0
+                logger.info(f"  周线: {n} 根")
+                time.sleep(REQUEST_DELAY)
+
                 success += 1
             except Exception as e:
                 failed += 1
@@ -191,5 +159,4 @@ def run_backfill(dry_run: bool = False, only_4h: bool = False):
 
 if __name__ == "__main__":
     dry_run = "--dry-run" in sys.argv
-    only_4h = "--only-4h" in sys.argv
-    run_backfill(dry_run=dry_run, only_4h=only_4h)
+    run_backfill(dry_run=dry_run)

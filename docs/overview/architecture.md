@@ -87,7 +87,7 @@ src/trader_analysis/
     ├── technical_analysis.py # 道氏三层趋势 + 支撑/压力（Swing Pivot 聚类）+ 盈亏比
     ├── top_detector.py       # 顶部信号检测
     ├── bottom_detector.py    # 底部信号检测
-    ├── ema_cross_detector.py # EMA5/30 交叉检测
+    ├── ema_cross_detector.py # EMA5/30 交叉检测（仅日线；4H 已于 2026-11-08 下线）
     ├── livermore_detector.py # 利弗莫尔关键点（独立信号体系，2026-10-12 新增）
     ├── trade_executor.py     # 模拟盘交易执行（限价单 + 持仓检查）
     ├── sell_executor.py      # 卖出执行

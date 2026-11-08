@@ -64,7 +64,7 @@ Futu（富途）量化评分与模拟盘交易系统。核心链路：**Futu Ope
 | `specs/` | **事前意图**：每个 feature 一个 `NNN-<ascii-slug>/`（spec / plan / tasks），见 `specs/README.md` |
 | `skills/` | 技能唯一真相源，见 §7 |
 | `scripts/` | 运维与一次性脚本；`scripts/agent/` 是 agent 相关工具 |
-| `tests/` | pytest，当前 **97 项** |
+| `tests/` | pytest，当前 **95 项** |
 
 ## 4. clone 后第一件事
 

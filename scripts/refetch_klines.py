@@ -15,7 +15,7 @@
 
 用法
 ----
-    # 重拉指定标的（日线 1000 根 / 周线 300 根 / 4H 1000 根）
+    # 重拉指定标的（日线 1000 根 / 周线 300 根）
     python scripts/refetch_klines.py US.APH HK.07709 US.KORU US.SOXL US.GDXU
 
     # 只看会做什么，不落库
@@ -47,7 +47,6 @@ from trader_analysis.futu_strategy.storage import batch_upsert, init_db  # noqa:
 KTYPE_SPECS = [
     ("1d", "K_DAY", lambda: config.DAILY_INDICATOR_CONFIG, 1000),
     ("1w", "K_WEEK", lambda: config.WEEKLY_INDICATOR_CONFIG, 300),
-    ("4h", "K_240M", lambda: config.FOUR_HOUR_INDICATOR_CONFIG, 1000),
 ]
 
 REQUEST_DELAY = 1.0
@@ -120,10 +119,7 @@ def process_kline_df(
         return df
     if "time_key" in df.columns:
         df = df.rename(columns={"time_key": "date"})
-    if ktype == "4h":
-        df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d %H:%M:%S")
-    else:
-        df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+    df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
     df = df.drop_duplicates(subset=["date"], keep="last")
     df = df.sort_values("date").reset_index(drop=True)
     # 重拉会先 wipe 再写全量，若在盘中执行会把当天半截 K 线一起写回 → 这里同样拦掉
@@ -148,7 +144,7 @@ def main() -> None:
     ap.add_argument("codes", nargs="+", help="标的代码，如 US.APH HK.07709")
     ap.add_argument("--dry-run", action="store_true", help="不落库，仅预览")
     ap.add_argument(
-        "--ktypes", default="1d,1w,4h", help="要重拉的周期，逗号分隔（默认 1d,1w,4h）"
+        "--ktypes", default="1d,1w", help="要重拉的周期，逗号分隔（默认 1d,1w）"
     )
     args = ap.parse_args()
 

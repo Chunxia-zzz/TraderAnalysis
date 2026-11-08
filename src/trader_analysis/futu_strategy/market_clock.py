@@ -22,23 +22,22 @@
 |---|---|---|
 | `1d` | 交易日 | 本地时间已过该日 **16:00** |
 | `1w` | 该周**周一** | 本地时间已过该周**周五 16:00** |
-| `4h` | K 线**结束**时刻 | 本地时间已过该时刻 |
 
 ## 已验证的事实（2026-10-17 联网实测，别改回去）
 
-- **4H 的 `date` 是 K 线结束时刻，不是开始时刻**：
-  美股 SPY 每天两根 = `13:30` + `16:00`（09:30–13:30 → 13:30；13:30–16:00 → 16:00），
-  港股 00700 = `12:00` + `16:00`（09:30–12:00 → 12:00；13:00–16:00 → 16:00）。
-  500 根 SPY 4H 的标签分布 = `13:30`×249 / `16:00`×249 / **`13:00`×2**，
-  那 2 根分别是 **2025-11-28（感恩节次日）** 与 **2025-12-24（平安夜）** 的半日市，当天只有 1 根。
-  若哪天发现 label 实际是开始时刻，最坏结果只是**晚 4 小时入库**，不会写入半截数据，安全。
 - **美股与港股收盘都是本地 16:00**，所以 1d/1w 可以共用同一个收盘时刻常量。
-- **半日市**：4H 因标签本身就是 `13:00`，所以准时入库；"""
- """但 **1d 会等到本地 16:00 才入库**（晚 3 小时）。
+- **半日市**：**1d 会等到本地 16:00 才入库**（晚 3 小时）。
   方向安全——只会晚、不会写半截，因此不为它单独维护节假日表。
 - **时区分支必须生效**：同一时刻（美东周五 12:19 = 香港周六 00:19）美股在盘中要拦、
   港股已收盘要放行。联网验证里专门测了这一条。
 - 时区用 `zoneinfo`（本机已装 tzdata 2026.2）；`HK.` 前缀走香港时区，其余按美股处理。
+
+## 已下线的周期
+
+**4H 已于 2026-11-08 下线**（见 `specs/002-remove-4h-cycle`）：不再拉取、不再计算、不再对外提供。
+库中历史 4H 行保留，但本模块**不再为它维护收盘规则**——未识别的 `ktype` 一律放行。
+若日后恢复 4H 采集，必须同时把「4H 的 `date` 是 K 线结束时刻」这条规则加回来，
+否则半截 K 线会直接落库。
 
 ## 关闭方式
 
@@ -122,21 +121,6 @@ def _to_date(value: object) -> date | None:
         return None
 
 
-def _to_local_datetime(value: object) -> datetime | None:
-    """把 'YYYY-MM-DD HH:MM:SS' 解析成**无时区**的本地市场时间，失败返回 None。"""
-    if isinstance(value, datetime):
-        return value.replace(tzinfo=None) if value.tzinfo else value
-    text = str(value or "").strip()
-    if not text:
-        return None
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
-        try:
-            return datetime.strptime(text, fmt)
-        except ValueError:
-            continue
-    return None
-
-
 def is_bar_closed(
     ktype: str,
     bar_value: object,
@@ -146,7 +130,7 @@ def is_bar_closed(
     """判断一根 K 线是否已收盘定稿。
 
     Args:
-        ktype: `1d` / `1w` / `4h`（其他类型一律视为已收盘，不受本约束）。
+        ktype: `1d` / `1w`（其他类型一律视为已收盘，不受本约束）。
         bar_value: 该行的 `date`，格式随 ktype 而定（见模块文档表格）。
         code: 标的代码，用于选时区（`HK.` 前缀走香港）。
         now: 注入的当前时间（带时区），默认取真实时间。仅供测试。
@@ -157,7 +141,7 @@ def is_bar_closed(
     解析失败时**放行**（返回 True）：宁可多写一根历史 K 线，也不要因为格式意外
     把整批数据静默丢掉。
     """
-    if ktype not in ("1d", "1w", "4h"):
+    if ktype not in ("1d", "1w"):
         return True
 
     current = now_in_market(code, now)
@@ -181,12 +165,6 @@ def is_bar_closed(
         monday = d - timedelta(days=d.weekday())
         close_at = datetime.combine(monday + timedelta(days=4), time(CLOSE_HOUR), tzinfo=tz)
         return current >= close_at
-
-    # 4h：date 是 K 线结束时刻（本地市场时间）
-    ts = _to_local_datetime(bar_value)
-    if ts is None:
-        return True
-    return current >= ts.replace(tzinfo=tz)
 
 
 def filter_closed_bars(

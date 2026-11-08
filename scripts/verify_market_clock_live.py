@@ -4,6 +4,9 @@
 只把「当前时间」注入成假的盘中时刻，落库指向一个临时 DB 副本，
 这样既能验证真实 Futu 返回的 K 线格式，又不会污染生产库。
 
+周期范围：只验 `1d` / `1w`。4H 已于 2026-11-08 下线（`specs/002-remove-4h-cycle`），
+不再拉取、不再校验。
+
 跑法：
     .venv/Scripts/python.exe scripts/verify_market_clock_live.py
 """
@@ -36,13 +39,14 @@ from trader_analysis.futu_strategy.daily_update import _update_ktype  # noqa: E4
 from trader_analysis.futu_strategy.providers import FutuLiveDataProvider  # noqa: E402
 
 ET = ZoneInfo("America/New_York")
-HKT = ZoneInfo("Asia/Hong_Kong")
 FAKE_INTRADAY = datetime(2026, 10, 16, 12, 19, tzinfo=ET)  # 周五美东盘中（本次踩坑的真实时刻）
 
 CODES = ["US.SPY", "US.AAPL", "HK.00700"]
 BAR_DATE = "2026-10-16"     # 目标交易日
 WEEK_MONDAY = "2026-10-12"  # 该周周线 date
 BACKDATE = "2026-10-15"     # 把库回退到的「上一交易日」
+
+KTYPES = ("1d", "1w")
 
 ok = fail = 0
 
@@ -62,19 +66,8 @@ def reset_db() -> None:
     c = sqlite3.connect(str(_TMP_DB), timeout=30)
     c.execute("delete from kline_indicators where ktype='1d' and date>=?", (BAR_DATE,))
     c.execute("delete from kline_indicators where ktype='1w' and date>=?", (WEEK_MONDAY,))
-    c.execute("delete from kline_indicators where ktype='4h' and date>=?", (BAR_DATE,))
     c.commit()
     c.close()
-
-
-def rows(code: str, ktype: str) -> list[str]:
-    c = sqlite3.connect(str(_TMP_DB), timeout=30)
-    r = [x[0] for x in c.execute(
-        "select date from kline_indicators where ktype=? and (code=? or code=?) and date>=? order by date",
-        (ktype, code, code.replace("US.", ""), BAR_DATE if ktype != "1w" else WEEK_MONDAY),
-    )]
-    c.close()
-    return r
 
 
 def latest(code: str, ktype: str) -> str | None:
@@ -110,7 +103,7 @@ def main() -> int:
         print("\n[1] 真实 K 线格式（date 语义）")
         seq = {}
         for code in CODES:
-            for ktype, kl in (("1d", KLType.K_DAY), ("1w", KLType.K_WEEK), ("4h", KLType.K_240M)):
+            for ktype, kl in (("1d", KLType.K_DAY), ("1w", KLType.K_WEEK)):
                 df = provider.get_kline(ctx, code, kl_type=kl, count=12, timeframe=ktype)
                 col = "date" if "date" in df.columns else ("timestamp" if "timestamp" in df.columns else "time_key")
                 vals = [str(v) for v in df[col].tolist()]
@@ -118,16 +111,6 @@ def main() -> int:
                 tail = vals[-3:]
                 print(f"    {code:9s} {ktype:2s} n={len(vals):2d} 末尾={tail}")
 
-        # 4H 的 date 应当是「结束时刻」：美股 13:30 / 16:00（半日市 13:00），港股 12:00 / 16:00
-        us4h = [v[11:16] for v in seq[("US.SPY", "4h")]]
-        check(all(t in ("13:00", "13:30", "16:00") for t in us4h),
-              f"美股 4H 标签是结束时刻 13:30/16:00、半日市 13:00（实际 {sorted(set(us4h))}）")
-        half_days = sorted({v[:10] for v in seq[("US.SPY", "4h")] if v[11:16] == "13:00"})
-        print(f"       其中 13:00 的日期（应为半日市）= {half_days}")
-        check(all(h in ("2025-11-28", "2025-12-24") for h in half_days),
-              f"13:00 全部是已知半日市（感恩节次日/平安夜）：{half_days}")
-        hk4h = [v[11:16] for v in seq[("HK.00700", "4h")]]
-        check(all(t in ("12:00", "16:00") for t in hk4h), f"港股 4H 标签是结束时刻 12:00/16:00（实际 {sorted(set(hk4h))}）")
         # 周线 date 应是周一
         for code in CODES:
             wk = seq[(code, "1w")]
@@ -139,7 +122,7 @@ def main() -> int:
         now_real = datetime.now(ZoneInfo("UTC"))
         print(f"    当前 UTC={now_real:%Y-%m-%d %H:%M}  美东={now_real.astimezone(ET):%Y-%m-%d %H:%M %A}")
         for code in CODES:
-            for ktype in ("1d", "1w", "4h"):
+            for ktype in KTYPES:
                 vals = seq[(code, ktype)]
                 dropped = [v for v in vals if not market_clock.is_bar_closed(ktype, v, code)]
                 check(not dropped, f"{code} {ktype} 无丢弃（若丢弃：{dropped[:3]}）")
@@ -155,8 +138,7 @@ def main() -> int:
 
         patch_now(FAKE_INTRADAY)
         cfg_map = {"1d": (config.DAILY_INDICATOR_CONFIG, config.DAILY_KLINE_COUNT),
-                   "1w": (config.WEEKLY_INDICATOR_CONFIG, config.WEEKLY_KLINE_COUNT),
-                   "4h": (config.FOUR_HOUR_INDICATOR_CONFIG, config.INIT_4H_KLINE_COUNT)}
+                   "1w": (config.WEEKLY_INDICATOR_CONFIG, config.WEEKLY_KLINE_COUNT)}
         stats: dict = {"count": 0, "kinds": set()}
         written = {}
         for code in CODES:
@@ -167,12 +149,10 @@ def main() -> int:
 
         check(callable(market_clock.allow_partial_bar) and not market_clock.allow_partial_bar(),
               "TA_ALLOW_PARTIAL_BAR 关闭（默认拦截）")
-        # 美股：三个周期全部拦住
+        # 美股：两个周期全部拦住
         for code in ("US.SPY", "US.AAPL"):
             check(latest(code, "1d") == BACKDATE, f"{code}（美股盘中）1d 被拦住，仍 {latest(code, '1d')}")
-            check(all(written[(code, k)] == 0 for k in cfg_map), f"{code} 1d/1w/4h 写入数全为 0")
-            got = rows(code, "4h")
-            check(not any(v.startswith(BAR_DATE) for v in got), f"{code} 4h 无 {BAR_DATE} 的行（{'空' if not got else got[-2:]}）")
+            check(all(written[(code, k)] == 0 for k in cfg_map), f"{code} 1d/1w 写入数全为 0")
         # 港股：同一时刻已收盘，必须放行（时区分支生效的反证）
         check(written[("HK.00700", "1d")] >= 1, f"HK.00700（已收盘）1d 正常写入 {written[('HK.00700', '1d')]} 根")
         check(latest("HK.00700", "1d") == BAR_DATE, f"HK.00700 1d 最新 = {latest('HK.00700', '1d')}")
@@ -191,11 +171,7 @@ def main() -> int:
         for code in ("US.SPY", "US.AAPL"):
             check(written2[(code, "1d")] >= 1, f"{code} 1d 正常写入 {written2[(code, '1d')]} 根")
             check(latest(code, "1d") == BAR_DATE, f"{code} 1d 最新 = {latest(code, '1d')}")
-            got4 = [v for v in rows(code, "4h") if v.startswith(BAR_DATE)]
-            check(len(got4) >= 1, f"{code} 4h 已写入 {BAR_DATE} 共 {len(got4)} 根：{[v[11:16] for v in got4]}")
         check(stats2["count"] == 0, f"收盘后不再拦截（count={stats2['count']}）")
-        got4 = [v for v in rows("HK.00700", "4h") if v.startswith(BAR_DATE)]
-        check(len(got4) >= 1, f"HK.00700 4h 保留 {BAR_DATE} 共 {len(got4)} 根：{[v[11:16] for v in got4]}")
 
         # ── 第 5 部分：TA_ALLOW_PARTIAL_BAR=1 开关应恢复旧行为 ───────────────────
         print("\n[5] 开关 TA_ALLOW_PARTIAL_BAR=1 时恢复旧行为（不拦截）")

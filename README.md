@@ -201,7 +201,7 @@ trader-analysis run
 | GET | `/health` | 健康检查 |
 | GET | `/api/watchlist` | 标的池（含晨星折价、最新收盘价、分类标签） |
 | GET | `/api/watchlist/{code}` | 单个标的信息 |
-| GET | `/api/indicators?code=US.AAPL&ktype=1d&days=60` | K 线 + 技术指标（支持 1d/4h/1w） |
+| GET | `/api/indicators?code=US.AAPL&ktype=1d&days=60` | K 线 + 技术指标（支持 1d/1w） |
 | GET | `/api/indicators/latest?code=US.AAPL` | 最新一根指标值 |
 | GET | `/api/scores/latest?code=US.AAPL` | 个股 6 因子评分（支持日期筛选） |
 | GET | `/api/scores/overview` | 全标的评分速览（含动量分+MA5确认） |

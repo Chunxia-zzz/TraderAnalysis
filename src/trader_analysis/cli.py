@@ -735,9 +735,6 @@ def scan_signals(
             if daily_all.empty or len(daily_all) < 60:
                 continue
 
-            # 4H 数据（用于 EMA 交叉回溯）
-            four_h_all = query_recent(code, "4h", limit=backfill * 2 + 100)
-
             total_rows = len(daily_all)
             fill_count = min(backfill, total_rows - 30)
 
@@ -767,7 +764,7 @@ def scan_signals(
                         pass
 
                 # EMA 交叉 — 日线
-                ema_sigs_1d = detect_ema_cross(daily_slice, timeframe="1d")
+                ema_sigs_1d = detect_ema_cross(daily_slice)
                 for sig in ema_sigs_1d:
                     try:
                         if "BULL" in sig.signal_type:
@@ -781,29 +778,6 @@ def scan_signals(
                         total_ema += 1
                     except Exception:
                         pass
-
-                # EMA 交叉 — 4H（找到该日期对应的最后一根 4H K 线位置）
-                if not four_h_all.empty and len(four_h_all) >= 2:
-                    # 4H date 格式为 "YYYY-MM-DD HH:MM:SS"，截取日期部分匹配
-                    mask = four_h_all["date"].str[:10] <= signal_date
-                    four_h_slice = four_h_all[mask]
-                    if len(four_h_slice) >= 2:
-                        ema_sigs_4h = detect_ema_cross(four_h_slice, timeframe="4h")
-                        for sig in ema_sigs_4h:
-                            try:
-                                if "BULL" in sig.signal_type:
-                                    insert_bottom_signal(
-                                        code, signal_date, sig.signal_type, sig.strength,
-                                        sig.detail,
-                                    )
-                                else:
-                                    insert_top_signal(
-                                        code, signal_date, sig.signal_type, sig.strength,
-                                        sig.detail,
-                                    )
-                                total_ema += 1
-                            except Exception:
-                                pass
 
         typer.echo(
             f"回溯完成，写入 {total_top} 条顶部信号，{total_bottom} 条底部信号，"
@@ -856,8 +830,6 @@ def scan_signals(
         if daily_all.empty or len(daily_all) < 30:
             continue
 
-        four_h_all = query_recent(code, "4h", limit=120)
-
         kline_latest = str(daily_all.iloc[-1].get("date", ""))
 
         # 查该标的信号表最新日期（顶部 + 底部取更晚者）
@@ -905,7 +877,7 @@ def scan_signals(
                     pass
 
             # EMA 交叉信号 — 日线维度
-            ema_sigs_1d = detect_ema_cross(daily_slice, timeframe="1d")
+            ema_sigs_1d = detect_ema_cross(daily_slice)
             for sig in ema_sigs_1d:
                 try:
                     if "BULL" in sig.signal_type:
@@ -919,28 +891,6 @@ def scan_signals(
                     ema_count += 1
                 except Exception:
                     pass
-
-            # EMA 交叉信号 — 4H 维度（找到该日期对应的最后一根 4H K 线位置）
-            if not four_h_all.empty and len(four_h_all) >= 2:
-                mask = four_h_all["date"].str[:10] <= signal_date
-                four_h_slice = four_h_all[mask]
-                if len(four_h_slice) >= 2:
-                    ema_sigs_4h = detect_ema_cross(four_h_slice, timeframe="4h")
-                    for sig in ema_sigs_4h:
-                        try:
-                            if "BULL" in sig.signal_type:
-                                insert_bottom_signal(
-                                    code, signal_date, sig.signal_type, sig.strength,
-                                    sig.detail,
-                                )
-                            else:
-                                insert_top_signal(
-                                    code, signal_date, sig.signal_type, sig.strength,
-                                    sig.detail,
-                                )
-                            ema_count += 1
-                        except Exception:
-                            pass
 
     typer.echo(
         f"完成，写入 {top_count} 条顶部信号，{bottom_count} 条底部信号，"
