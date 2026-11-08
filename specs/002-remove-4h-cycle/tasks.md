@@ -102,7 +102,7 @@
 - [x] T037 接口校验：`/api/indicators?ktype=4h` → 422、`/api/analysis?ktype=4h` → 422、
       `/api/ema-cross-signals` 键仅 `bull_1d`/`bear_1d`/`total`、`/api/top-signals?days=90` 含 4H = 0
 - [x] T038 日更校验：`scan-signals` 在库副本上验证（4H 不增长、1D 正常写入）
-- [ ] T039 前端浏览器走查：需用户强刷（Ctrl+Shift+R）后确认两页无 4H 入口、无空状态、无控制台异常
+- [x] T039 前端浏览器走查：用户已本地（8001 后端 + 5173 代理）与线上（47.106.175.84）确认无 4H 入口、无空状态
 - [x] T040 `python scripts/agent/sync_skills.py --check` → 3 技能 × 3 目标全部一致
 - [x] T041 spec.md 状态更新为 Implemented
 
@@ -118,5 +118,4 @@
 
 ## 遗留
 
-- **T039**：浏览器逐页走查未自动化（本机无浏览器自动化通道），已用「构建通过 + 产物无 4H 字符串 + 源码无 4H 入口」替代。
-  仍需用户在强刷后确认一次。
+无。T039 已由用户人工走查确认（2026-11-08 晚）。
