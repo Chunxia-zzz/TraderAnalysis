@@ -1,21 +1,26 @@
 """市场温度评分模块。
 
-通过 3 个维度加权评估市场情绪冷热程度，输出综合评分（0~100）及目标仓位建议。
+按**指数**独立评估情绪冷热：SPY 与 QQQ 各一套三维温度，各给各的状态与仓位建议。
 评分越高=越恐慌=越值得加仓，评分越低=越贪婪=应减仓。
 （2026-10-19 镜像反转：与个股评分 total_score 同向，高分=机会，子项均为「越恐慌分越高」）
 
 维度：日线技术面(50%) + 周线技术面(35%) + 价格位置(15%)
+两个指数**共用同一套阈值**，因此两个分数可跨指数直接比较，差值即「温差」。
+
+> 2026-11-10 起口径变更：原先 SPY 与 QQQ 在每个维度上各占 50% 合并成一个「大盘温度」，
+> 分化被抹平。现已拆为两个独立温度；合并值退役，`market_score` 表只保留历史、不再写入。
+> 个股评分的「恐慌加成」仍取两指数温度的平均，以保持 `total_score` 与变更前等价。
+
 数据来源：完全从 storage 读取已入库的 K 线 + 指标，不调用 Futu API。
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import date as dt_date
 
 import pandas as pd
 
-from trader_analysis.futu_strategy import config, market_clock, storage
+from trader_analysis.futu_strategy import market_clock, storage
 
 logger = logging.getLogger(__name__)
 
@@ -82,148 +87,6 @@ def _map_position(composite: float, heavy_extreme: bool, light_extreme: bool) ->
     return _clamp(30 + composite * (55.0 / 75), 30, 85)
 
 
-# ── 维度 1：日线技术面 (50%) ──────────────────────────────────────────────────
-
-
-def _score_daily_tech(spy_df: pd.DataFrame, qqq_df: pd.DataFrame) -> dict:
-    """
-    SPY + QQQ 各 3 项：RSI score + MACD percentile + BB %B score。
-    取 6 项算术平均。方向：越恐慌（RSI 低/MACD 低/%B 低）分越高。
-    """
-    scores = []
-    breakdown = {}
-
-    for label, df in [("SPY", spy_df), ("QQQ", qqq_df)]:
-        last = df.iloc[-1]
-        # RSI score: 分档制镜像，每 10 点一档（<10→100, 10-20→90, ..., >90→0）
-        rsi = float(last.get("rsi6", 50))
-        rsi_score = _clamp(100 - int(rsi / 10) * 10.0)
-        scores.append(rsi_score)
-        breakdown[f"{label}_RSI"] = round(rsi, 1)
-        breakdown[f"{label}_RSI_score"] = round(rsi_score, 1)
-
-        # MACD histogram percentile (lookback=252)：百分位越低（越弱）分越高
-        macd_series = df["macd"].dropna()
-        macd_current = float(last.get("macd", 0))
-        macd_pct = _percentile_rank(macd_series, macd_current, 252)
-        macd_score = (1 - macd_pct) * 100
-        scores.append(macd_score)
-        breakdown[f"{label}_MACD_score"] = round(macd_score, 1)
-
-        # Bollinger %B score: 越靠近下轨分越高
-        close = float(last.get("close", 0))
-        upper = float(last.get("boll_upper", 0))
-        lower = float(last.get("boll_lower", 0))
-        pct_b = _calc_pct_b(close, upper, lower)
-        bb_score = _clamp((1 - pct_b) * 100)
-        scores.append(bb_score)
-        breakdown[f"{label}_BB_pctB"] = round(pct_b, 3)
-        breakdown[f"{label}_BB_score"] = round(bb_score, 1)
-
-    final = sum(scores) / len(scores) if scores else NEUTRAL_SCORE
-    return {"score": final, "breakdown": breakdown}
-
-
-# ── 维度 2：周线技术面 (35%) ──────────────────────────────────────────────────
-
-
-def _score_weekly_tech(spy_weekly: pd.DataFrame, qqq_weekly: pd.DataFrame) -> dict:
-    """
-    SPY + QQQ 各 3 项：周线 RSI score + 周线 MACD percentile + 周线 BB %B。
-    取 6 项算术平均。方向：越恐慌分越高。
-    """
-    scores = []
-    breakdown = {}
-
-    for label, df in [("SPY", spy_weekly), ("QQQ", qqq_weekly)]:
-        last = df.iloc[-1]
-        # Weekly RSI score: 分档制镜像（<10→100, 10-20→90, ..., >90→0）
-        rsi = float(last.get("rsi6", 50))
-        rsi_score = _clamp(100 - int(rsi / 10) * 10.0)
-        scores.append(rsi_score)
-        breakdown[f"{label}_Weekly_RSI"] = round(rsi, 1)
-        breakdown[f"{label}_Weekly_RSI_score"] = round(rsi_score, 1)
-
-        # Weekly MACD histogram percentile (lookback=52)：百分位越低分越高
-        macd_series = df["macd"].dropna()
-        macd_current = float(last.get("macd", 0))
-        macd_pct = _percentile_rank(macd_series, macd_current, 52)
-        macd_score = (1 - macd_pct) * 100
-        scores.append(macd_score)
-        breakdown[f"{label}_Weekly_MACD_score"] = round(macd_score, 1)
-
-        # Weekly Bollinger %B score: 越靠近下轨分越高
-        close = float(last.get("close", 0))
-        upper = float(last.get("boll_upper", 0))
-        lower = float(last.get("boll_lower", 0))
-        pct_b = _calc_pct_b(close, upper, lower)
-        bb_score = _clamp((1 - pct_b) * 100)
-        scores.append(bb_score)
-        breakdown[f"{label}_Weekly_BB_pctB"] = round(pct_b, 3)
-        breakdown[f"{label}_Weekly_BB_score"] = round(bb_score, 1)
-
-    final = sum(scores) / len(scores) if scores else NEUTRAL_SCORE
-    return {"score": final, "breakdown": breakdown}
-
-
-# ── 维度 3：价格位置 (15%) ───────────────────────────────────────────────────
-
-
-def _score_price_position(spy_df: pd.DataFrame, qqq_df: pd.DataFrame) -> dict:
-    """
-    SPY + QQQ 各 3 项：52w 位置 + ATH 回撤 + MA200 偏离度。
-    取 6 项算术平均。方向：价格越低（52w 位置低/回撤深/偏离 MA200 为负）分越高。
-    """
-    scores = []
-    breakdown = {}
-
-    for label, df in [("SPY", spy_df), ("QQQ", qqq_df)]:
-        current_price = float(df.iloc[-1]["close"])
-        breakdown[f"{label}_price"] = round(current_price, 2)
-
-        # 52-week position: from last 252 bars（位置越低分越高）
-        recent_252 = df.tail(252)
-        high_52w = float(recent_252["high"].max())
-        low_52w = float(recent_252["low"].min())
-        if high_52w > low_52w:
-            pos_52w = (current_price - low_52w) / (high_52w - low_52w)
-        else:
-            pos_52w = 0.5
-        score_52w = _clamp((1 - pos_52w) * 100)
-        scores.append(score_52w)
-        breakdown[f"{label}_52w_score"] = round(score_52w, 1)
-
-        # ATH drawdown: max(high) across ALL stored bars
-        # 满分线 15%：大盘回撤 15% 即满分恐慌（SPY 正常回调 5-10%）
-        ath = float(df["high"].max())
-        drawdown = (ath - current_price) / ath if ath > 0 else 0
-        ath_score = _clamp(drawdown / 0.15 * 100)
-        scores.append(ath_score)
-        breakdown[f"{label}_ATH_drawdown"] = round(drawdown, 4)
-        breakdown[f"{label}_ATH_score"] = round(ath_score, 1)
-
-        # MA200 deviation
-        # 映射区间 [-15%, +15%] → [100, 0]：偏离 MA200 达 -15% 满分，+15% 零分
-        closes = df["close"].dropna()
-        if len(closes) >= 200:
-            ma200 = float(closes.tail(200).mean())
-            deviation = (current_price - ma200) / ma200
-        else:
-            ma200 = float(closes.mean())
-            deviation = 0.0
-        ma200_score = _clamp((0.15 - deviation) / 0.30 * 100)
-        scores.append(ma200_score)
-        breakdown[f"{label}_MA200_dev"] = round(deviation, 4)
-        breakdown[f"{label}_MA200_score"] = round(ma200_score, 1)
-
-    final = sum(scores) / len(scores) if scores else NEUTRAL_SCORE
-    return {"score": final, "breakdown": breakdown}
-
-
-
-
-# ── 主入口 ────────────────────────────────────────────────────────────────────
-
 
 def _safe_score(fn, *args, dimension_name: str) -> dict:
     """安全调用维度评分函数，失败时返回中性分 50。"""
@@ -235,201 +98,6 @@ def _safe_score(fn, *args, dimension_name: str) -> dict:
     except Exception as exc:
         logger.warning(f"{dimension_name} 计算失败: {exc}，使用中性评分 50")
         return {"score": NEUTRAL_SCORE, "breakdown": {"error": str(exc)}}
-
-
-def _compute_score(
-    spy_daily: pd.DataFrame,
-    qqq_daily: pd.DataFrame,
-    spy_weekly: pd.DataFrame,
-    qqq_weekly: pd.DataFrame,
-    score_date: str,
-) -> dict:
-    """核心评分计算（纯函数，接受已切片的 DataFrame）。
-
-    注：历史版本曾含 GLD/VIX 避险维度，现已简化为 3 维度（日线+周线+价格位置），
-    gld/vix 数据不再参与评分。返回值中 gld_price/vix_value 等字段保留为 None 以兼容旧前端。
-    """
-    weights = config.MARKET_TEMP_WEIGHTS
-
-    has_spy = not spy_daily.empty
-    has_qqq = not qqq_daily.empty
-    has_spy_w = not spy_weekly.empty
-    has_qqq_w = not qqq_weekly.empty
-
-    # 计算各维度
-    if has_spy and has_qqq:
-        daily_tech = _safe_score(
-            _score_daily_tech, spy_daily, qqq_daily, dimension_name="日线技术面"
-        )
-    else:
-        daily_tech = {"score": NEUTRAL_SCORE, "breakdown": {"error": "SPY/QQQ 日线数据不足"}}
-
-    if has_spy_w and has_qqq_w:
-        weekly_tech = _safe_score(
-            _score_weekly_tech, spy_weekly, qqq_weekly, dimension_name="周线技术面"
-        )
-    else:
-        weekly_tech = {"score": NEUTRAL_SCORE, "breakdown": {"error": "SPY/QQQ 周线数据不足"}}
-
-    if has_spy and has_qqq:
-        price_pos = _safe_score(
-            _score_price_position, spy_daily, qqq_daily, dimension_name="价格位置"
-        )
-    else:
-        price_pos = {"score": NEUTRAL_SCORE, "breakdown": {"error": "SPY/QQQ 日线数据不足"}}
-
-    # 加权综合评分（3 维度：日线技术面 + 周线技术面 + 价格位置）
-    composite = (
-        daily_tech["score"] * weights["daily_tech"]
-        + weekly_tech["score"] * weights["weekly_tech"]
-        + price_pos["score"] * weights["price_pos"]
-    )
-
-    # 极端层判断（两级，高分=恐慌）
-    spy_daily_rsi = float(spy_daily.iloc[-1].get("rsi6", 50)) if has_spy else 50
-    spy_weekly_rsi = float(spy_weekly.iloc[-1].get("rsi6", 50)) if has_spy_w else 50
-
-    heavy_extreme = (
-        composite >= 85
-        and spy_daily_rsi < 30
-        and spy_weekly_rsi < 30
-    )
-    light_extreme = composite >= 75 and not heavy_extreme
-
-    extreme_triggered = heavy_extreme or light_extreme
-
-    # 仓位映射: 30% ~ 120%（高分=恐慌=高仓位；与旧口径镜像等价）
-    target_position = _map_position(composite, heavy_extreme, light_extreme)
-
-    # 杠杆工具建议
-    leverage_tool = "none"
-    if target_position > 100:
-        leverage_tool = "margin + OTM_call"
-    elif target_position > 90:
-        leverage_tool = "margin"
-
-    # 极端层级别标记
-    extreme_level = "heavy" if heavy_extreme else ("light" if light_extreme else "none")
-
-    # 状态文案
-    market_status, action_suggestion = _map_status(composite)
-
-    # 组装维度列表
-    dimensions = [
-        {
-            "key": "daily_tech",
-            "label": "日线技术面",
-            "score": round(daily_tech["score"], 1),
-            "weight": weights["daily_tech"],
-        },
-        {
-            "key": "weekly_tech",
-            "label": "周线技术面",
-            "score": round(weekly_tech["score"], 1),
-            "weight": weights["weekly_tech"],
-        },
-        {
-            "key": "price_position",
-            "label": "价格位置",
-            "score": round(price_pos["score"], 1),
-            "weight": weights["price_pos"],
-        },
-    ]
-
-    # 组装指标摘要
-    indicators = {}
-    if has_spy:
-        spy_last = spy_daily.iloc[-1]
-        spy_vol_ratio = (
-            float(spy_last["volume"]) / float(spy_last["vol_ma20"])
-            if float(spy_last.get("vol_ma20", 0)) > 0
-            else 1.0
-        )
-        indicators["SPY"] = {
-            "price": round(float(spy_last["close"]), 2),
-            "daily_rsi": round(float(spy_last.get("rsi6", 0)), 1),
-            "weekly_rsi": round(spy_weekly_rsi, 1),
-            "ma200_dev": round(price_pos["breakdown"].get("SPY_MA200_dev", 0), 4),
-            "vol_ratio": round(spy_vol_ratio, 2),
-            "bb_pct_b": round(daily_tech["breakdown"].get("SPY_BB_pctB", 0.5), 3),
-        }
-    if has_qqq:
-        qqq_last = qqq_daily.iloc[-1]
-        qqq_vol_ratio = (
-            float(qqq_last["volume"]) / float(qqq_last["vol_ma20"])
-            if float(qqq_last.get("vol_ma20", 0)) > 0
-            else 1.0
-        )
-        qqq_w_rsi = float(qqq_weekly.iloc[-1].get("rsi6", 50)) if has_qqq_w else 50
-        indicators["QQQ"] = {
-            "price": round(float(qqq_last["close"]), 2),
-            "daily_rsi": round(float(qqq_last.get("rsi6", 0)), 1),
-            "weekly_rsi": round(qqq_w_rsi, 1),
-            "ma200_dev": round(price_pos["breakdown"].get("QQQ_MA200_dev", 0), 4),
-            "vol_ratio": round(qqq_vol_ratio, 2),
-            "bb_pct_b": round(daily_tech["breakdown"].get("QQQ_BB_pctB", 0.5), 3),
-        }
-
-    # 合并所有维度 breakdown 为 detail
-    detail = {}
-    for dim in [daily_tech, weekly_tech, price_pos]:
-        detail.update(dim.get("breakdown", {}))
-
-    return {
-        "date": score_date,
-        "composite_score": round(composite, 1),
-        "target_position_pct": round(target_position, 1),
-        "extreme_triggered": extreme_triggered,
-        "extreme_level": extreme_level,
-        "leverage_tool": leverage_tool,
-        "market_status": market_status,
-        "action_suggestion": action_suggestion,
-        "dimensions": dimensions,
-        "indicators": indicators,
-        "detail": detail,
-        "daily_tech_score": round(daily_tech["score"], 1),
-        "weekly_tech_score": round(weekly_tech["score"], 1),
-        "vol_score": None,
-        "price_score": round(price_pos["score"], 1),
-        "volume_score": None,
-        "safe_haven_score": None,
-        "spy_price": indicators.get("SPY", {}).get("price"),
-        "qqq_price": indicators.get("QQQ", {}).get("price"),
-        "gld_price": None,
-        "vix_value": None,
-        "spy_daily_rsi": indicators.get("SPY", {}).get("daily_rsi"),
-        "qqq_daily_rsi": indicators.get("QQQ", {}).get("daily_rsi"),
-        "spy_weekly_rsi": indicators.get("SPY", {}).get("weekly_rsi"),
-        "qqq_weekly_rsi": indicators.get("QQQ", {}).get("weekly_rsi"),
-        "spy_ma200_dev": indicators.get("SPY", {}).get("ma200_dev"),
-        "qqq_ma200_dev": indicators.get("QQQ", {}).get("ma200_dev"),
-        "spy_vol_ratio": indicators.get("SPY", {}).get("vol_ratio"),
-        "qqq_vol_ratio": indicators.get("QQQ", {}).get("vol_ratio"),
-    }
-
-
-def calculate_market_temperature() -> dict:
-    """
-    计算最新一天的市场温度评分并持久化。
-
-    完全从 storage 读取已入库的 K 线+指标数据。
-    """
-    storage.init_db()
-
-    spy_daily = storage.query_recent("US.SPY", "1d", limit=300)
-    qqq_daily = storage.query_recent("US.QQQ", "1d", limit=300)
-    spy_weekly = storage.query_recent("US.SPY", "1w", limit=60)
-    qqq_weekly = storage.query_recent("US.QQQ", "1w", limit=60)
-
-    score_date = str(dt_date.today())
-    if not spy_daily.empty:
-        last_date = spy_daily.iloc[-1].get("date")
-        if last_date:
-            score_date = str(last_date)
-
-    result = _compute_score(spy_daily, qqq_daily, spy_weekly, qqq_weekly, score_date)
-    storage.upsert_market_score(score_date, result)
-    return result
 
 
 # ── 单资产温度评分（黄金 / BTC）────────────────────────────────────────────────
@@ -625,7 +293,7 @@ def compute_asset_temperature_history(asset_key: str, days: int = 60) -> list[di
     计算单资产（GLD / BTC）历史温度评分序列。
 
     对最近 days 个交易日做滑窗切片，每天独立计算一次温度评分，
-    与 backfill_market_temperature 逻辑一致，完全从 storage 读取。
+    与 `compute_index_temperature_history` 同一套滑窗 + 周线定稿守卫，完全从 storage 读取。
 
     Returns:
         按日期升序的 [{"date": ..., "composite_score": ...}, ...] 列表
@@ -677,63 +345,343 @@ def compute_asset_temperature_history(asset_key: str, days: int = 60) -> list[di
     return history
 
 
-def backfill_market_temperature(days: int = 60) -> int:
-    """
-    回溯计算历史市场温度评分。
+# ── 指数温度（SPY / QQQ，2026-11-10 拆分）─────────────────────────────────────
+#
+# 阈值刻意写成两个配置里相同的数值：**两个指数共用一套**（spec FR-002），因此
+#   ① 两个温度分数可跨指数直接比大小；
+#   ② 差值（温差 = SPY − QQQ）有明确含义：负值 = 标普温度更低 = 标普相对更强。
+# 若将来要给 QQQ 单独放宽区间，必须先改 specs/003 的 FR-002，不能只改这两个数字。
 
-    从已入库的 K 线数据中，逐日切片计算过去 N 天的评分并写入 DB。
-    需要至少 252 + days 天的日线数据才能保证百分位计算准确。
+_INDEX_CONFIGS: dict[str, dict] = {
+    "SPY": {
+        "label": "标普 500",
+        "code_daily": "US.SPY",
+        "code_weekly": "US.SPY",
+        "ath_drawdown_zero": 0.15,
+        "ma200_range": 0.15,
+    },
+    "QQQ": {
+        "label": "纳斯达克 100",
+        "code_daily": "US.QQQ",
+        "code_weekly": "US.QQQ",
+        "ath_drawdown_zero": 0.15,
+        "ma200_range": 0.15,
+    },
+}
 
-    Parameters:
-        days: 回溯天数（默认 60 天）
+INDEX_KEYS: tuple[str, ...] = ("SPY", "QQQ")
+
+# 温差历史的最早日期：更早的合并数据不做拆分回算（spec FR-007）
+SPREAD_HISTORY_START = "2025-01-01"
+
+_INDEX_WEIGHTS = {"daily_tech": 0.50, "weekly_tech": 0.35, "price_pos": 0.15}
+
+
+def _index_insufficient(key: str, score_date: str, reason: str) -> dict:
+    """单指数数据不足时的降级结果：只降级自己，不伪造中性分（spec FR-013）。"""
+    cfg = _INDEX_CONFIGS[key]
+    return {
+        "key": key,
+        "code": cfg["code_daily"],
+        "label": cfg["label"],
+        "date": score_date,
+        "data_insufficient": True,
+        "reason": reason,
+        "composite_score": None,
+        "target_position_pct": None,
+        "market_status": "数据不足",
+        "action_suggestion": "—",
+        "extreme_triggered": False,
+        "extreme_level": "none",
+        "leverage_tool": "none",
+        "dimensions": [],
+        "indicators": {},
+        "detail": {"error": reason},
+    }
+
+
+def _build_index_result(
+    key: str,
+    score_date: str,
+    daily_tech: dict,
+    weekly_tech: dict,
+    price_pos: dict,
+    daily_df: pd.DataFrame,
+) -> dict:
+    """把三维度结果组装成单个指数的温度记录（纯函数）。"""
+    cfg = _INDEX_CONFIGS[key]
+    composite = (
+        daily_tech["score"] * _INDEX_WEIGHTS["daily_tech"]
+        + weekly_tech["score"] * _INDEX_WEIGHTS["weekly_tech"]
+        + price_pos["score"] * _INDEX_WEIGHTS["price_pos"]
+    )
+
+    last = daily_df.iloc[-1]
+    daily_rsi = float(last.get("rsi6", 50))
+    weekly_rsi = (
+        float(weekly_tech["breakdown"].get("weekly_rsi"))
+        if weekly_tech["breakdown"].get("weekly_rsi") is not None
+        else None
+    )
+
+    # 极端层：按**该指数自己**的 RSI 判定，不沿用合并期的结论
+    heavy_extreme = (
+        composite >= 85
+        and daily_rsi < 30
+        and weekly_rsi is not None
+        and weekly_rsi < 30
+    )
+    light_extreme = composite >= 75 and not heavy_extreme
+    extreme_level = "heavy" if heavy_extreme else ("light" if light_extreme else "none")
+
+    target_position = _map_position(composite, heavy_extreme, light_extreme)
+    leverage_tool = "none"
+    if target_position > 100:
+        leverage_tool = "margin + OTM_call"
+    elif target_position > 90:
+        leverage_tool = "margin"
+
+    market_status, action_suggestion = _map_status(composite)
+
+    detail: dict = {}
+    for dim in (daily_tech, weekly_tech, price_pos):
+        detail.update(dim.get("breakdown", {}))
+
+    bb_pct_b = daily_tech["breakdown"].get("daily_bb_pctB", 0.5)
+
+    return {
+        "key": key,
+        "code": cfg["code_daily"],
+        "label": cfg["label"],
+        "date": score_date,
+        "data_insufficient": False,
+        "composite_score": round(composite, 1),
+        "target_position_pct": round(target_position, 1),
+        "market_status": market_status,
+        "action_suggestion": action_suggestion,
+        "extreme_triggered": bool(heavy_extreme or light_extreme),
+        "extreme_level": extreme_level,
+        "leverage_tool": leverage_tool,
+        "dimensions": [
+            {
+                "key": "daily_tech",
+                "label": "日线技术面",
+                "score": round(daily_tech["score"], 1),
+                "weight": _INDEX_WEIGHTS["daily_tech"],
+            },
+            {
+                "key": "weekly_tech",
+                "label": "周线技术面",
+                "score": round(weekly_tech["score"], 1),
+                "weight": _INDEX_WEIGHTS["weekly_tech"],
+            },
+            {
+                "key": "price_position",
+                "label": "价格位置",
+                "score": round(price_pos["score"], 1),
+                "weight": _INDEX_WEIGHTS["price_pos"],
+            },
+        ],
+        "indicators": {
+            "price": round(float(last["close"]), 2),
+            "daily_rsi": round(daily_rsi, 1),
+            "weekly_rsi": round(weekly_rsi, 1) if weekly_rsi is not None else None,
+            "ma200_dev": price_pos["breakdown"].get("ma200_dev"),
+            "ath_drawdown": price_pos["breakdown"].get("ath_drawdown"),
+            "pos_52w": price_pos["breakdown"].get("pos_52w"),
+            "bb_pct_b": bb_pct_b,
+        },
+        "detail": detail,
+    }
+
+
+def compute_index_temperature(index_key: str) -> dict | None:
+    """计算单个指数（SPY / QQQ）最新一天的温度，完全从 storage 读取。
 
     Returns:
-        成功写入的天数
+        温度记录；未知 key 返回 None；数据不足返回 data_insufficient=True 的记录。
     """
-    storage.init_db()
-    logger.info(f"开始回溯计算市场温度，回溯 {days} 天")
+    cfg = _INDEX_CONFIGS.get(index_key)
+    if not cfg:
+        logger.warning(f"未知指数 key: {index_key}")
+        return None
 
-    # 一次性读取所有可用数据（支持长历史回溯）
-    read_limit = days + 300  # 回溯天数 + 百分位计算所需缓冲
-    spy_daily_all = storage.query_recent("US.SPY", "1d", limit=read_limit)
-    qqq_daily_all = storage.query_recent("US.QQQ", "1d", limit=read_limit)
-    spy_weekly_all = storage.query_recent("US.SPY", "1w", limit=500)
-    qqq_weekly_all = storage.query_recent("US.QQQ", "1w", limit=500)
+    daily_df = storage.query_recent(cfg["code_daily"], "1d", limit=300)
+    weekly_df = storage.query_recent(cfg["code_weekly"], "1w", limit=60)
 
-    if spy_daily_all.empty:
-        logger.warning("SPY 日线数据为空，无法回溯")
-        return 0
+    if daily_df.empty:
+        return _index_insufficient(index_key, "", f"{cfg['code_daily']} 日线数据为空")
 
-    # 确定可回溯的日期范围
-    # 至少需要 60 天数据才能计算有意义的百分位
-    min_rows_needed = 60
-    total_rows = len(spy_daily_all)
-    backfill_count = min(days, total_rows - min_rows_needed)
+    score_date = str(daily_df.iloc[-1].get("date", ""))
 
-    if backfill_count <= 0:
-        logger.warning(f"数据不足，仅有 {total_rows} 行，需要至少 {min_rows_needed + 1} 行")
-        return 0
+    daily_tech = _safe_score(
+        _score_asset_daily, daily_df, cfg, dimension_name=f"{index_key} 日线技术面"
+    )
+    if weekly_df.empty:
+        weekly_tech = {"score": NEUTRAL_SCORE, "breakdown": {}}
+        logger.warning(f"{index_key} 周线数据为空，周线维度按中性 50 计")
+    else:
+        weekly_tech = _safe_score(
+            _score_asset_weekly, weekly_df, cfg, dimension_name=f"{index_key} 周线技术面"
+        )
+    price_pos = _safe_score(
+        _score_asset_price_position, daily_df, cfg, dimension_name=f"{index_key} 价格位置"
+    )
 
-    count = 0
-    for i in range(backfill_count, 0, -1):
-        # 切片：截止到倒数第 i 行（模拟"当天"只能看到截止到那天的数据）
-        end_idx = total_rows - i + 1
-        spy_daily = spy_daily_all.iloc[:end_idx].copy()
-        qqq_daily = qqq_daily_all.iloc[:min(end_idx, len(qqq_daily_all))].copy()
+    return _build_index_result(
+        index_key, score_date, daily_tech, weekly_tech, price_pos, daily_df
+    )
 
-        # 周线：只取当天已定稿的周线（周五收盘才成立，避免前视偏差）
-        current_date = spy_daily.iloc[-1].get("date", "")
-        spy_weekly = market_clock.filter_week_closed(spy_weekly_all, current_date)
-        qqq_weekly = market_clock.filter_week_closed(qqq_weekly_all, current_date)
 
-        score_date = str(current_date)
+def compute_temperature_spread(spy_score: float | None, qqq_score: float | None) -> float | None:
+    """温差 = SPY 温度 − QQQ 温度。负值代表标普温度更低（标普相对更强）。"""
+    if spy_score is None or qqq_score is None:
+        return None
+    return round(float(spy_score) - float(qqq_score), 1)
+
+
+def spread_label(value: float | None) -> str:
+    """温差的展示文案。符号语义只在这里定义一次，前端不得自行拼。"""
+    if value is None:
+        return "数据不足"
+    if value < 0:
+        return "标普相对更强"
+    if value > 0:
+        return "纳指相对更强"
+    return "两者均衡"
+
+
+def compute_index_temperature_history(
+    index_key: str,
+    start_date: str | None = None,
+    days: int | None = None,
+) -> list[dict]:
+    """计算单个指数的历史温度序列。
+
+    Parameters:
+        start_date: 起始日期（含），默认 2025-01-01；更早的日期一律不返回（FR-007）
+        days:       若给出，则取最近 days 个交易日（与 start_date 二选一，days 优先）
+
+    Returns:
+        按日期升序的 [{"date", "composite_score", "target_position_pct"}, ...]
+    """
+    cfg = _INDEX_CONFIGS.get(index_key)
+    if not cfg:
+        return []
+
+    daily_all = storage.query_recent(cfg["code_daily"], "1d", limit=1500)
+    weekly_all = storage.query_recent(cfg["code_weekly"], "1w", limit=600)
+    if daily_all.empty:
+        return []
+
+    dates = [str(d) for d in daily_all["date"]]
+
+    if days is not None:
+        start_idx = max(0, len(dates) - int(days))
+    else:
+        floor = start_date or SPREAD_HISTORY_START
+        start_idx = next((i for i, d in enumerate(dates) if d >= floor), None)
+        if start_idx is None:
+            return []
+
+    # 至少 60 根才能算有意义的百分位；起点之前的历史本身用于缓冲，不需要额外截断
+    history: list[dict] = []
+    for i in range(start_idx, len(dates)):
+        daily_df = daily_all.iloc[: i + 1]
+        current_date = dates[i]
+        weekly_df = market_clock.filter_week_closed(weekly_all, current_date)
 
         try:
-            result = _compute_score(spy_daily, qqq_daily, spy_weekly, qqq_weekly, score_date)
-            storage.upsert_market_score(score_date, result)
-            count += 1
-        except Exception as exc:
-            logger.warning(f"回溯 {score_date} 失败: {exc}")
+            dt = _safe_score(_score_asset_daily, daily_df, cfg, dimension_name="")
+            wt = (
+                _safe_score(_score_asset_weekly, weekly_df, cfg, dimension_name="")
+                if not weekly_df.empty
+                else {"score": NEUTRAL_SCORE, "breakdown": {}}
+            )
+            pp = _safe_score(_score_asset_price_position, daily_df, cfg, dimension_name="")
 
-    logger.info(f"回溯完成，成功写入 {count} 天评分")
-    return count
+            composite = (
+                dt["score"] * _INDEX_WEIGHTS["daily_tech"]
+                + wt["score"] * _INDEX_WEIGHTS["weekly_tech"]
+                + pp["score"] * _INDEX_WEIGHTS["price_pos"]
+            )
+            daily_rsi = float(daily_df.iloc[-1].get("rsi6", 50))
+            weekly_rsi = wt["breakdown"].get("weekly_rsi")
+            heavy = (
+                composite >= 85
+                and daily_rsi < 30
+                and weekly_rsi is not None
+                and weekly_rsi < 30
+            )
+            light = composite >= 75 and not heavy
+            history.append(
+                {
+                    "date": current_date,
+                    "composite_score": round(composite, 1),
+                    "target_position_pct": round(_map_position(composite, heavy, light), 1),
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - 单日失败不该中断整条序列
+            logger.debug(f"compute_index_temperature_history {index_key} {current_date}: {exc}")
+
+    return history
+
+
+def compute_spread_history(
+    start_date: str | None = None,
+    days: int | None = None,
+) -> list[dict]:
+    """温差序列：逐日 SPY 温度 − QQQ 温度。缺失日期跳过，不插值（FR-007）。"""
+    spy_hist = compute_index_temperature_history("SPY", start_date=start_date, days=days)
+    qqq_hist = compute_index_temperature_history("QQQ", start_date=start_date, days=days)
+
+    qqq_by_date = {p["date"]: p["composite_score"] for p in qqq_hist}
+    spread: list[dict] = []
+    for point in spy_hist:
+        qqq_score = qqq_by_date.get(point["date"])
+        if qqq_score is None:
+            continue
+        value = compute_temperature_spread(point["composite_score"], qqq_score)
+        spread.append({"date": point["date"], "value": value})
+    return spread
+
+
+def calculate_index_temperatures() -> dict:
+    """计算两个指数的最新温度并落库（幂等），返回聚合结果供 CLI / 调用方使用。"""
+    storage.init_db()
+
+    results: dict[str, dict | None] = {}
+    for key in INDEX_KEYS:
+        result = compute_index_temperature(key)
+        results[key] = result
+        if result and not result.get("data_insufficient"):
+            storage.upsert_market_temp_split(result["date"], result["code"], result)
+
+    spy_score = results["SPY"]["composite_score"] if results.get("SPY") else None
+    qqq_score = results["QQQ"]["composite_score"] if results.get("QQQ") else None
+    value = compute_temperature_spread(spy_score, qqq_score)
+
+    return {
+        "date": (results.get("SPY") or results.get("QQQ") or {}).get("date", ""),
+        "indexes": [results[k] for k in INDEX_KEYS if results.get(k)],
+        "spread": {"value": value, "label": spread_label(value)},
+    }
+
+
+def backfill_index_temperatures(
+    start_date: str | None = None,
+    days: int | None = None,
+) -> int:
+    """回算两个指数的历史温度并落库，返回写入行数。
+
+    默认起点 2025-01-01；更早的合并历史不做拆分（spec Assumptions）。
+    """
+    storage.init_db()
+
+    written = 0
+    for key in INDEX_KEYS:
+        for point in compute_index_temperature_history(key, start_date=start_date, days=days):
+            storage.upsert_market_temp_split_point(key, point)
+            written += 1
+    logger.info(f"指数温度回算完成，写入 {written} 行")
+    return written

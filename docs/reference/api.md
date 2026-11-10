@@ -86,8 +86,8 @@ Swagger UI：`http://localhost:8000/docs`
 | GET | `/api/trade-signals` | 顶/底交易信号 | ⚠️ 当前无页面引用（`getTradeSignals` 已定义未使用） |
 | ~~GET~~ | ~~`/api/fundamental/latest`~~ | ~~单标的基本面数据+评分~~ **从未实现**（Yahoo Finance 中国不可用，功能已废弃） | - |
 | ~~GET~~ | ~~`/api/fundamental/overview`~~ | ~~全标的基本面速览~~ **从未实现**（同上） | - |
-| GET | `/api/market-temperature` | 市场温度评分（3 维度综合），附 GLD/BTC 单资产温度 | **MarketTemperature.vue** |
-| GET | `/api/market-temperature/history` | 近 N 天市场温度历史 | **MarketTemperature.vue（趋势图）** |
+| GET | `/api/market-temperature` | **指数温度**（SPY / QQQ 各一条 + 温差），附 GLD/BTC 单资产温度 | **MarketTemperature.vue** |
+| GET | `/api/market-temperature/history` | 两指数温度序列 + 温差序列（2025-01-01 起） | **MarketTemperature.vue（趋势图 / 温差图）** |
 | GET | `/api/asset-temperature/history` | 单资产（GLD/BTC）历史温度评分序列（实时计算） | **MarketTemperature.vue（黄金/比特币视图）** |
 | GET | `/api/tp-sl` | 止盈止损自动计算（ATR+支撑/阻力） | ScoresOverview.vue |
 | GET | `/api/backtest/run` | 信号回测（5 种策略模式） | **Backtest.vue** |
@@ -701,18 +701,110 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
 
 ### GET `/api/market-temperature`
 
-返回最新一期市场温度评分，供前端仪表盘展示。
+返回最新一期的**指数温度**（SPY / QQQ 各一条）与温差，并附黄金/BTC 单资产温度。
 
-> **v2.3 变更**：维度从 6 个精简为 3 个（移除了波动率/量能/避险维度）。
-> `vol_score`、`volume_score`、`safe_haven_score`、`gld_price`、`vix_value` 字段保留但固定返回 `null`。
-> 前端应只展示非 null 的维度。
+> **2026-11-10 结构变更（当前契约）**：市场温度已按指数拆分。顶层**不再返回** `composite_score` /
+> `target_position_pct`（合并值已退役），改由 `indexes[]` 每条自带分数与仓位建议。详见
+> `specs/003-split-market-temperature/`。
 >
 > **2026-10-19 口径反转**：**分数越高 = 越恐慌 = 越值得加仓**（与个股评分 `total_score` 同向）。
 > 分数越低 = 越贪婪 = 应减仓。历史数据已做镜像迁移（`100-x`），全序列口径一致。
 
 **请求参数**：无
 
-**响应 200**
+**响应 200（2026-11-10 起）**
+
+```json
+{
+  "date": "2026-11-09",
+  "indexes": [
+    {
+      "key": "SPY",
+      "code": "US.SPY",
+      "label": "标普 500",
+      "date": "2026-11-09",
+      "composite_score": 70.3,
+      "target_position_pct": 81.6,
+      "market_status": "偏悲观",
+      "action_suggestion": "积极加仓",
+      "extreme_triggered": false,
+      "extreme_level": "none",
+      "leverage_tool": "none",
+      "dimensions": [
+        { "key": "daily_tech",     "label": "日线技术面", "score": 75.0, "weight": 0.50 },
+        { "key": "weekly_tech",    "label": "周线技术面", "score": 81.9, "weight": 0.35 },
+        { "key": "price_position", "label": "价格位置",   "score": 27.8, "weight": 0.15 }
+      ],
+      "indicators": {
+        "price": 752.69,
+        "daily_rsi": 48.7,
+        "weekly_rsi": 26.4,
+        "ma200_dev": 0.0306,
+        "ath_drawdown": 0.037,
+        "pos_52w": 0.81
+      },
+      "detail": {}
+    },
+    {
+      "key": "QQQ",
+      "code": "US.QQQ",
+      "label": "纳斯达克 100",
+      "date": "2026-11-09",
+      "composite_score": 79.4,
+      "target_position_pct": 91.6,
+      "market_status": "偏悲观",
+      "action_suggestion": "积极加仓",
+      "extreme_triggered": true,
+      "extreme_level": "light",
+      "leverage_tool": "margin",
+      "dimensions": [
+        { "key": "daily_tech",     "label": "日线技术面", "score": 77.5, "weight": 0.50 },
+        { "key": "weekly_tech",    "label": "周线技术面", "score": 92.7, "weight": 0.35 },
+        { "key": "price_position", "label": "价格位置",   "score": 54.7, "weight": 0.15 }
+      ],
+      "indicators": {
+        "price": 679.35,
+        "daily_rsi": 45.6,
+        "weekly_rsi": 24.3,
+        "ma200_dev": -0.0025,
+        "ath_drawdown": 0.1095,
+        "pos_52w": 0.597
+      },
+      "detail": {}
+    }
+  ],
+  "spread": { "value": -9.1, "label": "标普相对更强" },
+  "gld_temp": { "...": "结构见下方 gld_temp / btc_temp" },
+  "btc_temp": { "...": "结构见下方 gld_temp / btc_temp" }
+}
+```
+
+> 示例数据为虚构值（数值取自 2026-11-09 实盘库的实测结果，用于说明结构）。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `date` | string | 数据日期（最近一个已收盘交易日） |
+| `indexes[]` | array | **固定 2 条**，顺序为 SPY、QQQ |
+| `indexes[].key` | string | `SPY` / `QQQ` |
+| `indexes[].composite_score` | float | 该指数温度 0~100（越高越恐慌、越值得加仓） |
+| `indexes[].target_position_pct` | float | 该指数**自己**的建议仓位 30%~120%，**不是**组合闸门 |
+| `indexes[].extreme_level` | string | `none` / `light` / `heavy`（按该指数自身日/周 RSI 判定） |
+| `indexes[].dimensions[]` | array | 三维度分数与权重（50/35/15） |
+| `indexes[].indicators` | object | 该指数关键指标快照 |
+| `spread.value` | float\|null | `SPY 温度 − QQQ 温度`；**负值 = 标普相对更强** |
+| `spread.label` | string | 由后端给文案：`标普相对更强` / `纳指相对更强` / `两者均衡` / `数据不足` |
+| `gld_temp` / `btc_temp` | object\|null | 单资产温度，实时计算；结构不变（见下） |
+
+> 顶层字段 `composite_score`、`target_position_pct`、`spy_price`、`qqq_price`、`spy_daily_rsi` 等
+> **已全部移除**，对应数据改到 `indexes[].indicators`。
+
+> ⚠️ **勘误（2026-11-10）**：以下为拆分**前**的旧结构，**已失效**，仅保留用于追溯历史响应。
+
+> **v2.3 变更**：维度从 6 个精简为 3 个（移除了波动率/量能/避险维度）。
+> `vol_score`、`volume_score`、`safe_haven_score`、`gld_price`、`vix_value` 字段保留但固定返回 `null`。
+> 前端应只展示非 null 的维度。
+
+**响应 200（旧结构，已失效）**
 
 ```json
 {
@@ -936,15 +1028,58 @@ export const getAssetTemperatureHistory = (asset, days = 60) =>
 
 ### GET `/api/market-temperature/history`
 
-返回近 N 天的市场温度评分历史，用于趋势图。
+返回各指数温度序列与温差序列，用于趋势图。**2025-01-01 之前不提供**（更早的合并历史不做拆分回算）。
 
 **请求参数**
 
 | 参数 | 位置 | 类型 | 默认值 | 约束 | 说明 |
 |------|------|------|--------|------|------|
-| `days` | query | `integer` | `30` | 1 ≤ days ≤ 365 | 返回最近 N 天 |
+| `days` | query | `integer` | `465` | 1 ≤ days ≤ 600 | 每条序列最多返回最近 N 个点 |
+| `start` | query | `string` | `2025-01-01` | YYYY-MM-DD | 起始日期；早于 2025-01-01 一律按 2025-01-01 处理 |
 
 **响应 200**
+
+```json
+{
+  "start": "2025-01-01",
+  "series": [
+    {
+      "key": "SPY",
+      "code": "US.SPY",
+      "label": "标普 500",
+      "points": [
+        { "date": "2025-01-02", "composite_score": 52.1, "target_position_pct": 68.2 },
+        { "date": "2026-11-09", "composite_score": 70.3, "target_position_pct": 81.6 }
+      ]
+    },
+    {
+      "key": "QQQ",
+      "code": "US.QQQ",
+      "label": "纳斯达克 100",
+      "points": [
+        { "date": "2025-01-02", "composite_score": 49.6, "target_position_pct": 66.4 },
+        { "date": "2026-11-09", "composite_score": 79.4, "target_position_pct": 91.6 }
+      ]
+    }
+  ],
+  "spread": [
+    { "date": "2025-01-02", "value": 2.5 },
+    { "date": "2026-11-09", "value": -9.1 }
+  ]
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `start` | string | 实际生效的起始日期（已夹到 2025-01-01 之后） |
+| `series[]` | array | 固定 2 条（SPY / QQQ），`points` 按日期升序 |
+| `spread[]` | array | 温差序列，逐点等于同日 `SPY − QQQ`；缺失交易日**跳过不插值** |
+
+> 示例数据为虚构值（日期与分数取自 2025-01-02 与 2026-11-09 的实测结果）。
+
+> ⚠️ **勘误（2026-11-10）**：以下为拆分前的旧结构（`{"history": [...]}`），**已失效**，仅保留用于追溯。
+
+**响应 200（旧结构，已失效）**
 
 ```json
 {
@@ -1678,7 +1813,34 @@ assert stats["breakouts"] == len(breakouts)  # 各分组计数与 stats 一致
 
 ## 附录：市场温度字段速查
 
-### 顶层字段
+### 顶层字段（2026-11-10 起）
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `date` | string | 数据对应的交易日（YYYY-MM-DD） |
+| `indexes[]` | array | 固定 2 条（SPY / QQQ） |
+| `spread.value` | float\|null | `SPY 温度 − QQQ 温度`；负值 = 标普相对更强 |
+| `spread.label` | string | 文案由后端给，前端不得自行拼 |
+| `gld_temp` / `btc_temp` | object\|null | 单资产温度，结构不变 |
+
+### `indexes[]` 内字段
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `key` / `code` / `label` | string | `SPY`/`US.SPY`/`标普 500`；`QQQ`/`US.QQQ`/`纳斯达克 100` |
+| `composite_score` | float | 该指数温度 0~100 |
+| `target_position_pct` | float | 该指数自己的建议仓位 30~120（**不是组合闸门**） |
+| `market_status` / `action_suggestion` | string | 状态文案与建议动作 |
+| `extreme_triggered` / `extreme_level` / `leverage_tool` | bool/string | 按该指数自身 RSI 判定 |
+| `dimensions[]` | array | 三维度 `{key,label,score,weight}` |
+| `indicators` | object | `price` / `daily_rsi` / `weekly_rsi` / `ma200_dev` / `ath_drawdown` / `pos_52w` |
+| `detail` | object | 该指数的完整子指标明细 |
+
+> ⚠️ **勘误（2026-11-10）**：以下「顶层字段」与「detail 明细」两节描述的是**拆分前**的合并结构，
+> **已失效**（`composite_score`、`target_position_pct`、`spy_price`、`qqq_price`、`spy_daily_rsi` 等顶层字段均已移除）。
+> 保留原文仅用于追溯；当前实现以本节上方的表格为准。
+
+### 旧结构：顶层字段（已失效，仅追溯）
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -1765,46 +1927,43 @@ export function getMarketTemperatureHistory(days = 30) {
 
 **路由**：`/market-temperature`
 
-**页面结构（v2.3 — 3 维度简化版）**：
+**页面结构（2026-11-10 起 — 按指数拆分）**：
 
-1. **顶部概览卡片**
-   - 综合评分（大字号 + 进度条，颜色按映射表）
-   - 市场状态标签（查表得到 label + background-color）
-   - 建议仓位百分比
-   - 操作建议文案
-   - 杠杆工具提示（仅 `leverage_tool !== "none"` 时显示）
+1. **顶部视图切换**：`标普 500` / `纳指 100` / `标普-纳指温差` / `黄金` / `比特币`
+   - **不再有「美股大盘」合并视图**
 
-2. **维度拆解区（3 行）**
-   - 日线技术面 [50%] + 评分条 + 数值
-   - 周线技术面 [35%] + 评分条 + 数值
-   - 价格位置 [15%] + 评分条 + 数值
-   - **注意**：跳过值为 `null` 的维度（vol_score/volume_score/safe_haven_score）
+2. **指数视图（SPY 与 QQQ 共用同一模板）**
+   - Hero：该指数温度大字号 + 状态标签 + 建议动作
+   - 维度拆解：日线技术面 50% / 周线技术面 35% / 价格位置 15%（消费 `indexes[].dimensions[]`）
+   - 页脚：该指数建议仓位、数据日期、**另一个指数的分数**、杠杆提示、K 线跳转
+   - 技术指标卡片：指数点位 / 日RSI / 周RSI / MA200 偏离 / ATH 回撤 / 52 周位置
+   - 历史趋势图：该指数温度 + 建议仓位双轴折线
 
-3. **标的指标卡片（2 列：SPY + QQQ）**
-   - SPY 卡：价格、日RSI、周RSI、MA200偏离度
-   - QQQ 卡：同上
-   - **不再展示 GLD 和 VIXY**
+3. **温差视图**
+   - 大字号温差值（`spread.value`）+ 后端文案（`spread.label`）
+   - 两个指数温度与仓位并排对比
+   - 温差走势折线（零轴虚线，负值区=标普更强）
 
-4. **历史趋势图**
-   - 调用 `/api/market-temperature/history?days=30`
-   - X 轴：日期，Y 轴（左）：composite_score，Y 轴（右）：target_position_pct
-   - 用 ECharts 折线图渲染
+4. **黄金 / 比特币视图**：结构不变，仍消费 `gld_temp` / `btc_temp`
+
+> ⚠️ **前端不得自行拼温差文案**：`标普相对更强 / 纳指相对更强` 由后端 `spread_label()` 给出，
+> 前端只负责按 `spread.value` 的正负上色。
 
 ### 数据刷新策略
 
 | 场景 | 行为 |
 |------|------|
-| 页面加载 | 调用 `getMarketTemperature()` 获取最新 |
-| 数据为空（HTTP 200 + `data:null`） | 显示提示"暂无数据，请确认后端已运行 temperature 命令" |
+| 页面加载 | 调用 `getMarketTemperature()` 获取最新；非 `indexes[]` 结构视为无数据 |
+| 历史曲线 | `getMarketTemperatureHistory()` 一次拿两条序列 + 温差 |
+| 数据为空 | 显示「暂无指数温度数据，请确认后端已运行 temperature 命令」 |
 | 自动刷新 | 不需要轮询，数据每日更新一次 |
-| 手动刷新 | 可提供一个刷新按钮重新调用接口 |
 
 ### 前端无需计算
 
-所有评分、仓位建议、状态标签均由后端完成。前端只做：
+所有评分、仓位建议、状态标签、温差文案均由后端完成。前端只做：
 1. 调接口拿 JSON
 2. 根据 `composite_score` 查映射表得到颜色/文案
-3. 渲染 UI
+3. 按 `spread.value` 符号给温差上色
 
 ### 完整映射代码参考（JS — 2026-10-19 口径反转后）
 

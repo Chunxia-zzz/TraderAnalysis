@@ -15,7 +15,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from trader_analysis.futu_strategy import config, storage, watchlist_storage
-from trader_analysis.futu_strategy.market_scorer import compute_asset_temperature
+from trader_analysis.futu_strategy.market_scorer import (
+    _INDEX_CONFIGS,
+    INDEX_KEYS,
+    SPREAD_HISTORY_START,
+    compute_asset_temperature,
+    compute_temperature_spread,
+    spread_label,
+)
 from trader_analysis.futu_strategy.stock_info_fetcher import fetch_stock_info
 
 app = FastAPI(title="Strategy Indicators API")
@@ -450,25 +457,118 @@ def get_scores_overview(
 
 @app.get("/api/market-temperature")
 def get_market_temperature():
-    """返回最新一期市场温度评分，附加黄金/BTC 单资产温度（实时计算）。"""
-    result = storage.query_latest_market_score()
-    if not result:
+    """返回最新一期的**指数温度**（SPY / QQQ 各一条）与温差，附加黄金/BTC 单资产温度。
+
+    2026-11-10 起不再返回合并后的全局温度与全局建议仓位（见 specs/003-split-market-temperature）。
+    """
+    rows = storage.query_latest_market_temp_split()
+    if not rows:
         return {
             "data": None,
-            "message": "暂无市场温度数据，请先运行 trader-analysis temperature 命令",
+            "message": "暂无指数温度数据，请先运行 trader-analysis temperature 命令",
         }
-    result["gld_temp"] = compute_asset_temperature("GLD")
-    result["btc_temp"] = compute_asset_temperature("BTC")
-    return result
+
+    by_code = {row["code"]: row for row in rows}
+    indexes: list[dict] = []
+    for key in INDEX_KEYS:
+        row = by_code.get(_INDEX_CONFIGS[key]["code_daily"])
+        if not row:
+            continue
+        indexes.append(
+            {
+                "key": key,
+                "code": row["code"],
+                "label": _INDEX_CONFIGS[key]["label"],
+                "date": row["date"],
+                "composite_score": row["composite_score"],
+                "target_position_pct": row["target_position_pct"],
+                "market_status": row["market_status"],
+                "action_suggestion": row["action_suggestion"],
+                "extreme_triggered": row["extreme_triggered"],
+                "extreme_level": row["extreme_level"],
+                "leverage_tool": row["leverage_tool"],
+                "dimensions": [
+                    {"key": "daily_tech", "label": "日线技术面",
+                     "score": row["daily_tech_score"], "weight": 0.50},
+                    {"key": "weekly_tech", "label": "周线技术面",
+                     "score": row["weekly_tech_score"], "weight": 0.35},
+                    {"key": "price_position", "label": "价格位置",
+                     "score": row["price_score"], "weight": 0.15},
+                ],
+                "indicators": {
+                    "price": row["price"],
+                    "daily_rsi": row["daily_rsi"],
+                    "weekly_rsi": row["weekly_rsi"],
+                    "ma200_dev": row["ma200_dev"],
+                    "ath_drawdown": row["ath_drawdown"],
+                    "pos_52w": row["pos_52w"],
+                },
+                "detail": row["detail"],
+            }
+        )
+
+    scores = {item["key"]: item["composite_score"] for item in indexes}
+    spread_value = compute_temperature_spread(scores.get("SPY"), scores.get("QQQ"))
+
+    return {
+        "date": rows[0]["date"],
+        "indexes": indexes,
+        "spread": {"value": spread_value, "label": spread_label(spread_value)},
+        "gld_temp": compute_asset_temperature("GLD"),
+        "btc_temp": compute_asset_temperature("BTC"),
+    }
 
 
 @app.get("/api/market-temperature/history")
 def get_market_temperature_history(
-    days: int = Query(default=30, ge=1, le=365),
+    days: int = Query(default=465, ge=1, le=600, description="回溯交易日数（与 start 取交集）"),
+    start: str = Query(
+        default=SPREAD_HISTORY_START,
+        description="起始日期 YYYY-MM-DD；早于 2025-01-01 一律按 2025-01-01 处理",
+    ),
 ):
-    """返回近 N 天的市场温度评分历史。"""
-    history = storage.query_market_score_history(days)
-    return {"history": history}
+    """返回各指数温度序列与温差序列。2025-01-01 之前不提供（更早的合并历史不做拆分回算）。"""
+    floor = max(start or SPREAD_HISTORY_START, SPREAD_HISTORY_START)
+    rows = storage.query_market_temp_split_history(start_date=floor)
+
+    series_map: dict[str, list[dict]] = {key: [] for key in INDEX_KEYS}
+    for row in rows:
+        for key in INDEX_KEYS:
+            if row["code"] == _INDEX_CONFIGS[key]["code_daily"]:
+                series_map[key].append(
+                    {
+                        "date": row["date"],
+                        "composite_score": row["composite_score"],
+                        "target_position_pct": row["target_position_pct"],
+                    }
+                )
+                break
+
+    for key in series_map:
+        series_map[key] = series_map[key][-days:]
+
+    spread_by_date = {}
+    for point in series_map["SPY"]:
+        qqq_point = next(
+            (p for p in series_map["QQQ"] if p["date"] == point["date"]), None
+        )
+        if not qqq_point:
+            continue
+        spread_by_date[point["date"]] = compute_temperature_spread(
+            point["composite_score"], qqq_point["composite_score"]
+        )
+
+    spread = [{"date": d, "value": v} for d, v in sorted(spread_by_date.items())]
+
+    return {
+        "start": floor,
+        "series": [
+            {"key": key, "code": _INDEX_CONFIGS[key]["code_daily"],
+             "label": _INDEX_CONFIGS[key]["label"], "points": series_map[key]}
+            for key in INDEX_KEYS
+        ],
+        "spread": spread,
+    }
 
 
 @app.get("/api/asset-temperature/history")

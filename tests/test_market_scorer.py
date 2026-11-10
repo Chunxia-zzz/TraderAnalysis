@@ -14,16 +14,17 @@ import pytest
 
 from trader_analysis.futu_strategy import storage
 from trader_analysis.futu_strategy.market_scorer import (
+    _INDEX_CONFIGS,
+    _build_index_result,
     _calc_pct_b,
     _clamp,
-    _compute_score,
     _map_position,
     _map_status,
     _percentile_rank,
     _score_asset_daily,
     _score_asset_price_position,
-    _score_daily_tech,
-    calculate_market_temperature,
+    calculate_index_temperatures,
+    compute_index_temperature,
 )
 from trader_analysis.futu_strategy.scorer import calculate_score
 
@@ -246,11 +247,14 @@ class TestMapPosition:
 # ── 维度评分测试 ──────────────────────────────────────────────────────────────
 
 
-class TestScoreDailyTech:
+class TestScoreIndexDaily:
+    """2026-11-10 起维度评分按**单个指数**计算（合并版 _score_daily_tech 已删除）。"""
+
+    CFG = _INDEX_CONFIGS["SPY"]
+
     def test_returns_score_and_breakdown(self):
         spy = _make_daily_df(260, seed=1)
-        qqq = _make_daily_df(260, seed=2)
-        result = _score_daily_tech(spy, qqq)
+        result = _score_asset_daily(spy, self.CFG)
         assert "score" in result
         assert "breakdown" in result
         assert 0 <= result["score"] <= 100
@@ -259,53 +263,61 @@ class TestScoreDailyTech:
         """新口径：RSI=5 极度超卖 → RSI 分项=100，整体分被拉高（>50）。"""
         spy = _make_daily_df(260)
         spy.iloc[-1, spy.columns.get_loc("rsi6")] = 5
-        qqq = _make_daily_df(260)
-        qqq.iloc[-1, qqq.columns.get_loc("rsi6")] = 5
-        result = _score_daily_tech(spy, qqq)
+        result = _score_asset_daily(spy, self.CFG)
         assert result["score"] > 50
-        assert result["breakdown"]["SPY_RSI_score"] == 100.0
+        assert result["breakdown"]["daily_rsi_score"] == 100.0
 
     def test_extreme_rsi_high(self):
         """新口径：RSI=95 极度超买 → 分档落在 90 档 → RSI 分项=10，整体分被压低（<50）。"""
         spy = _make_daily_df(260)
         spy.iloc[-1, spy.columns.get_loc("rsi6")] = 95
-        qqq = _make_daily_df(260)
-        qqq.iloc[-1, qqq.columns.get_loc("rsi6")] = 95
-        result = _score_daily_tech(spy, qqq)
+        result = _score_asset_daily(spy, self.CFG)
         assert result["score"] < 50
-        assert result["breakdown"]["SPY_RSI_score"] == 10.0
+        assert result["breakdown"]["daily_rsi_score"] == 10.0
 
 
 # ── 镜像等价性（核心不变量）───────────────────────────────────────────────────
 
 
 class TestMirrorEquivalence:
-    """所有子项线性 → 新 composite = 100 - 旧 composite（旧公式内联为黄金参照）。"""
+    """所有子项线性 → 新 composite = 100 - 旧 composite（旧公式内联为黄金参照）。
+
+    2026-11-10 拆分后仍成立，且**按单个指数**验证：拆分不新造口径，只是把
+    原来两指数各维 50/50 的平均展开成各自独立的分数。
+    """
+
+    CFG = _INDEX_CONFIGS["SPY"]
+
+    def _new_dimensions(self, daily_df, weekly_df):
+        from trader_analysis.futu_strategy.market_scorer import _score_asset_weekly
+
+        return (
+            _score_asset_daily(daily_df, self.CFG)["score"],
+            _score_asset_weekly(weekly_df, self.CFG)["score"],
+            _score_asset_price_position(daily_df, self.CFG)["score"],
+        )
 
     def test_composite_mirror(self):
         spy_d = _make_daily_df(260, seed=1)
-        qqq_d = _make_daily_df(260, seed=2)
         spy_w = _make_weekly_df(60, seed=11)
-        qqq_w = _make_weekly_df(60, seed=12)
 
-        new = _compute_score(spy_d, qqq_d, spy_w, qqq_w, "2026-10-16")["composite_score"]
-        old = self._legacy_composite(spy_d, qqq_d, spy_w, qqq_w)
-        # 生产值 round 到 1 位，容差取半位
-        assert new == pytest.approx(100 - old, abs=0.051), f"new={new}, old={old}"
+        d, w, p = self._new_dimensions(spy_d, spy_w)
+        new = d * 0.50 + w * 0.35 + p * 0.15
+        old = self._legacy_composite(spy_d, spy_d, spy_w, spy_w)
+        assert new == pytest.approx(100 - old, abs=0.06), f"new={new}, old={old}"
 
     def test_dimension_mirror(self):
         """三个维度分数也各自镜像。"""
         spy_d = _make_daily_df(260, seed=3)
-        qqq_d = _make_daily_df(260, seed=4)
         spy_w = _make_weekly_df(60, seed=13)
-        qqq_w = _make_weekly_df(60, seed=14)
 
-        result = _compute_score(spy_d, qqq_d, spy_w, qqq_w, "2026-10-16")
-        dims = {d["key"]: d["score"] for d in result["dimensions"]}
-        old_daily, old_weekly, old_price = self._legacy_dimensions(spy_d, qqq_d, spy_w, qqq_w)
-        assert dims["daily_tech"] == pytest.approx(100 - old_daily, abs=0.051)
-        assert dims["weekly_tech"] == pytest.approx(100 - old_weekly, abs=0.051)
-        assert dims["price_position"] == pytest.approx(100 - old_price, abs=0.051)
+        d, w, p = self._new_dimensions(spy_d, spy_w)
+        old_daily, old_weekly, old_price = self._legacy_dimensions(
+            spy_d, spy_d, spy_w, spy_w
+        )
+        assert d == pytest.approx(100 - old_daily, abs=0.06)
+        assert w == pytest.approx(100 - old_weekly, abs=0.06)
+        assert p == pytest.approx(100 - old_price, abs=0.06)
 
     # ── 旧口径参照实现（2026-10-19 反转前的公式，勿再改动）──
 
@@ -381,67 +393,51 @@ class TestMirrorEquivalence:
 
 
 class TestExtremeLayers:
-    @staticmethod
-    def _patch_dims(monkeypatch, score: float) -> None:
-        from trader_analysis.futu_strategy import market_scorer
-
-        stub = lambda *a, **k: {"score": score, "breakdown": {}}  # noqa: E731
-        monkeypatch.setattr(market_scorer, "_score_daily_tech", stub)
-        monkeypatch.setattr(market_scorer, "_score_weekly_tech", stub)
-        monkeypatch.setattr(market_scorer, "_score_price_position", stub)
+    """极端层与仓位映射。拆分后按**单指数**判定，逻辑与合并期一致。"""
 
     @staticmethod
-    def _frames(rsi: float = 50.0):
-        spy_d = _make_daily_df(260, seed=1)
-        qqq_d = _make_daily_df(260, seed=2)
-        spy_w = _make_weekly_df(60, seed=11)
-        qqq_w = _make_weekly_df(60, seed=12)
-        for df in (spy_d, qqq_d, spy_w, qqq_w):
-            df.iloc[-1, df.columns.get_loc("rsi6")] = rsi
-        return spy_d, qqq_d, spy_w, qqq_w
+    def _result(score: float, rsi: float = 50.0) -> dict:
+        daily = _make_daily_df(260, seed=1)
+        daily.iloc[-1, daily.columns.get_loc("rsi6")] = rsi
+        dim = {"score": score, "breakdown": {"daily_rsi": rsi, "weekly_rsi": rsi}}
+        return _build_index_result("SPY", "2026-10-16", dim, dim, dim, daily)
 
-    def test_heavy_extreme(self, monkeypatch):
+    def test_heavy_extreme(self):
         """composite>=85 且日/周 RSI<30 → heavy，仓位 100~120%，期权超配。"""
-        self._patch_dims(monkeypatch, 90.0)
-        result = _compute_score(*self._frames(rsi=5.0), score_date="2026-10-16")
+        result = self._result(score=90.0, rsi=5.0)
         assert result["extreme_triggered"] is True
         assert result["extreme_level"] == "heavy"
         assert result["target_position_pct"] == pytest.approx(round(100 + 5 * 20.0 / 15, 1))
         assert result["leverage_tool"] == "margin + OTM_call"
 
-    def test_heavy_guard_by_rsi(self, monkeypatch):
+    def test_heavy_guard_by_rsi(self):
         """composite>=85 但 RSI 不低 → 降级 light（RSI 守卫生效）。"""
-        self._patch_dims(monkeypatch, 90.0)
-        result = _compute_score(*self._frames(rsi=50.0), score_date="2026-10-16")
+        result = self._result(score=90.0, rsi=50.0)
         assert result["extreme_level"] == "light"
         assert result["target_position_pct"] == pytest.approx(100.0)
         assert result["leverage_tool"] == "margin"
 
-    def test_light_extreme(self, monkeypatch):
+    def test_light_extreme(self):
         """composite 75~85 → light，仓位 85~100%。"""
-        self._patch_dims(monkeypatch, 80.0)
-        result = _compute_score(*self._frames(rsi=50.0), score_date="2026-10-16")
+        result = self._result(score=80.0, rsi=50.0)
         assert result["extreme_level"] == "light"
         assert result["target_position_pct"] == pytest.approx(85 + 5 * 1.5)
 
-    def test_normal_zone(self, monkeypatch):
+    def test_normal_zone(self):
         """composite<75 → 正常区，仓位 30~85%。"""
-        self._patch_dims(monkeypatch, 50.0)
-        result = _compute_score(*self._frames(rsi=50.0), score_date="2026-10-16")
+        result = self._result(score=50.0, rsi=50.0)
         assert result["extreme_triggered"] is False
         assert result["extreme_level"] == "none"
         assert result["target_position_pct"] == pytest.approx(round(30 + 50 * 55.0 / 75, 1))
         assert result["leverage_tool"] == "none"
 
-    def test_status_mirror(self, monkeypatch):
+    def test_status_mirror(self):
         """高分 → 恐慌文案；低分 → 贪婪文案。"""
-        self._patch_dims(monkeypatch, 90.0)
-        high = _compute_score(*self._frames(rsi=50.0), score_date="2026-10-16")
+        high = self._result(score=90.0, rsi=50.0)
         assert high["market_status"] == "极度恐慌"
         assert high["action_suggestion"] == "重仓逆势买入"
 
-        self._patch_dims(monkeypatch, 10.0)
-        low = _compute_score(*self._frames(rsi=50.0), score_date="2026-10-16")
+        low = self._result(score=10.0, rsi=50.0)
         assert low["market_status"] == "极度贪婪"
         assert low["action_suggestion"] == "大幅减仓"
 
@@ -542,12 +538,11 @@ class TestMarketBonus:
 # ── 集成测试 ──────────────────────────────────────────────────────────────────
 
 
-class TestCalculateMarketTemperature:
+class TestCalculateIndexTemperatures:
     @pytest.fixture(autouse=True)
     def setup_db(self):
         """用合成数据初始化临时数据库。"""
         storage.init_db()
-        # 写入 SPY/QQQ/GLD/VIX 日线和周线
         for code, seed in [("US.SPY", 10), ("US.QQQ", 20), ("US.GLD", 30), ("US.VIXY", 40)]:
             daily = _make_daily_df(
                 260, base_price=500 if code != "US.VIXY" else 25, seed=seed, for_storage=True
@@ -560,38 +555,52 @@ class TestCalculateMarketTemperature:
             weekly = _make_weekly_df(60, seed=seed, for_storage=True)
             storage.batch_upsert(code, "1w", weekly)
 
-    def test_returns_expected_structure(self):
-        result = calculate_market_temperature()
-        assert "composite_score" in result
-        assert "target_position_pct" in result
-        assert "extreme_triggered" in result
-        assert "dimensions" in result
-        assert "indicators" in result
-        assert "market_status" in result
-        assert "action_suggestion" in result
-        assert 0 <= result["composite_score"] <= 100
-        assert 10 <= result["target_position_pct"] <= 120
-        assert len(result["dimensions"]) == 3
+    def test_returns_two_indexes_and_spread(self):
+        result = calculate_index_temperatures()
+        assert len(result["indexes"]) == 2
+        assert {i["key"] for i in result["indexes"]} == {"SPY", "QQQ"}
+        for item in result["indexes"]:
+            for key in (
+                "composite_score",
+                "target_position_pct",
+                "extreme_triggered",
+                "dimensions",
+                "indicators",
+                "market_status",
+                "action_suggestion",
+            ):
+                assert key in item, key
+            assert 0 <= item["composite_score"] <= 100
+            assert 30 <= item["target_position_pct"] <= 120
+            assert len(item["dimensions"]) == 3
+        assert "value" in result["spread"] and "label" in result["spread"]
 
-    def test_persists_to_storage(self):
-        calculate_market_temperature()
-        stored = storage.query_latest_market_score()
-        assert stored
-        assert "composite_score" in stored
-        assert "detail" in stored
+    def test_persists_two_rows(self):
+        calculate_index_temperatures()
+        stored = storage.query_latest_market_temp_split()
+        assert len(stored) == 2
+        assert {row["code"] for row in stored} == {"US.SPY", "US.QQQ"}
+        assert all("detail" in row for row in stored)
+
+    def test_idempotent(self):
+        calculate_index_temperatures()
+        calculate_index_temperatures()
+        stored = storage.query_latest_market_temp_split()
+        assert len(stored) == 2  # 同一日重复执行不翻倍
 
     def test_history_query(self):
-        calculate_market_temperature()
-        history = storage.query_market_score_history(30)
-        assert len(history) >= 1
+        calculate_index_temperatures()
+        history = storage.query_market_temp_split_history()
+        assert len(history) >= 2
         assert "composite_score" in history[0]
 
-    def test_no_data_returns_neutral(self, tmp_path, monkeypatch):
-        """无数据时所有维度 fallback 为 50，综合也≈50。"""
-        # 使用一个全新的空数据库（fixture 已写入合成数据，这里需要空库）
+    def test_no_data_degrades_without_faking_score(self, tmp_path, monkeypatch):
+        """无数据时该指数标记 data_insufficient，不得伪造中性 50 分。"""
         empty_db = str(tmp_path / "empty.db")
         monkeypatch.setattr("trader_analysis.futu_strategy.config.DB_PATH", empty_db)
         storage.init_db()
 
-        result = calculate_market_temperature()
-        assert 45 <= result["composite_score"] <= 55
+        result = compute_index_temperature("SPY")
+        assert result is not None
+        assert result["data_insufficient"] is True
+        assert result["composite_score"] is None

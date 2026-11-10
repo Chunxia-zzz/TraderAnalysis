@@ -141,7 +141,7 @@ git diff --cached | grep -iE "acc_id|token|password|secret|BEGIN .*PRIVATE"
 
 **质量门**（每次实现结束）：
 
-- `pytest -q` 全绿（当前 **95 项**，数字变了要同步改这里）
+- `pytest -q` 全绿（当前 **110 项**，数字变了要同步改这里）
 - 本地批量验证通过后才推送，不要每改一处就部署
 - 提交信息用 `feat:` / `fix:` / `docs:` / `chore:` / `refactor:` 前缀
 

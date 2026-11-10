@@ -1,4 +1,10 @@
-"""市场温度 API 端点测试。"""
+"""市场温度 API 端点测试（2026-11-10 起按指数拆分）。
+
+契约要点：
+  - 顶层不再有 composite_score / target_position_pct
+  - indexes[] 每条自带 composite_score / target_position_pct
+  - spread = SPY − QQQ，负值 = 标普相对更强
+"""
 
 from __future__ import annotations
 
@@ -17,86 +23,113 @@ def _isolate_db(monkeypatch, tmp_path):
     storage.init_db()
 
 
+def _seed(date: str, code: str, score: float, position: float, level: str = "none") -> None:
+    storage.upsert_market_temp_split(
+        date,
+        code,
+        {
+            "composite_score": score,
+            "target_position_pct": position,
+            "extreme_triggered": level != "none",
+            "extreme_level": level,
+            "leverage_tool": "none",
+            "market_status": "偏悲观",
+            "action_suggestion": "积极加仓",
+            "dimensions": [
+                {"key": "daily_tech", "label": "日线技术面", "score": score, "weight": 0.5},
+                {"key": "weekly_tech", "label": "周线技术面", "score": score, "weight": 0.35},
+                {"key": "price_position", "label": "价格位置", "score": score, "weight": 0.15},
+            ],
+            "indicators": {
+                "price": 100.0,
+                "daily_rsi": 50.0,
+                "weekly_rsi": 50.0,
+                "ma200_dev": 0.0,
+                "ath_drawdown": 0.05,
+                "pos_52w": 0.5,
+            },
+            "detail": {},
+        },
+    )
+
+
 @pytest.mark.asyncio
 async def test_market_temperature_not_found():
     """无数据时返回 200 + message。"""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         resp = await ac.get("/api/market-temperature")
     assert resp.status_code == 200
-    assert "暂无市场温度数据" in resp.json()["message"]
-    assert resp.json()["data"] is None
-
-
-@pytest.mark.asyncio
-async def test_market_temperature_history_empty():
-    """历史为空时返回空列表。"""
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        resp = await ac.get("/api/market-temperature/history?days=7")
-    assert resp.status_code == 200
-    assert resp.json()["history"] == []
+    body = resp.json()
+    assert body["data"] is None
+    assert "指数温度" in body["message"]
 
 
 @pytest.mark.asyncio
 async def test_market_temperature_with_data():
-    """插入数据后能正常返回。"""
-    storage.upsert_market_score("2026-05-01", {
-        "composite_score": 42.3,
-        "target_position_pct": 56.2,
-        "extreme_triggered": False,
-        "leverage_tool": "none",
-        "daily_tech_score": 38.5,
-        "weekly_tech_score": 45.2,
-        "vol_score": 52.1,
-        "price_score": 35.8,
-        "volume_score": 44.0,
-        "safe_haven_score": 55.3,
-        "spy_price": 5320.5,
-        "qqq_price": 438.2,
-        "gld_price": 312.5,
-        "vix_value": 22.5,
-        "spy_daily_rsi": 45.2,
-        "qqq_daily_rsi": 42.8,
-        "spy_weekly_rsi": 52.1,
-        "qqq_weekly_rsi": 48.5,
-        "spy_ma200_dev": -0.031,
-        "qqq_ma200_dev": -0.052,
-        "spy_vol_ratio": 1.2,
-        "qqq_vol_ratio": 0.9,
-        "detail": {"SPY_RSI": 45.2, "QQQ_RSI": 42.8},
-    })
+    """插入数据后返回两个指数 + 温差，且顶层不再有全局分数。"""
+    _seed("2026-05-01", "US.SPY", 70.3, 81.6)
+    _seed("2026-05-01", "US.QQQ", 79.4, 91.6, level="light")
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         resp = await ac.get("/api/market-temperature")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["composite_score"] == 42.3
-    assert data["target_position_pct"] == 56.2
-    assert data["extreme_triggered"] is False
+
+    # 契约：顶层不再暴露全局温度与全局仓位
+    assert "composite_score" not in data
+    assert "target_position_pct" not in data
+
+    assert [i["key"] for i in data["indexes"]] == ["SPY", "QQQ"]
+    spy, qqq = data["indexes"]
+    assert spy["composite_score"] == 70.3
+    assert qqq["composite_score"] == 79.4
+    assert qqq["extreme_level"] == "light"
+    assert data["spread"]["value"] == pytest.approx(-9.1)
+    assert data["spread"]["label"] == "标普相对更强"
+    assert len(spy["dimensions"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_market_temperature_history_empty():
+    """历史为空时返回空序列而非报错。"""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        resp = await ac.get("/api/market-temperature/history?days=7")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["spread"] == []
+    assert all(s["points"] == [] for s in body["series"])
 
 
 @pytest.mark.asyncio
 async def test_market_temperature_history_with_data():
-    """历史查询正常返回。"""
-    storage.upsert_market_score("2026-05-01", {
-        "composite_score": 42.3,
-        "target_position_pct": 56.2,
-        "extreme_triggered": False,
-        "leverage_tool": "none",
-        "detail": {},
-    })
-    storage.upsert_market_score("2026-05-02", {
-        "composite_score": 44.1,
-        "target_position_pct": 54.7,
-        "extreme_triggered": False,
-        "leverage_tool": "none",
-        "detail": {},
-    })
+    """历史按日期升序返回两条序列，温差逐点等于 SPY − QQQ。"""
+    for date, spy_score, qqq_score in [
+        ("2026-05-01", 42.3, 44.1),
+        ("2026-05-02", 48.0, 40.0),
+    ]:
+        _seed(date, "US.SPY", spy_score, 56.2)
+        _seed(date, "US.QQQ", qqq_score, 54.7)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         resp = await ac.get("/api/market-temperature/history?days=7")
     assert resp.status_code == 200
-    history = resp.json()["history"]
-    assert len(history) == 2
-    # 升序（较早的在前）
-    assert history[0]["date"] == "2026-05-01"
-    assert history[1]["date"] == "2026-05-02"
+    body = resp.json()
+
+    spy_points = next(s for s in body["series"] if s["key"] == "SPY")["points"]
+    qqq_points = next(s for s in body["series"] if s["key"] == "QQQ")["points"]
+    assert [p["date"] for p in spy_points] == ["2026-05-01", "2026-05-02"]
+    assert [p["date"] for p in qqq_points] == ["2026-05-01", "2026-05-02"]
+
+    spread = body["spread"]
+    assert len(spread) == 2
+    assert spread[0]["value"] == pytest.approx(-1.8)
+    assert spread[1]["value"] == pytest.approx(8.0)
+
+
+@pytest.mark.asyncio
+async def test_history_start_is_clamped_to_2025():
+    """start 早于 2025-01-01 时一律夹到 2025-01-01（更早不做拆分回算）。"""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        resp = await ac.get("/api/market-temperature/history?start=2024-06-01")
+    assert resp.status_code == 200
+    assert resp.json()["start"] == "2025-01-01"

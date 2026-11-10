@@ -140,9 +140,10 @@ trader-analysis update --codes US.SPY US.QQQ  # 只更新指定标的
 trader-analysis score
 trader-analysis score --backfill 900   # 回溯 900 天历史评分
 
-# 市场温度评分（3 维度综合评分 + 目标仓位建议）
+# 指数温度（SPY / QQQ 各一套三维度 + 各自仓位建议 + 温差）
 trader-analysis temperature
 trader-analysis temperature --backfill 900
+trader-analysis temperature --since 2025-01-01   # 一次性回算（更早不处理）
 
 # 扫描交易信号（顶/底/EMA 交叉 + 利弗莫尔关键点，需要 OpenD 拉最新行情）
 trader-analysis scan-signals
@@ -179,7 +180,7 @@ trader-analysis run
 | `update` | 增量更新 K 线与指标（**默认只落已收盘 K 线**；`--allow-partial` 强制写盘中止） | ✓ |
 | `run` | 完整策略流程：增量更新 → 评分 → 模拟盘交易 | ✓ |
 | `score` | 纯本地评分：从 DB 读指标计算并写 `score_results`（支持 `--backfill N`） | ✗ |
-| `temperature` | 市场温度评分 + 目标仓位建议（支持 `--backfill N`） | ✗ |
+| `temperature` | **指数温度**：SPY / QQQ 各一套 + 温差（支持 `--backfill N` / `--since YYYY-MM-DD`） | ✗ |
 | `scan-signals` | 扫描顶/底信号并落库（支持 `--backfill N`） | ✗ |
 | `scan-top` | 只扫顶背离预警（不依赖 OpenD） | ✗ |
 | `livermore` | 利弗莫尔关键点扫描（`--top` / `--all` / `--date` / `--persist` / `--backfill N`） | ✗ |
@@ -215,8 +216,8 @@ trader-analysis run
 | GET | `/api/tp-sl` | 止盈止损位计算 |
 | GET | `/api/livermore/signals` | 利弗莫尔关键点信号（独立体系；四分组：突破/逼近/已在关键点上方/风险），支持 `date`/`source`/`all`/`refresh` |
 | GET | `/api/livermore/detail?code=US.AAPL` | 单标的利弗莫尔关键点全景（箱体/关键点/止损/金字塔/潮汐/相对强度）+ 可画线 `levels` |
-| GET | `/api/market-temperature` | 市场温度评分（3 维度综合） |
-| GET | `/api/market-temperature/history?days=30` | 市场温度历史趋势 |
+| GET | `/api/market-temperature` | 指数温度（SPY / QQQ 各一条 + 温差），附 GLD/BTC 资产温度 |
+| GET | `/api/market-temperature/history?start=2025-01-01` | 两指数温度序列 + 温差序列（2025-01-01 起） |
 | GET | `/api/asset-temperature/history?asset=GLD&days=60` | 黄金/比特币资产温度历史 |
 | GET | `/api/position?env=real` | 实时持仓（**需 OpenD**） |
 | GET | `/api/position-states?code=US.AAPL` | 持仓状态（不传 code 返回所有非 EMPTY 持仓） |

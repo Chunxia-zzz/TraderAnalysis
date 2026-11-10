@@ -89,6 +89,7 @@ def score(
     from trader_analysis.futu_strategy.storage import (
         init_db,
         query_latest_score,
+        query_panic_composite_map,
         query_recent,
         upsert_score,
     )
@@ -96,13 +97,8 @@ def score(
     init_db()
     code_list = codes if codes else config.WATCHLIST
 
-    # 读取大盘温度历史（用于恐慌加成）
-    import sqlite3
-
-    db_path = config.DB_PATH
-    _conn = sqlite3.connect(db_path)
-    market_temps = dict(_conn.execute("SELECT date, composite_score FROM market_score").fetchall())
-    _conn.close()
+    # 读取恐慌加成输入（拆分温度的两指数平均优先，2025-01-01 前回落冻结的合并值）
+    market_temps = query_panic_composite_map()
 
     if backfill > 0:
         typer.echo(f"回溯 {backfill} 天，{len(code_list)} 个标的...")
@@ -300,34 +296,62 @@ def fundamental(
 @app.command()
 def temperature(
     backfill: int = typer.Option(0, help="回溯天数（从已有K线数据计算历史评分，0=仅计算最新）"),
+    since: str = typer.Option(
+        "", help="回溯起始日期 YYYY-MM-DD（与 --backfill 互斥；阈值前的历史已被冻结）"
+    ),
 ) -> None:
-    """计算市场温度评分（三维 50/35/15：日线技术面 / 周线技术面 / 价格位置 + 目标仓位建议）。"""
+    """计算指数温度评分（SPY / QQQ 各一套三维 50/35/15，各给各的仓位建议）。"""
     from trader_analysis.futu_strategy.market_scorer import (
-        backfill_market_temperature,
-        calculate_market_temperature,
+        backfill_index_temperatures,
+        calculate_index_temperatures,
+        spread_label,
     )
     from trader_analysis.futu_strategy.storage import init_db
+
+    if backfill > 0 and since:
+        typer.echo("--backfill 与 --since 不能同时使用", err=True)
+        raise typer.Exit(code=1)
 
     init_db()
 
     if backfill > 0:
-        typer.echo(f"回溯计算最近 {backfill} 天的市场温度...")
-        count = backfill_market_temperature(days=backfill)
-        typer.echo(f"回溯完成，写入 {count} 天评分")
+        typer.echo(f"回溯计算最近 {backfill} 个交易日的指数温度...")
+        count = backfill_index_temperatures(days=backfill)
+        typer.echo(f"回溯完成，写入 {count} 行（每指数一行）")
+        typer.echo("")
+    elif since:
+        typer.echo(f"回溯计算 {since} 起的指数温度...")
+        count = backfill_index_temperatures(start_date=since)
+        typer.echo(f"回溯完成，写入 {count} 行（每指数一行）")
         typer.echo("")
 
-    result = calculate_market_temperature()
+    result = calculate_index_temperatures()
 
     typer.echo(f"日期: {result['date']}")
-    typer.echo(f"综合评分: {result['composite_score']:.1f} / 100")
-    typer.echo(f"市场状态: {result['market_status']}")
-    typer.echo(f"建议仓位: {result['target_position_pct']:.1f}%")
-    typer.echo(f"操作建议: {result['action_suggestion']}")
-    if result["extreme_triggered"]:
-        typer.echo(f"[极端层已触发] 杠杆工具: {result['leverage_tool']}")
-    typer.echo("── 维度拆解 ──")
-    for dim in result["dimensions"]:
-        typer.echo(f"  {dim['label']:6s} [{dim['weight']:.0%}]  {dim['score']:.1f}")
+    for item in result["indexes"]:
+        if item.get("data_insufficient"):
+            typer.echo(f"{item['key']:4s} 数据不足：{item.get('reason')}")
+            continue
+        typer.echo(
+            f"{item['key']:4s} {item['composite_score']:5.1f} "
+            f"{item['market_status']}/{item['action_suggestion']} "
+            f"仓位 {item['target_position_pct']:.1f}%"
+        )
+        typer.echo("     ── 维度拆解 ──")
+        for dim in item["dimensions"]:
+            typer.echo(f"       {dim['label']:6s} [{dim['weight']:.0%}]  {dim['score']:.1f}")
+        if item["extreme_triggered"]:
+            # 逐行打印，避免单行超过 100 字符（ruff E501）
+            typer.echo(
+                f"       [极端层已触发:{item['extreme_level']}] "
+                f"杠杆工具: {item['leverage_tool']}"
+            )
+
+    spread_value = result["spread"]["value"]
+    if spread_value is None:
+        typer.echo(f"温差: 数据不足（{spread_label(None)}）")
+    else:
+        typer.echo(f"温差: {spread_value:+.1f}（{result['spread']['label']}）")
 
 
 @app.command()

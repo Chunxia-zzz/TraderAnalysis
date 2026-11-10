@@ -212,11 +212,28 @@ PY="C:/Users/Administrator/.workbuddy/binaries/python/versions/3.13.12/python.ex
 # 1) 日报（--content-file 指向写好的 md）
 "$PY" "$SK/doc/create_doc.py" --title "YYYY-MM-DD 日更报告" \
   --space-id amo3KT37smg61B4NxXioH5 --parent-id 4BgHP4FXxMwztC7aUaY57V --content-file <md路径>
-# 2) 台账加一行（字段：日期/市场温度/建议仓位%/强买数/买入数/3/3通过/结构/关键动作/日报）
+# 2) 台账加一行
 "$PY" "$SK/database/batch_add_database_records.py" --database-id QI8Ansx2e0x7PYMyXWOwwc --records "$REC"
 # 3) 必做回读（success=true 不等于真落库）
 "$PY" "$SK/database/get_database_record.py" --database-id QI8Ansx2e0x7PYMyXWOwwc --record-id <rid>
 ```
+
+**台账字段（2026-11-11 起按指数拆分，共 12 列）**
+
+| 字段 | 类型 | 取值来源 |
+|---|---|---|
+| 日期 | date | **数据日**（不是执行日） |
+| SPY温度 / QQQ温度 | number | `temperature` 命令输出的两行综合分 |
+| 温差 | number | `SPY温度 − QQQ温度`（负数=标普相对更强） |
+| SPY仓位% / QQQ仓位% | number | 各自的建议仓位，不是组合闸门 |
+| 强买数 / 买入数 / 3/3通过 | number | `/api/scores/overview` 的 `summary` + 3/3 清单 |
+| 结构 | select | 急跌未破位 / 超卖修复 / 趋势转好 / 高位滞涨 / 避险切换 |
+| 关键动作 | text | 当日结论（含两指数分化与温差） |
+| 日报 | url | 上一步 `create_doc.py` 返回的链接 |
+
+> ⚠️ **别再写单一的「市场温度」列**：该列已于 2026-11-11 改名为 `SPY温度`，
+> 同时新增 `QQQ温度` / `温差` / `QQQ仓位%`，`建议仓位%` 改名为 `SPY仓位%`。
+> 2026-11-09 及更早的历史行仍只有当年那一个合并值，与拆分后的数字**不可直接比大小**。
 
 **只放结论，不镜像代码**：代码以 Git 为准、行情原始数据在 DB；空间负责跨会话留存的结论与决策。
 
@@ -391,7 +408,8 @@ for grp in ['strong_buy','buy']:
 向用户输出时包含：
 
 1. 六步执行状态表（含耗时）
-2. 市场温度 + 状态 + 建议仓位 + 与上次的变化
+2. **两个指数各自的温度 + 状态 + 建议仓位**（SPY / QQQ 分列展示），以及**温差**与它的方向含义；
+   与上期（含上一期两个数）的变化。不要再把两个数合成一个「大盘温度」报给用户
 3. STRONG_BUY / BUY 数量分布，**3/3 全通过清单**（dd60<30% + 晨星低估 + 评分≥80）
 4. 持仓评分变化，标出 EMA 转多/转空的持仓
 5. **跨期对比 STRONG_BUY 榜**：把本期与上两期的榜单并排看，标出「持续在榜 / 掉出 / 新进」。若榜单全是同一类板块（如防御股）但个股频繁换人，说明是「谁跌得多谁得分高」的机械结果，**不是板块看好** —— 报告里要讲清楚这个区别

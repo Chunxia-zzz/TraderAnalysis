@@ -4,6 +4,53 @@
 
 ---
 
+## [2026-11-10]
+
+### 市场温度按指数拆分：SPY / QQQ 各自计算与展示，合并值退役冻结
+
+**为什么拆**：原先三个维度内部都把「SPY 三项 + QQQ 三项」做算术平均，即两个指数在**每一维都各占 50%**。
+后果是一个指数深度超卖、另一个没有时，合并值永远落在中间 —— **分化被抹平**，无法回答「标普和纳指谁更恐慌」。
+用户观察到最近几个月标普持续强于纳指，要求分开展示、单独计算。
+
+**等价性（本次最重要的不变量）**：拆分不新造口径，只把平均值展开。
+实测 2026-11-09：SPY **70.3** / QQQ **79.4** → 平均 **74.85**，拆分前 `market_score` 记录 **74.9**（差 0.05，来自四舍五入）。
+拆分后两端仍用**同一套阈值**（ATH 满分线 15%、MA200 ±15%），因此两个分数可跨指数比大小、差值（温差）才有意义。
+
+规范：`specs/003-split-market-temperature/`（spec / plan / tasks）。
+
+**改动范围**
+
+- **计算**：`market_scorer` 新增 `_INDEX_CONFIGS` / `compute_index_temperature` / `compute_index_temperature_history` /
+  `compute_temperature_spread` / `spread_label` / `calculate_index_temperatures` / `backfill_index_temperatures`；
+  删除合并路径（`_score_daily_tech` / `_score_weekly_tech` / `_score_price_position` / `_compute_score` /
+  `calculate_market_temperature` / `backfill_market_temperature`）
+- **存储**：新增 `market_temp_split(date, code)` 复合主键表；删除 `upsert_market_score`（不再有写入口）；
+  `market_score` / `market_score_detail` 冻结为只读，956 行（2022-09-30 ~ 2026-11-09）原样保留
+- **接口**：`/api/market-temperature` 改为 `{date, indexes[], spread, gld_temp, btc_temp}`，
+  顶层不再有 `composite_score` / `target_position_pct`（破坏性变更）；
+  `/api/market-temperature/history` 改为 `{start, series[], spread[]}`，默认起点 2025-01-01，更早一律夹断
+- **命令行**：`trader-analysis temperature` 输出两指数 + 温差；新增 `--since YYYY-MM-DD`（与 `--backfill` 互斥）
+- **前端**（独立仓库）：温度页视图改为 `标普500 / 纳指100 / 标普-纳指温差 / 黄金 / 比特币`，
+  新增温差卡片与温差折线；删除「美股大盘」合并视图与对顶层 `composite_score` 的引用
+- **文档**：api / storage / market-temperature / README 同步；历史段落保留原文 + 加「⚠️ 勘误（2026-11-10）」
+
+**为什么恐慌加成改用「两指数平均」而不是某个单一指数**
+
+`scorer.calculate_score` 的温度加成（`market_composite > 60` 时最多 +15 分）原先读合并温度。
+若改读 SPY 或 QQQ 任一个，全池 `total_score` 会在同一数据日整体位移，历史评分序列失去可比性。
+因此新增唯一取数入口 `storage.query_panic_composite_map()`：**拆分表两指数平均优先，2025-01-01 之前回落旧合并值**。
+实测 2026-11-09 全池 **192 只**重算，`total_score` 与变更前 **0 处不一致**。
+
+**为什么合并历史不删**
+
+删数据不可逆，而它是「拆分前后是否等价」的唯一对照物。冻结后它只是不再增长，不产生运行成本；
+反过来说，只要它还在，将来任何人对拆分口径有疑问都能自己验一遍。
+
+**测试数校正**：本次实测 `pytest -q` = **95 项**（`specs/002/plan.md` 曾记为 97，`AGENTS.md` 记 95 —— 两份不一致）。
+本次新增 15 项后为 **110 项**，以实测为准统一 `AGENTS.md` 与 `constitution.md`。这不是覆盖率回退，是**校正历史笔误**。
+
+---
+
 ## [2026-11-08]
 
 ### 下线 4H 周期：删除采集 / 策略 / 接口 / 前端入口，库中历史数据冻结保留

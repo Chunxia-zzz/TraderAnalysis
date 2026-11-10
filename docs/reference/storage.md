@@ -53,9 +53,12 @@
 | 评分 | `query_latest_score(code) -> dict` | 查最新评分（`breakdown` 已反序列化） |
 | 评分 | `query_score_by_date(code, date) -> dict` | 查指定日评分 |
 | 评分 | `query_scores_overview(date=None) -> list[dict]` | 全池评分概览（指定日或最新日） |
-| 温度 | `upsert_market_score(date, result)` | 写入大盘温度 |
-| 温度 | `query_latest_market_score() -> dict` | 查最新温度 |
-| 温度 | `query_market_score_history(days=30) -> list[dict]` | 温度历史曲线 |
+| 温度 | `upsert_market_temp_split(date, code, result)` | 写入单指数温度（2026-11-10 起） |
+| 温度 | `upsert_market_temp_split_point(key, point)` | 写入历史温度点（回算用） |
+| 温度 | `query_latest_market_temp_split() -> list[dict]` | 查最新日两指数温度 |
+| 温度 | `query_market_temp_split_history(start_date, code=None) -> list[dict]` | 拆分温度历史 |
+| 温度 | `query_panic_composite_map() -> dict[str, float]` | 恐慌加成取数（split 平均优先，回落旧合并值） |
+| 温度 | `query_latest_panic_composite() -> float \| None` | 最新一天的恐慌加成输入 |
 | 基本面 | `upsert_fundamental(code, date, data)` | 写入基本面数据 |
 | 基本面 | `query_latest_fundamental(code) -> dict \| None` | 查最新基本面 |
 | 基本面 | `query_fundamentals_overview() -> list[dict]` | 全池基本面概览 |
@@ -97,8 +100,9 @@
 |------|------|--------------|
 | `kline_indicators` | K 线 + 全部技术指标 | PK `(code, ktype, date)` |
 | `score_results` | 个股评分 | PK `(code, date)` |
-| `market_score` | 大盘温度（宽表） | PK `id` 自增，`date` UNIQUE |
-| `market_score_detail` | 大盘温度明细 JSON | PK `id` 自增，`date` UNIQUE |
+| `market_temp_split` | **单指数温度**（SPY / QQQ 各一行） | PK `(date, code)` |
+| `market_score` | 合并温度（宽表）**已冻结**，2022-09-30~2026-11-09 共 956 行，不再写入 | PK `id` 自增，`date` UNIQUE |
+| `market_score_detail` | 合并温度明细 JSON **已冻结**，同上 | PK `id` 自增，`date` UNIQUE |
 | `fundamental_data` | 基本面 + 估值 | PK `(code, date)` |
 | `position_state` | 交易模块持仓状态机 | PK `code` |
 | `top_signal_log` | 顶部预警信号 | PK `id` 自增，**无唯一约束** |
@@ -161,6 +165,26 @@ CREATE TABLE IF NOT EXISTS score_results (
 ```
 
 **大盘温度表：** `market_score` 为宽表，含 `composite_score`、`target_position_pct`、`extreme_triggered`、`leverage_tool`、四类子分（`daily_tech_score` / `weekly_tech_score` / `vol_score` / `price_score` / `volume_score` / `safe_haven_score`）、以及 SPY/QQQ/GLD/VIX 的价格与 RSI、MA200 偏离、量比等原始输入列；`market_score_detail` 单独存完整 `detail_json`。
+
+> ⚠️ **2026-11-10 起这两张表已冻结**：市场温度按指数拆分后，合并值不再计算、不再写入，
+> 表内 2022-09-30 ~ 2026-11-09 共 956 行只读保留（用于追溯与「拆分是否等价」的对照）。
+> 新数据写入 `market_temp_split`，一个数据日两行（`US.SPY` / `US.QQQ`）。
+> **没有写入口**：`upsert_market_score()` 已删除，想恢复合并口径必须改代码 + 改 spec，不能靠调函数。
+
+**单指数温度表 `market_temp_split`：**
+
+| 列 | 说明 |
+|---|---|
+| `date` + `code` | 复合主键，`code` ∈ `US.SPY` / `US.QQQ` |
+| `composite_score` / `target_position_pct` | 该指数温度与**该指数自己**的建议仓位 |
+| `extreme_triggered` / `extreme_level` / `leverage_tool` | 按该指数自身日/周 RSI 判定 |
+| `market_status` / `action_suggestion` | 状态文案与建议动作 |
+| `daily_tech_score` / `weekly_tech_score` / `price_score` | 三维度分数（50/35/15） |
+| `price` / `daily_rsi` / `weekly_rsi` / `ma200_dev` / `ath_drawdown` / `pos_52w` | 关键指标快照 |
+| `detail_json` | 完整子指标明细 |
+
+- 回算起点为 **2025-01-01**（实际首个交易日 2025-01-02），更早不补算
+- 幂等：`INSERT OR REPLACE`，同一 `(date, code)` 重复执行不产生新行
 
 **基本面表：** `fundamental_data` 含估值（PE/PB/PEG/EV-EBITDA）、成长（revenue/earnings growth）、分析师目标价四件套（`target_mean/median/high/low` + `analyst_count` + `recommendation`）、财务健康（流动比/负债率/现金流/利润率/ROE）、市场属性（市值/股息率/beta/做空比），以及 `fundamental_score` + `valuation_signal` + `breakdown`。
 

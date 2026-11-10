@@ -83,7 +83,7 @@ src/trader_analysis/
     ├── data_fetcher.py       # 富途 K 线数据获取 + 额度预检
     ├── indicators.py         # 技术指标计算（纯函数，不感知标的/周期）
     ├── scorer.py             # 个股评分引擎（6 因子连续映射，满分 100）
-    ├── market_scorer.py      # 市场温度评分（3 维度加权，SPY/QQQ）+ 资产温度（GLD/BTC）
+    ├── market_scorer.py      # 指数温度（SPY / QQQ 各自 3 维度加权 + 温差）+ 资产温度（GLD/BTC）
     ├── technical_analysis.py # 道氏三层趋势 + 支撑/压力（Swing Pivot 聚类）+ 盈亏比
     ├── top_detector.py       # 顶部信号检测
     ├── bottom_detector.py    # 底部信号检测

@@ -101,6 +101,35 @@ CREATE TABLE IF NOT EXISTS market_score_detail (
     created_at  TEXT DEFAULT (datetime('now'))
 );
 
+-- 2026-11-10 起：市场温度按指数拆分。market_score / market_score_detail 已冻结，
+-- 只保留 2022-09-30 ~ 2026-11-09 的合并历史，不再写入（见 specs/003-split-market-temperature）。
+CREATE TABLE IF NOT EXISTS market_temp_split (
+    date                TEXT NOT NULL,
+    code                TEXT NOT NULL,
+    composite_score     REAL NOT NULL,
+    target_position_pct REAL,
+    extreme_triggered   INTEGER DEFAULT 0,
+    extreme_level       TEXT DEFAULT 'none',
+    leverage_tool       TEXT DEFAULT 'none',
+    market_status       TEXT,
+    action_suggestion   TEXT,
+    daily_tech_score    REAL,
+    weekly_tech_score   REAL,
+    price_score         REAL,
+    price               REAL,
+    daily_rsi           REAL,
+    weekly_rsi          REAL,
+    ma200_dev           REAL,
+    ath_drawdown        REAL,
+    pos_52w             REAL,
+    detail_json         TEXT,
+    created_at          TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (date, code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_market_temp_split_code_date
+    ON market_temp_split (code, date);
+
 CREATE TABLE IF NOT EXISTS fundamental_data (
     code               TEXT NOT NULL,
     date               TEXT NOT NULL,
@@ -411,91 +440,175 @@ def query_scores_overview(date: str | None = None) -> list[dict]:
 # ── 市场温度（Market Temperature）──────────────────────────────────────────────
 
 
-def upsert_market_score(date: str, result: dict) -> None:
-    """写入/更新市场温度评分。"""
+def _upsert_market_temp_split_row(
+    date: str,
+    code: str,
+    composite_score: float | None,
+    target_position_pct: float | None,
+    extreme_triggered: int = 0,
+    extreme_level: str = "none",
+    leverage_tool: str = "none",
+    market_status: str | None = None,
+    action_suggestion: str | None = None,
+    daily_tech_score: float | None = None,
+    weekly_tech_score: float | None = None,
+    price_score: float | None = None,
+    indicators: dict | None = None,
+    detail_json: str | None = None,
+) -> None:
+    """单指数温度落库。同一 (date, code) 覆盖写，重复执行不产生新行（spec FR-008）。"""
+    ind = indicators or {}
     conn = _get_conn()
     conn.execute(
-        "INSERT OR REPLACE INTO market_score "
-        "(date, composite_score, target_position_pct, extreme_triggered, leverage_tool, "
-        "daily_tech_score, weekly_tech_score, vol_score, price_score, volume_score, "
-        "safe_haven_score, "
-        "spy_price, qqq_price, gld_price, vix_value, "
-        "spy_daily_rsi, qqq_daily_rsi, spy_weekly_rsi, qqq_weekly_rsi, "
-        "spy_ma200_dev, qqq_ma200_dev, spy_vol_ratio, qqq_vol_ratio) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT OR REPLACE INTO market_temp_split "
+        "(date, code, composite_score, target_position_pct, extreme_triggered, extreme_level, "
+        "leverage_tool, market_status, action_suggestion, daily_tech_score, weekly_tech_score, "
+        "price_score, price, daily_rsi, weekly_rsi, ma200_dev, ath_drawdown, pos_52w, detail_json) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             date,
-            result["composite_score"],
-            result["target_position_pct"],
-            int(result.get("extreme_triggered", False)),
-            result.get("leverage_tool", "none"),
-            result.get("daily_tech_score"),
-            result.get("weekly_tech_score"),
-            result.get("vol_score"),
-            result.get("price_score"),
-            result.get("volume_score"),
-            result.get("safe_haven_score"),
-            result.get("spy_price"),
-            result.get("qqq_price"),
-            result.get("gld_price"),
-            result.get("vix_value"),
-            result.get("spy_daily_rsi"),
-            result.get("qqq_daily_rsi"),
-            result.get("spy_weekly_rsi"),
-            result.get("qqq_weekly_rsi"),
-            result.get("spy_ma200_dev"),
-            result.get("qqq_ma200_dev"),
-            result.get("spy_vol_ratio"),
-            result.get("qqq_vol_ratio"),
+            code,
+            composite_score,
+            target_position_pct,
+            extreme_triggered,
+            extreme_level,
+            leverage_tool,
+            market_status,
+            action_suggestion,
+            daily_tech_score,
+            weekly_tech_score,
+            price_score,
+            ind.get("price"),
+            ind.get("daily_rsi"),
+            ind.get("weekly_rsi"),
+            ind.get("ma200_dev"),
+            ind.get("ath_drawdown"),
+            ind.get("pos_52w"),
+            detail_json,
         ),
-    )
-    # 同时写入明细 JSON
-    detail_json = json.dumps(result.get("detail", {}), ensure_ascii=False)
-    conn.execute(
-        "INSERT OR REPLACE INTO market_score_detail (date, detail_json) VALUES (?, ?)",
-        (date, detail_json),
     )
     conn.commit()
     conn.close()
 
 
-def query_latest_market_score() -> dict:
-    """查最新一条市场温度评分。"""
-    conn = _get_conn()
-    row = conn.execute(
-        "SELECT m.*, d.detail_json FROM market_score m "
-        "LEFT JOIN market_score_detail d ON m.date = d.date "
-        "ORDER BY m.date DESC LIMIT 1"
-    ).fetchone()
-    conn.close()
-    if not row:
-        return {}
-    result = dict(row)
-    result["extreme_triggered"] = bool(result.get("extreme_triggered"))
-    if result.get("detail_json"):
-        result["detail"] = json.loads(result["detail_json"])
-    else:
-        result["detail"] = {}
-    result.pop("detail_json", None)
-    result.pop("id", None)
-    return result
+def upsert_market_temp_split(date: str, code: str, result: dict) -> None:
+    """写入一条完整的单指数温度记录（来自 market_scorer.compute_index_temperature）。"""
+    dims = {d["key"]: d["score"] for d in result.get("dimensions", [])}
+    _upsert_market_temp_split_row(
+        date=date,
+        code=code,
+        composite_score=result.get("composite_score"),
+        target_position_pct=result.get("target_position_pct"),
+        extreme_triggered=int(result.get("extreme_triggered", False)),
+        extreme_level=result.get("extreme_level", "none"),
+        leverage_tool=result.get("leverage_tool", "none"),
+        market_status=result.get("market_status"),
+        action_suggestion=result.get("action_suggestion"),
+        daily_tech_score=dims.get("daily_tech"),
+        weekly_tech_score=dims.get("weekly_tech"),
+        price_score=dims.get("price_position"),
+        indicators=result.get("indicators", {}),
+        detail_json=json.dumps(result.get("detail", {}), ensure_ascii=False),
+    )
 
 
-def query_market_score_history(days: int = 30) -> list[dict]:
-    """查近 N 天市场温度历史（日期升序）。"""
+def upsert_market_temp_split_point(index_key: str, point: dict) -> None:
+    """写入一条历史温度点（回算用，只有综合分与仓位，无明细）。"""
+    from trader_analysis.futu_strategy.market_scorer import _INDEX_CONFIGS
+
+    cfg = _INDEX_CONFIGS.get(index_key, {})
+    _upsert_market_temp_split_row(
+        date=point["date"],
+        code=cfg.get("code_daily", index_key),
+        composite_score=point.get("composite_score"),
+        target_position_pct=point.get("target_position_pct"),
+    )
+
+
+def query_latest_market_temp_split() -> list[dict]:
+    """返回最新数据日的所有指数温度记录（每个指数一条），按 code 升序。"""
     conn = _get_conn()
     rows = conn.execute(
-        "SELECT date, composite_score, target_position_pct, extreme_triggered, leverage_tool, "
-        "daily_tech_score, weekly_tech_score, vol_score, price_score, volume_score, "
-        "safe_haven_score "
-        "FROM market_score ORDER BY date DESC LIMIT ?",
-        (days,),
+        "SELECT * FROM market_temp_split "
+        "WHERE date = (SELECT MAX(date) FROM market_temp_split) "
+        "ORDER BY code"
     ).fetchall()
     conn.close()
-    result = [dict(r) for r in reversed(rows)]
-    for item in result:
+    result = []
+    for row in rows:
+        item = dict(row)
         item["extreme_triggered"] = bool(item.get("extreme_triggered"))
+        if item.get("detail_json"):
+            item["detail"] = json.loads(item["detail_json"])
+        else:
+            item["detail"] = {}
+        item.pop("detail_json", None)
+        item.pop("id", None)
+        result.append(item)
     return result
+
+
+def query_market_temp_split_history(
+    start_date: str | None = None,
+    code: str | None = None,
+    end_date: str | None = None,
+) -> list[dict]:
+    """查拆分温度历史（日期升序）。start_date=None 时返回全部。"""
+    sql = (
+        "SELECT date, code, composite_score, target_position_pct, extreme_level, market_status "
+        "FROM market_temp_split WHERE 1=1"
+    )
+    params: list = []
+    if start_date:
+        sql += " AND date >= ?"
+        params.append(start_date)
+    if end_date:
+        sql += " AND date <= ?"
+        params.append(end_date)
+    if code:
+        sql += " AND code = ?"
+        params.append(code)
+    sql += " ORDER BY date ASC, code ASC"
+
+    conn = _get_conn()
+    rows = conn.execute(sql, tuple(params)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def query_panic_composite_map() -> dict[str, float]:
+    """个股评分「恐慌加成」的唯一取数入口（按日期）。
+
+    优先取拆分表两指数温度的算术平均（与拆分前合并值等价，spec FR-016），
+    拆分表没有的日期（2025-01-01 以前）回落到冻结的 market_score。
+    """
+    conn = _get_conn()
+    split_rows = conn.execute(
+        "SELECT date, AVG(composite_score) FROM market_temp_split GROUP BY date"
+    ).fetchall()
+    legacy_rows = conn.execute(
+        "SELECT date, composite_score FROM market_score"
+    ).fetchall()
+    conn.close()
+
+    merged: dict[str, float] = {d: float(v) for d, v in legacy_rows if v is not None}
+    merged.update({d: float(v) for d, v in split_rows if v is not None})
+    return merged
+
+
+def query_latest_panic_composite() -> float | None:
+    """最新一天的恐慌加成输入值（拆分平均优先，回落旧合并值）。"""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT AVG(composite_score) FROM market_temp_split "
+        "WHERE date = (SELECT MAX(date) FROM market_temp_split)"
+    ).fetchone()
+    if not row or row[0] is None:
+        row = conn.execute(
+            "SELECT composite_score FROM market_score ORDER BY date DESC LIMIT 1"
+        ).fetchone()
+    conn.close()
+    return float(row[0]) if row and row[0] is not None else None
 
 
 # ── 基本面数据 (Fundamental) ──────────────────────────────────────────────────

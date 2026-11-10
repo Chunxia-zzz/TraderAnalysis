@@ -64,7 +64,7 @@ Futu（富途）量化评分与模拟盘交易系统。核心链路：**Futu Ope
 | `specs/` | **事前意图**：每个 feature 一个 `NNN-<ascii-slug>/`（spec / plan / tasks），见 `specs/README.md` |
 | `skills/` | 技能唯一真相源，见 §7 |
 | `scripts/` | 运维与一次性脚本；`scripts/agent/` 是 agent 相关工具 |
-| `tests/` | pytest，当前 **95 项** |
+| `tests/` | pytest，当前 **110 项** |
 
 ## 4. clone 后第一件事
 
@@ -213,7 +213,7 @@ specify extension add bug                  # 重建缺陷三件套命令（asses
 ```bash
 trader-analysis serve              # 起 API（8000）
 trader-analysis update             # 增量拉 K 线（需 OpenD，约 6–9 分钟）
-trader-analysis temperature        # 市场温度（支持 --backfill N）
+trader-analysis temperature        # 指数温度 SPY/QQQ + 温差（支持 --backfill N / --since）
 trader-analysis score              # 个股评分（不依赖 OpenD）
 trader-analysis scan-signals       # 扫顶/底/EMA/利弗莫尔信号
 trader-analysis livermore --persist
