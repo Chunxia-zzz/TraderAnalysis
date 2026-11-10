@@ -101,7 +101,7 @@
 ## Phase 9: 验证与收尾
 
 - [x] T032 本地联调：后端 8000 + 前端 5173，温度页走查全绿
-- [ ] T033 线上同步：按流水线上线（push main → check 绿 → deploy），公网回读 `/api/market-temperature` 顶层无 `composite_score`
+- [x] T033 线上同步：按流水线上线（push main → check 绿 → deploy），公网回读 `/api/market-temperature` 顶层无 `composite_score`
 - [x] T034 `converge` 复核：spec 的 FR-001~FR-016 / SC-001~SC-008 逐条对照，未达成项补任务
 
 ---
@@ -137,5 +137,19 @@
 | SC-007 | `api.md` 两端点结构、字段表、示例已同步 ✅ |
 | SC-008 | 192 只按 11-09 切片重算，0 处与基线不一致 ✅ |
 
-**剩余动作**：T033 线上同步 —— 刻意未执行。本次是接口破坏性变更（顶层 `composite_score` 移除），
-必须先在后端 + 前端同时就绪后一起部署，单独推后端会让线上旧页面白屏。
+**上线记录（2026-11-11）**
+
+| 项 | 值 |
+|---|---|
+| 部署顺序 | **前端先、后端后**（先上后端会让旧页面读 `composite_score` 直接崩；先上前端只短暂显示空态） |
+| 前端 | `c42a996`，run #8 success，线上资源 `MarketTemperature-UrPj4xEZ.js` |
+| 后端 | `f20fe4b`，deploy job success，`/api/market-temperature` 回读 `indexes` + `spread` |
+| 数据 | 部署后补 `scp data/indicators.db`（bytes 87,654,400 双向一致）—— **新表不会随代码部署**，这一步漏了就会报「暂无指数温度数据」 |
+| 线上走查 | 5 个视图渲染正常、`undefined`/`NaN` 出现次数 0、控制台错误 0 |
+
+**首次上线踩到的两件事**
+
+1. 前端 CI 红在 `tests/unit/api.spec.js`：改默认参数时**没先跑 `npm run test:unit`**，只跑了 `npm run build`。
+   教训：前端改动 push 前跑 `npm run lint && npm run test:unit && npm run build`（等同 `bash scripts/check.sh`）。
+2. 后端 ruff 报 5 处（未用 import ×2、行过长 ×2、import 排序 ×1）——删掉合并路径后留下的死 import。
+   `bash scripts/check.sh` 本地跑一次就能全抓到。
