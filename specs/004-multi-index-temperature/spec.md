@@ -4,7 +4,9 @@
 
 **Created**: 2026-11-14
 
-**Status**: Draft
+**Status**: Implemented & Deployed（2026-11-14）— 后端 113 项测试全绿、`bash scripts/check.sh` 通过；
+线上 `indexes` 6 条、页面 3 大 tab + 7 小 tab、SOXX 提示可见、0 控制台错误。
+后端 `5dc226d` / 前端 `3e10442`；部署后补 `scp` DB（90,898,432 bytes 双向一致）。
 
 **Input**: User description: "美股、黄金、比特币三个大 tab，美股下面细分指数用小 tab；加 RSP、IWM、SOXX、DIA；阈值全部共用一套，SOXX 标注为高波动周期股，温度参考意义有限；历史从 2023-01 开始补。"
 
