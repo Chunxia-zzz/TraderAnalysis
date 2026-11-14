@@ -701,9 +701,15 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
 
 ### GET `/api/market-temperature`
 
-返回最新一期的**指数温度**（SPY / QQQ 各一条）与温差，并附黄金/BTC 单资产温度。
+返回最新一期的**指数温度**（6 个美股指数各一条）与温差，并附黄金/BTC 单资产温度。
 
-> **2026-11-10 结构变更（当前契约）**：市场温度已按指数拆分。顶层**不再返回** `composite_score` /
+> **2026-11-14 扩展（当前契约）**：指数由 2 个扩到 **6 个**（新增 DIA / IWM / SOXX / RSP），
+> 每条新增 `note` / `group` / `is_etf_proxy`；顶层新增 `groups` 供前端做三级导航。详见
+> `specs/004-multi-index-temperature/`。**六个指数全部为 ETF 代理**——富途不提供
+> `US.DJI` / `US.RUT` / `US.SOX` 的行情（实测 `last_price` 均为 0），因此 `indicators.price` 是
+> ETF 价格，不是指数点位。
+>
+> **2026-11-10 结构变更**：市场温度已按指数拆分。顶层**不再返回** `composite_score` /
 > `target_position_pct`（合并值已退役），改由 `indexes[]` 每条自带分数与仓位建议。详见
 > `specs/003-split-market-temperature/`。
 >
@@ -784,8 +790,11 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `date` | string | 数据日期（最近一个已收盘交易日） |
-| `indexes[]` | array | **固定 2 条**，顺序为 SPY、QQQ |
-| `indexes[].key` | string | `SPY` / `QQQ` |
+| `indexes[]` | array | **固定 6 条**，顺序为 SPY、QQQ、DIA、IWM、SOXX、RSP（2026-11-14 起） |
+| `indexes[].key` | string | `SPY` / `QQQ` / `DIA` / `IWM` / `SOXX` / `RSP` |
+| `indexes[].group` | string | 固定 `us_index`，供前端分组 |
+| `indexes[].is_etf_proxy` | bool | 固定 `true`：**点位是 ETF 价格，不是指数点位**（富途不提供 DJI/RUT/SOX 指数行情） |
+| `indexes[].note` | string\|null | 口径提示；SOXX / RSP / DIA 非空，宽基为 `null` |
 | `indexes[].composite_score` | float | 该指数温度 0~100（越高越恐慌、越值得加仓） |
 | `indexes[].target_position_pct` | float | 该指数**自己**的建议仓位 30%~120%，**不是**组合闸门 |
 | `indexes[].extreme_level` | string | `none` / `light` / `heavy`（按该指数自身日/周 RSI 判定） |
@@ -793,7 +802,29 @@ GET /api/scores/overview?date=2026-03-27  → 查看暴跌日所有标的评分
 | `indexes[].indicators` | object | 该指数关键指标快照 |
 | `spread.value` | float\|null | `SPY 温度 − QQQ 温度`；**负值 = 标普相对更强** |
 | `spread.label` | string | 由后端给文案：`标普相对更强` / `纳指相对更强` / `两者均衡` / `数据不足` |
+| `groups[]` | array | 三级导航的分组描述：`us_index`（美股，挂 6 个 key）/ `gold` / `btc` |
 | `gld_temp` / `btc_temp` | object\|null | 单资产温度，实时计算；结构不变（见下） |
+
+**六个指数清单（顺序即 `indexes[]` 顺序）**
+
+| key | 代理 ETF | label | note |
+|---|---|---|---|
+| `SPY` | US.SPY | 标普 500 | — |
+| `QQQ` | US.QQQ | 纳斯达克 100 | — |
+| `DIA` | US.DIA | 道琼斯工业 | 30 只蓝筹、价格加权，与 SPY 相关性极高 |
+| `IWM` | US.IWM | 罗素 2000 | — |
+| `SOXX` | US.SOXX | 费城半导体 | **高波动周期行业，绝对水平不可与宽基比较** |
+| `RSP` | US.RSP | 标普 500 等权 | 与 SPY 的背离反映市场宽度 |
+
+`groups` 结构：
+
+```json
+"groups": [
+  { "key": "us_index", "label": "美股",   "index_keys": ["SPY","QQQ","DIA","IWM","SOXX","RSP"] },
+  { "key": "gold",     "label": "黄金",   "index_keys": [] },
+  { "key": "btc",      "label": "比特币", "index_keys": [] }
+]
+```
 
 > 顶层字段 `composite_score`、`target_position_pct`、`spy_price`、`qqq_price`、`spy_daily_rsi` 等
 > **已全部移除**，对应数据改到 `indexes[].indicators`。
@@ -1072,7 +1103,7 @@ export const getAssetTemperatureHistory = (asset, days = 60) =>
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `start` | string | 实际生效的起始日期（已夹到 2025-01-01 之后） |
-| `series[]` | array | 固定 2 条（SPY / QQQ），`points` 按日期升序 |
+| `series[]` | array | 固定 6 条（SPY / QQQ / DIA / IWM / SOXX / RSP），`points` 按日期升序 |
 | `spread[]` | array | 温差序列，逐点等于同日 `SPY − QQQ`；缺失交易日**跳过不插值** |
 
 > 示例数据为虚构值（日期与分数取自 2025-01-02 与 2026-11-09 的实测结果）。
@@ -1818,7 +1849,7 @@ assert stats["breakouts"] == len(breakouts)  # 各分组计数与 stats 一致
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `date` | string | 数据对应的交易日（YYYY-MM-DD） |
-| `indexes[]` | array | 固定 2 条（SPY / QQQ） |
+| `indexes[]` | array | 固定 6 条（SPY / QQQ / DIA / IWM / SOXX / RSP） |
 | `spread.value` | float\|null | `SPY 温度 − QQQ 温度`；负值 = 标普相对更强 |
 | `spread.label` | string | 文案由后端给，前端不得自行拼 |
 | `gld_temp` / `btc_temp` | object\|null | 单资产温度，结构不变 |

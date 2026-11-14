@@ -359,6 +359,7 @@ _INDEX_CONFIGS: dict[str, dict] = {
         "code_weekly": "US.SPY",
         "ath_drawdown_zero": 0.15,
         "ma200_range": 0.15,
+        "note": None,
     },
     "QQQ": {
         "label": "纳斯达克 100",
@@ -366,10 +367,47 @@ _INDEX_CONFIGS: dict[str, dict] = {
         "code_weekly": "US.QQQ",
         "ath_drawdown_zero": 0.15,
         "ma200_range": 0.15,
+        "note": None,
+    },
+    "DIA": {
+        "label": "道琼斯工业",
+        "code_daily": "US.DIA",
+        "code_weekly": "US.DIA",
+        "ath_drawdown_zero": 0.15,
+        "ma200_range": 0.15,
+        "note": "30 只蓝筹、价格加权，与 SPY 相关性极高，信息增量有限",
+    },
+    "IWM": {
+        "label": "罗素 2000",
+        "code_daily": "US.IWM",
+        "code_weekly": "US.IWM",
+        "ath_drawdown_zero": 0.15,
+        "ma200_range": 0.15,
+        "note": None,
+    },
+    "SOXX": {
+        "label": "费城半导体",
+        "code_daily": "US.SOXX",
+        "code_weekly": "US.SOXX",
+        "ath_drawdown_zero": 0.15,
+        "ma200_range": 0.15,
+        "note": (
+            "半导体属高波动周期行业，与宽基共用同一套阈值："
+            "温度的绝对水平不可与宽基直接比较，参考意义有限"
+        ),
+    },
+    "RSP": {
+        "label": "标普 500 等权",
+        "code_daily": "US.RSP",
+        "code_weekly": "US.RSP",
+        "ath_drawdown_zero": 0.15,
+        "ma200_range": 0.15,
+        "note": "等权指数：与 SPY 的背离反映市场宽度（少数权重股拉抬 vs 普涨）",
     },
 }
 
-INDEX_KEYS: tuple[str, ...] = ("SPY", "QQQ")
+# 顺序即接口返回顺序（spec 004 FR-004）。全部为美股 ETF 代理——富途不提供 DJI/RUT/SOX 指数行情。
+INDEX_KEYS: tuple[str, ...] = ("SPY", "QQQ", "DIA", "IWM", "SOXX", "RSP")
 
 # 温差历史的最早日期：更早的合并数据不做拆分回算（spec FR-007）
 SPREAD_HISTORY_START = "2025-01-01"
@@ -385,6 +423,8 @@ def _index_insufficient(key: str, score_date: str, reason: str) -> dict:
         "code": cfg["code_daily"],
         "label": cfg["label"],
         "date": score_date,
+        "note": cfg.get("note"),
+        "is_etf_proxy": True,
         "data_insufficient": True,
         "reason": reason,
         "composite_score": None,
@@ -454,6 +494,8 @@ def _build_index_result(
         "code": cfg["code_daily"],
         "label": cfg["label"],
         "date": score_date,
+        "note": cfg.get("note"),
+        "is_etf_proxy": True,
         "data_insufficient": False,
         "composite_score": round(composite, 1),
         "target_position_pct": round(target_position, 1),

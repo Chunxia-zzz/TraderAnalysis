@@ -457,9 +457,11 @@ def get_scores_overview(
 
 @app.get("/api/market-temperature")
 def get_market_temperature():
-    """返回最新一期的**指数温度**（SPY / QQQ 各一条）与温差，附加黄金/BTC 单资产温度。
+    """返回最新一期的**指数温度**（6 个美股指数各一条）与温差，附加黄金/BTC 单资产温度。
 
     2026-11-10 起不再返回合并后的全局温度与全局建议仓位（见 specs/003-split-market-temperature）。
+    2026-11-14 起指数扩为 6 个（specs/004-multi-index-temperature）：全部为 ETF 代理，
+    富途不提供 DJI / RUT / SOX 指数本身行情，因此 `indicators.price` 是 ETF 价格。
     """
     rows = storage.query_latest_market_temp_split()
     if not rows:
@@ -479,6 +481,9 @@ def get_market_temperature():
                 "key": key,
                 "code": row["code"],
                 "label": _INDEX_CONFIGS[key]["label"],
+                "group": "us_index",
+                "is_etf_proxy": True,
+                "note": _INDEX_CONFIGS[key].get("note"),
                 "date": row["date"],
                 "composite_score": row["composite_score"],
                 "target_position_pct": row["target_position_pct"],
@@ -512,6 +517,11 @@ def get_market_temperature():
 
     return {
         "date": rows[0]["date"],
+        "groups": [
+            {"key": "us_index", "label": "美股", "index_keys": list(INDEX_KEYS)},
+            {"key": "gold", "label": "黄金", "index_keys": []},
+            {"key": "btc", "label": "比特币", "index_keys": []},
+        ],
         "indexes": indexes,
         "spread": {"value": spread_value, "label": spread_label(spread_value)},
         "gld_temp": compute_asset_temperature("GLD"),

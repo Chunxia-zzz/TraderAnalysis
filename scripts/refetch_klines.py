@@ -32,7 +32,7 @@ import os
 import sqlite3
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pandas as pd
 
@@ -80,34 +80,64 @@ def snapshot(code: str, ktype: str) -> dict:
     }
 
 
-def fetch_full(quote_ctx, code: str, kl_type, max_count: int) -> pd.DataFrame:
-    """按 QFQ 全量拉取最近 max_count 根 K 线（自动翻页，忽略更早的分页）。"""
+def fetch_full(
+    quote_ctx, code: str, kl_type, max_count: int, start: str | None = None
+) -> pd.DataFrame:
+    """按 QFQ 全量拉取 K 线。
+
+    两条路径，行为完全不同（2026-11-14 实测）：
+
+    - `start=None`：只返回**最近 250 根**（Futu 忽略 max_count），适合修近期断层
+    - `start=YYYY-MM-DD`：从该日起返回，但**一次只给 250 根且不给下一页游标**，
+      因此必须自己按窗口往前推（每次把 start 挪到最后一天 +1 天），直到追上今天
+
+    踩过的坑：以为传了 `max_count=1000` 就能一次拿够，结果只回来 2023-01~2023-12 的 250 根，
+    后面三年全丢——数据"看起来补上了"但实际只有第一年，比不补更危险。
+    """
     from futu import RET_OK, AuType
 
     frames = []
-    page_key = None
-    for _ in range(6):
-        ret, df, page_key = quote_ctx.request_history_kline(
-            code,
-            ktype=kl_type,
-            autype=AuType.QFQ,  # 显式声明前复权，与增量更新保持一致
-            max_count=1000,  # API 单次上限
-            page_req_key=page_key,
+    if not start:
+        ret, df, _ = quote_ctx.request_history_kline(
+            code, ktype=kl_type, autype=AuType.QFQ, max_count=1000
         )
         if ret != RET_OK:
             raise RuntimeError(f"{code} 拉取失败: {df}")
         if df is None or df.empty:
-            break
+            return pd.DataFrame()
         frames.append(df)
-        got = sum(len(f) for f in frames)
-        if page_key is None or got >= max_count:
-            break
-        time.sleep(PAGE_DELAY)
+    else:
+        cursor = start
+        today = datetime.now().strftime("%Y-%m-%d")
+        for _ in range(30):
+            ret, df, _ = quote_ctx.request_history_kline(
+                code,
+                ktype=kl_type,
+                autype=AuType.QFQ,
+                start=cursor,
+                max_count=1000,
+            )
+            if ret != RET_OK:
+                raise RuntimeError(f"{code} 拉取失败: {df}")
+            if df is None or df.empty:
+                break
+            frames.append(df)
+            last_day = str(df["time_key"].max())[:10]
+            if last_day >= today:
+                break
+            next_cursor = (
+                datetime.strptime(last_day, "%Y-%m-%d") + timedelta(days=1)
+            ).strftime("%Y-%m-%d")
+            if next_cursor <= cursor:
+                break
+            cursor = next_cursor
+            time.sleep(PAGE_DELAY)
 
     if not frames:
         return pd.DataFrame()
     out = pd.concat(frames, ignore_index=True)
     out = out.drop_duplicates(subset=["time_key"], keep="last")
+    out = out.sort_values("time_key")
     return out.tail(max_count).reset_index(drop=True)
 
 
@@ -146,6 +176,12 @@ def main() -> None:
     ap.add_argument(
         "--ktypes", default="1d,1w", help="要重拉的周期，逗号分隔（默认 1d,1w）"
     )
+    ap.add_argument(
+        "--start",
+        default=None,
+        help="起始日期 YYYY-MM-DD。**不传只能拿到最近 250 根**（Futu 限制），"
+        "要补长历史必须传，例如 --start 2023-01-01",
+    )
     args = ap.parse_args()
 
     wanted = [k.strip() for k in args.ktypes.split(",") if k.strip()]
@@ -160,6 +196,7 @@ def main() -> None:
 
     print(f"标的: {args.codes}")
     print(f"周期: {[s[0] for s in specs]}")
+    print(f"起始: {args.start or '未指定（Futu 只回最近 250 根）'}")
     print(f"模式: {'DRY RUN（不落库）' if args.dry_run else '实际写入'}")
     print("=" * 78)
 
@@ -171,7 +208,10 @@ def main() -> None:
             for ktype, kl_name, cfg_getter, max_count in specs:
                 before = snapshot(code, ktype)
                 try:
-                    raw = fetch_full(quote_ctx, code, getattr(KLType, kl_name), max_count)
+                    raw = fetch_full(
+                        quote_ctx, code, getattr(KLType, kl_name),
+                        max_count, start=args.start,
+                    )
                 except Exception as exc:  # noqa: BLE001
                     print(f"  [{ktype}] ✗ 拉取失败: {exc}")
                     time.sleep(REQUEST_DELAY)

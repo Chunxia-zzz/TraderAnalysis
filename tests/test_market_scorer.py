@@ -15,6 +15,7 @@ import pytest
 from trader_analysis.futu_strategy import storage
 from trader_analysis.futu_strategy.market_scorer import (
     _INDEX_CONFIGS,
+    INDEX_KEYS,
     _build_index_result,
     _calc_pct_b,
     _clamp,
@@ -535,6 +536,32 @@ class TestMarketBonus:
             assert self._bonus(c_new) == pytest.approx(legacy(c_old)), f"c_old={c_old}"
 
 
+# ── 六指数共用一套阈值（spec 004 FR-002）────────────────────────────────────
+
+
+class TestSharedThresholds:
+    def test_all_indexes_share_same_thresholds(self):
+        """六个指数的 ATH 满分线与 MA200 映射区间必须字面一致。
+
+        共用的代价是 SOXX（高波动）系统性偏高、DIA（低波动）系统性偏低；
+        换来的是六个分数可跨指数比大小、温差有意义。
+        """
+        thresholds = {
+            key: (cfg["ath_drawdown_zero"], cfg["ma200_range"])
+            for key, cfg in _INDEX_CONFIGS.items()
+        }
+        assert set(thresholds) == set(INDEX_KEYS)
+        assert len(set(thresholds.values())) == 1, thresholds
+        assert thresholds["SOXX"] == (0.15, 0.15)
+
+    def test_soxx_has_volatility_note(self):
+        """SOXX 必须带高波动提示，否则「长期偏恐慌」会被误读成买点。"""
+        assert _INDEX_CONFIGS["SOXX"].get("note")
+        assert "高波动" in _INDEX_CONFIGS["SOXX"]["note"]
+        # 宽基不需要提示，避免页面上到处是提示条
+        assert _INDEX_CONFIGS["SPY"].get("note") is None
+
+
 # ── 集成测试 ──────────────────────────────────────────────────────────────────
 
 
@@ -557,9 +584,17 @@ class TestCalculateIndexTemperatures:
 
     def test_returns_two_indexes_and_spread(self):
         result = calculate_index_temperatures()
-        assert len(result["indexes"]) == 2
-        assert {i["key"] for i in result["indexes"]} == {"SPY", "QQQ"}
-        for item in result["indexes"]:
+        assert len(result["indexes"]) == len(INDEX_KEYS)
+        assert [i["key"] for i in result["indexes"]] == list(INDEX_KEYS)
+
+        # fixture 只灌了 SPY/QQQ 的合成数据 → 其余 4 个必须降级而不是伪造分数（FR-006）
+        ok = [i for i in result["indexes"] if not i.get("data_insufficient")]
+        degraded = [i for i in result["indexes"] if i.get("data_insufficient")]
+        assert {i["key"] for i in ok} == {"SPY", "QQQ"}
+        assert len(degraded) == 4
+        assert all(i["composite_score"] is None for i in degraded)
+
+        for item in ok:
             for key in (
                 "composite_score",
                 "target_position_pct",

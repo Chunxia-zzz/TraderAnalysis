@@ -67,8 +67,12 @@ async def test_market_temperature_not_found():
 @pytest.mark.asyncio
 async def test_market_temperature_with_data():
     """插入数据后返回两个指数 + 温差，且顶层不再有全局分数。"""
-    _seed("2026-05-01", "US.SPY", 70.3, 81.6)
-    _seed("2026-05-01", "US.QQQ", 79.4, 91.6, level="light")
+    # 6 个指数（spec 004），分数各不相同便于校验顺序
+    for code, score in [
+        ("US.SPY", 70.3), ("US.QQQ", 79.4), ("US.DIA", 55.0),
+        ("US.IWM", 62.0), ("US.SOXX", 88.0), ("US.RSP", 48.0),
+    ]:
+        _seed("2026-05-01", code, score, 80.0, level="light" if code == "US.QQQ" else "none")
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         resp = await ac.get("/api/market-temperature")
@@ -79,14 +83,27 @@ async def test_market_temperature_with_data():
     assert "composite_score" not in data
     assert "target_position_pct" not in data
 
-    assert [i["key"] for i in data["indexes"]] == ["SPY", "QQQ"]
-    spy, qqq = data["indexes"]
-    assert spy["composite_score"] == 70.3
-    assert qqq["composite_score"] == 79.4
-    assert qqq["extreme_level"] == "light"
+    # 顺序即 INDEX_KEYS（FR-004）
+    assert [i["key"] for i in data["indexes"]] == [
+        "SPY", "QQQ", "DIA", "IWM", "SOXX", "RSP"
+    ]
+    first, second = data["indexes"][0], data["indexes"][1]
+    assert first["composite_score"] == 70.3
+    assert second["composite_score"] == 79.4
+    assert second["extreme_level"] == "light"
     assert data["spread"]["value"] == pytest.approx(-9.1)
     assert data["spread"]["label"] == "标普相对更强"
-    assert len(spy["dimensions"]) == 3
+    assert len(first["dimensions"]) == 3
+
+    # ETF 代理标记 + SOXX 高波动提示（FR-003 / US3）
+    assert all(i["is_etf_proxy"] is True for i in data["indexes"])
+    soxx = next(i for i in data["indexes"] if i["key"] == "SOXX")
+    assert soxx["note"] and "高波动" in soxx["note"]
+    assert first["note"] is None
+
+    # 分组描述（US4）：三大组，美股组挂 6 个指数
+    assert [g["key"] for g in data["groups"]] == ["us_index", "gold", "btc"]
+    assert len(data["groups"][0]["index_keys"]) == 6
 
 
 @pytest.mark.asyncio

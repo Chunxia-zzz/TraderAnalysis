@@ -579,12 +579,17 @@ def query_market_temp_split_history(
 def query_panic_composite_map() -> dict[str, float]:
     """个股评分「恐慌加成」的唯一取数入口（按日期）。
 
-    优先取拆分表两指数温度的算术平均（与拆分前合并值等价，spec FR-016），
+    优先取拆分表中 **SPY 与 QQQ 两指数**的算术平均（与拆分前合并值等价，spec 003 FR-016），
     拆分表没有的日期（2025-01-01 以前）回落到冻结的 market_score。
+
+    ⚠️ **必须限定 `code IN ('US.SPY','US.QQQ')`**：2026-11-14 指数扩到 6 个后，
+    不加限定的 `AVG(composite_score)` 会把 DIA/IWM/SOXX/RSP 一起算进去，
+    均值从 59.3 掉到 54.3，全池 `total_score` 会被静默拉低（spec 004 SC-007 就是抓这个）。
     """
     conn = _get_conn()
     split_rows = conn.execute(
-        "SELECT date, AVG(composite_score) FROM market_temp_split GROUP BY date"
+        "SELECT date, AVG(composite_score) FROM market_temp_split "
+        "WHERE code IN ('US.SPY', 'US.QQQ') GROUP BY date"
     ).fetchall()
     legacy_rows = conn.execute(
         "SELECT date, composite_score FROM market_score"
@@ -601,7 +606,8 @@ def query_latest_panic_composite() -> float | None:
     conn = _get_conn()
     row = conn.execute(
         "SELECT AVG(composite_score) FROM market_temp_split "
-        "WHERE date = (SELECT MAX(date) FROM market_temp_split)"
+        "WHERE code IN ('US.SPY', 'US.QQQ') "
+        "AND date = (SELECT MAX(date) FROM market_temp_split)"
     ).fetchone()
     if not row or row[0] is None:
         row = conn.execute(

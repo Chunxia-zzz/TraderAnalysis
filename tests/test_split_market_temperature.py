@@ -91,6 +91,22 @@ class TestPanicComposite:
 
         assert storage.query_panic_composite_map()["2024-06-03"] == pytest.approx(61.5)
 
+    def test_average_ignores_non_core_indexes(self):
+        """指数扩到 6 个后，恐慌加成仍只取 SPY/QQQ 平均（spec 004 SC-007）。
+
+        回归背景：`AVG(composite_score)` 如不加 code 限定，会把 DIA/IWM/SOXX/RSP
+        一起算进去，均值从 59.3 掉到 54.3，全池 total_score 被静默拉低。
+        """
+        _point("2026-05-01", "US.SPY", 50.0)
+        _point("2026-05-01", "US.QQQ", 70.0)
+        _point("2026-05-01", "US.SOXX", 90.0)   # 高波动指数不得参与
+        _point("2026-05-01", "US.RSP", 20.0)
+        _point("2026-05-01", "US.DIA", 30.0)
+        _point("2026-05-01", "US.IWM", 40.0)
+
+        assert storage.query_panic_composite_map()["2026-05-01"] == pytest.approx(60.0)
+        assert storage.query_latest_panic_composite() == pytest.approx(60.0)
+
     def test_split_overrides_legacy_on_same_date(self):
         conn = storage._get_conn()
         conn.execute(
@@ -131,8 +147,8 @@ class TestSplitStorage:
             _point("2026-05-01", f"US.{key}", 70.0)
         _point("2026-05-01", "US.SPY", 71.0)  # 覆盖写
         rows = storage.query_latest_market_temp_split()
-        assert len(rows) == 2
-        assert {r["code"] for r in rows} == {"US.SPY", "US.QQQ"}
+        assert len(rows) == len(INDEX_KEYS)
+        assert {r["code"] for r in rows} == {f"US.{k}" for k in INDEX_KEYS}
 
     def test_history_start_filter(self):
         _point("2024-12-31", "US.SPY", 50.0)

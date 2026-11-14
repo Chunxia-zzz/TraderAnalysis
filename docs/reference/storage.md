@@ -168,7 +168,7 @@ CREATE TABLE IF NOT EXISTS score_results (
 
 > ⚠️ **2026-11-10 起这两张表已冻结**：市场温度按指数拆分后，合并值不再计算、不再写入，
 > 表内 2022-09-30 ~ 2026-11-09 共 956 行只读保留（用于追溯与「拆分是否等价」的对照）。
-> 新数据写入 `market_temp_split`，一个数据日两行（`US.SPY` / `US.QQQ`）。
+> 新数据写入 `market_temp_split`，一个数据日 **6 行**（SPY / QQQ / DIA / IWM / SOXX / RSP，2026-11-14 起）。
 > **没有写入口**：`upsert_market_score()` 已删除，想恢复合并口径必须改代码 + 改 spec，不能靠调函数。
 
 **单指数温度表 `market_temp_split`：**
