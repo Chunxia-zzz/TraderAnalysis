@@ -151,3 +151,5 @@ data/target_allocation.json
 data/*.db.bak-*
 data/_backup/
 logs/
+# 日更报告草稿（正文含账户资产与持仓明细，红线不入库；正式版归档到资料库空间）
+reports/
